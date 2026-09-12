@@ -111,7 +111,7 @@ The biggest unlocks are:
 
 - **done for ordinary P5 direct tests:** materialize `DataIdLengthList` N from Toyota's exact selector-`0xCA` `22 <DID>` support probe after explicit execution acknowledgement, including mode-1/no-initial-read controls, while preserving the static plan grade and minimum as validation;
 - **done:** generate the default N-byte return-control mask from the recovered direct-test bit range using MSB0 numbering;
-- **partially done:** static routine-command variables are now correctly treated as fixed request bytes, promoting 404 NA routines to executable; remaining runtime value/button-mask routines still need structured materialization;
+- **done for current ordinary-P5 routines:** static routine-command variables are fixed request bytes (404 NA routines are statically executable), and all 166 remaining NA masked routines are host-materializable from the exported Toyota value/button masks using explicit positional `--value` / `--button` bytes;
 - finish multi-control value-write execution after the already-recovered initialization/group decomposition;
 - implement P6 routine/direct execution semantics and support checks;
 - finish role-specific stop/status/presentation paths where they materially affect execution.

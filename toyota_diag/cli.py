@@ -673,34 +673,47 @@ def cmd_active_test_run(args, profile: Profile) -> int:
     raise SystemExit("--hold must be > 0 seconds")
   if args.poll_interval <= 0:
     raise SystemExit("--poll-interval must be > 0 seconds")
-  materializable = executor.can_materialize_direct_runtime_length(row, plan)
+  direct_materializable = executor.can_materialize_direct_runtime_length(row, plan)
+  routine_materializable = executor.can_materialize_routine_runtime(row, plan)
   refusals = executor.runtime_refusals(profile, plan)
-  if refusals and not materializable:
+  if refusals and not (direct_materializable or routine_materializable):
     raise SystemExit("Active Test refused before transport: " + "; ".join(refusals))
-  option_record = _optional_bytes(args.option_record, "--option-record")
   value_payload = _optional_bytes(args.value, "--value")
+  button_payload = _optional_bytes(args.button, "--button")
   explicit_control_mask = _optional_bytes(args.mask, "--mask")
-  if isinstance(plan, executor.DirectTestPlan) and value_payload is None:
-    raise SystemExit("direct Active Test execution requires explicit --value payload bytes")
+
+  try:
+    if isinstance(plan, executor.RoutineTestPlan):
+      if explicit_control_mask is not None:
+        raise executor.ExecutorError("routine Active Tests do not take --mask")
+      if routine_materializable:
+        plan = executor.materialize_routine_runtime(
+          row, plan, value_payload=value_payload, button_payload=button_payload)
+      elif value_payload is not None or button_payload is not None:
+        raise executor.ExecutorError("fixed routine does not accept --value or --button")
+    elif isinstance(plan, executor.DirectTestPlan):
+      if button_payload is not None:
+        raise executor.ExecutorError("direct Active Tests do not take --button")
+      if value_payload is None:
+        raise executor.ExecutorError("direct Active Test execution requires explicit --value payload bytes")
+  except executor.ExecutorError as e:
+    raise SystemExit(f"Active Test refused before transport: {e}") from e
 
   live = _live_transport()
   panda = _connect_live(args, profile, live)
   session = DiagnosticSession(profile, ecu, panda=panda, operation_row=row)
   try:
     with session:
-      if isinstance(plan, executor.DirectTestPlan) and materializable:
+      if isinstance(plan, executor.DirectTestPlan) and direct_materializable:
         plan = executor.materialize_direct_runtime_length(session, row, plan)
       post_refusals = executor.runtime_refusals(profile, plan)
       if post_refusals:
         raise executor.PlanNotExecutable(plan, post_refusals)
       if isinstance(plan, executor.RoutineTestPlan):
         result = executor.run_routine_test(
-          session, plan, hold_s=args.hold, option_record=option_record, execute=True,
-          poll_interval_s=args.poll_interval,
+          session, plan, hold_s=args.hold, execute=True, poll_interval_s=args.poll_interval,
         )
       elif isinstance(plan, executor.DirectTestPlan):
-        if option_record is not None:
-          raise executor.ExecutorError("direct Active Tests do not take --option-record; use --value and --mask")
         control_mask = explicit_control_mask
         if control_mask is None:
           if plan.runtime_length is None:
@@ -750,7 +763,7 @@ def cmd_active_test_stop(args, profile: Profile) -> int:
   session = DiagnosticSession(profile, ecu, panda=panda, operation_row=row)
   try:
     with session:
-      if isinstance(plan, executor.DirectTestPlan) and materializable:
+      if isinstance(plan, executor.DirectTestPlan) and direct_materializable:
         plan = executor.materialize_direct_runtime_length(session, row, plan)
       post_refusals = executor.runtime_refusals(profile, plan)
       if post_refusals:
@@ -2112,8 +2125,8 @@ def build_parser() -> argparse.ArgumentParser:
   p.add_argument("--kind", choices=("direct", "routine"))
   p.add_argument("--hold", type=float, default=1.0, help="seconds to hold the operation before stop (default: 1.0)")
   p.add_argument("--poll-interval", type=float, default=0.5, help="routine status-poll interval in seconds")
-  p.add_argument("--option-record", help="explicit routine option-record bytes as hex")
-  p.add_argument("--value", help="explicit direct-test value payload bytes as hex")
+  p.add_argument("--value", help="explicit positional value bytes as hex (direct payload or masked routine value channel)")
+  p.add_argument("--button", help="explicit positional routine button bytes as hex")
   p.add_argument("--mask", help="explicit direct-test control-enable mask bytes as hex")
   p.add_argument("--execute", action="store_true", help="acknowledge vehicle mutation; omitted means dry-run only")
   p.add_argument("--json", action="store_true")

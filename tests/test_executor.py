@@ -4,8 +4,9 @@ from opendbc.car.uds import MessageTimeoutError, NegativeResponseError
 
 from toyota_diag import registry
 from toyota_diag.executor import (DirectTestPlan, ExecutorError, PlanNotExecutable, RoutineTestPlan,
-                                        can_materialize_direct_runtime_length, direct_control_enable_mask,
-                                        materialize_direct_runtime_length, resolve_plan, run_direct_test, run_routine_test,
+                                        can_materialize_direct_runtime_length, can_materialize_routine_runtime,
+                                        direct_control_enable_mask, materialize_direct_runtime_length,
+                                        materialize_routine_runtime, resolve_plan, run_direct_test, run_routine_test,
                                         runtime_refusals)
 from toyota_diag.session import DiagnosticSession
 from tests import support
@@ -189,6 +190,47 @@ class TestPlanResolution(unittest.TestCase):
     with self.assertRaisesRegex(ExecutorError, "below the recovered static minimum 2"):
       with session:
         materialize_direct_runtime_length(session, row, plan)
+
+  def test_parameterized_routine_materializes_through_exported_masks(self):
+    row = executable_routine(
+      execution="plan_only", fixed_request=False, start_static="31011105005aa5",
+      output_mask_value={"bytes": ""}, output_mask_button={"bytes": "ff0000"},
+    )
+    profile = support.load_profile(None, active_tests=[row])
+    ecu = support.synthetic_ecu(profile)
+    plan = resolve_plan(ecu, row)
+    self.assertIsInstance(plan, RoutineTestPlan)
+    self.assertTrue(plan.parameterized)
+    self.assertFalse(plan.executable)
+    self.assertTrue(can_materialize_routine_runtime(row, plan))
+    live = materialize_routine_runtime(row, plan, button_payload=bytes.fromhex("035566"))
+    self.assertTrue(live.executable)
+    self.assertFalse(live.parameterized)
+    self.assertEqual(live.start_option_prefix, bytes.fromhex("035aa5"))
+
+    value_row = executable_routine(
+      execution="plan_only", fixed_request=False, start_static="310111050000",
+      output_mask_value={"bytes": "00ff"}, output_mask_button={"bytes": ""},
+    )
+    value_plan = resolve_plan(ecu, value_row)
+    live = materialize_routine_runtime(value_row, value_plan, value_payload=bytes.fromhex("1234"))
+    self.assertEqual(live.start_option_prefix, bytes.fromhex("0034"))
+
+  def test_parameterized_routine_mask_inputs_are_fail_closed(self):
+    row = executable_routine(
+      execution="plan_only", fixed_request=False, start_static="31011105",
+      output_mask_value={"bytes": "ff"}, output_mask_button={"bytes": ""},
+    )
+    profile = support.load_profile(None, active_tests=[row])
+    ecu = support.synthetic_ecu(profile)
+    plan = resolve_plan(ecu, row)
+    self.assertTrue(can_materialize_routine_runtime(row, plan))
+    with self.assertRaisesRegex(ExecutorError, "requires --value"):
+      materialize_routine_runtime(row, plan)
+    with self.assertRaisesRegex(ExecutorError, "exactly 1 byte"):
+      materialize_routine_runtime(row, plan, value_payload=b"\x01\x02")
+    with self.assertRaisesRegex(ExecutorError, "does not accept --button"):
+      materialize_routine_runtime(row, plan, value_payload=b"\x01", button_payload=b"\x00")
 
   def test_direct_control_enable_mask_uses_toyota_msb0_bit_numbering(self):
     self.assertEqual(direct_control_enable_mask({"bit_start": 15, "bit_end": 15}, 2), b"\x00\x01")

@@ -417,6 +417,42 @@ class TestLiveCli(unittest.TestCase):
       with self.assertRaisesRegex(SystemExit, "placeholder 0xFFFF"):
         run_cli(["active-test", "run", "brake", "42001", "--execute"])
 
+  def test_universal_masked_routine_is_host_materializable_and_requires_button_before_transport(self):
+    import json
+
+    rc, output = run_cli([
+      "--vehicle", "12704", "active-test", "plan", "engine", "40000", "--json",
+    ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    planned = json.loads(output)["active_test"]
+    self.assertEqual((planned["registry_execution"], planned["runtime_executable"], planned["runtime_materializable"]),
+                     ("plan_only", False, True))
+    self.assertEqual(planned["wire_plan"]["output_mask_button"]["bytes"], "ff")
+
+    with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+      with self.assertRaisesRegex(SystemExit, "requires --button with exactly 1 positional byte"):
+        run_cli([
+          "--vehicle", "12704", "active-test", "run", "engine", "40000", "--execute",
+        ], use_default_registry=True)
+
+  def test_universal_masked_routine_merges_button_bytes_before_execution(self):
+    scripted = support.ScriptedUds()
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12704", "active-test", "run", "engine", "40000",
+        "--execute", "--button", "02", "--hold", "0.001", "--poll-interval", "1",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertIn("executed: yes", output)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("routine", 1, 0x1105, b"\x02"),
+      ("routine", 2, 0x1105, b""),
+      ("session", 1),
+    ])
+
   def test_universal_direct_active_test_materializes_live_length_and_default_mask(self):
     scripted = support.ScriptedUds()
     scripted.did[0x7D2] = {0x2801: b"\x00\x01"}

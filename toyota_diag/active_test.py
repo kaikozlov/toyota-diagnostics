@@ -38,7 +38,10 @@ def describe(profile: Profile, ecu: EcuSpec, row: dict[str, Any]) -> dict[str, A
     "registry_execution": str(row.get("execution") or "unresolved"),
     "runtime_execution": grade,
     "runtime_executable": not refusals,
-    "runtime_materializable": executor.can_materialize_direct_runtime_length(row, plan),
+    "runtime_materializable": (
+      executor.can_materialize_direct_runtime_length(row, plan)
+      or executor.can_materialize_routine_runtime(row, plan)
+    ),
     "runtime_refusals": list(refusals),
     "session_requirement": row.get("session_requirement"),
     "wire_plan": dict(row),
@@ -112,6 +115,11 @@ def render_plan(profile: Profile, ecu: EcuSpec, test: dict[str, Any]) -> str:
   elif executor.can_materialize_direct_runtime_length(test, plan):
     lines.append(
       "runtime: live-materializable; with --execute, Toyota's exact selector-0xCA 22 <DID> support probe supplies N before mutation")
+  elif executor.can_materialize_routine_runtime(test, plan):
+    value_mask = (test.get("output_mask_value") or {}).get("bytes") or ""
+    button_mask = (test.get("output_mask_button") or {}).get("bytes") or ""
+    lines.append(
+      f"runtime: host-materializable from Toyota masks; value_mask={value_mask or '-'} button_mask={button_mask or '-'}")
   elif execution == "executable":
     lines.append("runtime: blocked despite complete static geometry")
     lines.extend(f"  refusal: {reason}" for reason in runtime_refusals)

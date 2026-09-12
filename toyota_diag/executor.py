@@ -285,6 +285,94 @@ def materialize_direct_runtime_length(session: DiagnosticSession, row: dict[str,
   return live_plan
 
 
+def _routine_runtime_masks(row: dict[str, Any], plan: TestPlan) -> tuple[bytes, bytes, int] | None:
+  """Validate GTS+'s current P5 routine runtime-mask geometry; zero-transmit."""
+  if not isinstance(plan, RoutineTestPlan) or not plan.parameterized:
+    return None
+  if row.get("kind") != "routine" or row.get("execution") not in {"plan_only", "executable"}:
+    return None
+  try:
+    value_meta = row.get("output_mask_value")
+    button_meta = row.get("output_mask_button")
+    if not isinstance(value_meta, dict) or not isinstance(button_meta, dict):
+      return None
+    value_text = value_meta.get("bytes", "")
+    button_text = button_meta.get("bytes", "")
+    value_mask = b"" if value_text in (None, "") else registry.parse_bytes(value_text, "routine output_mask_value")
+    button_mask = b"" if button_text in (None, "") else registry.parse_bytes(button_text, "routine output_mask_button")
+  except registry.RegistryError:
+    return None
+  static = plan.start_option_prefix
+  width = len(static) or len(value_mask) or len(button_mask)
+  if width <= 0 or (not value_mask and not button_mask):
+    return None
+  if any(len(part) not in (0, width) for part in (static, value_mask, button_mask)):
+    return None
+  return value_mask, button_mask, width
+
+
+def can_materialize_routine_runtime(row: dict[str, Any], plan: TestPlan) -> bool:
+  """Return whether exact exported GTS masks can materialize a routine option record."""
+  return _routine_runtime_masks(row, plan) is not None
+
+
+def materialize_routine_runtime(
+    row: dict[str, Any],
+    plan: RoutineTestPlan,
+    *,
+    value_payload: bytes | None = None,
+    button_payload: bytes | None = None,
+) -> RoutineTestPlan:
+  """Merge explicit positional runtime bytes through Toyota's recovered routine masks.
+
+  DataMonitorPhase5 starts with the static routine-command bytes and ORs caller/UI
+  bytes only where the exported value/button masks permit them. This helper accepts
+  already-encoded positional bytes; it does not guess GTS UI/physical-value encoding.
+  """
+  spec = _routine_runtime_masks(row, plan)
+  if spec is None:
+    raise PlanNotExecutable(plan)
+  value_mask, button_mask, width = spec
+
+  if value_mask:
+    if value_payload is None:
+      raise ExecutorError(f"routine requires --value with exactly {width} positional byte(s)")
+    if len(value_payload) != width:
+      raise ExecutorError(f"routine --value must be exactly {width} byte(s), got {len(value_payload)}")
+  elif value_payload is not None:
+    raise ExecutorError("routine has no value mask and does not accept --value")
+
+  if button_mask:
+    if button_payload is None:
+      raise ExecutorError(f"routine requires --button with exactly {width} positional byte(s)")
+    if len(button_payload) != width:
+      raise ExecutorError(f"routine --button must be exactly {width} byte(s), got {len(button_payload)}")
+  elif button_payload is not None:
+    raise ExecutorError("routine has no button mask and does not accept --button")
+
+  merged = bytearray(width)
+  merged[:len(plan.start_option_prefix)] = plan.start_option_prefix
+  if value_mask and value_payload is not None:
+    for index, mask in enumerate(value_mask):
+      merged[index] |= value_payload[index] & mask
+  if button_mask and button_payload is not None:
+    for index, mask in enumerate(button_mask):
+      merged[index] |= button_payload[index] & mask
+
+  live_row = dict(row)
+  live_row["execution"] = EXECUTION_EXECUTABLE
+  live_row["fixed_request"] = True
+  live_row["start_static"] = (
+    bytes((ROUTINE_SERVICE, ROUTINE_CONTROL_START)) + plan.rid.to_bytes(2, "big") + bytes(merged)
+  ).hex()
+  live_plan = resolve_plan(plan.ecu, live_row)
+  if not isinstance(live_plan, RoutineTestPlan):
+    raise ExecutorError("routine runtime materialization did not resolve a routine plan")
+  if live_plan.refusals:
+    raise PlanNotExecutable(live_plan)
+  return live_plan
+
+
 def direct_control_enable_mask(row: dict[str, Any], runtime_length: int) -> bytes:
   """Build GTS+'s N-byte direct-test return-control mask from the recovered bit range."""
   if runtime_length <= 0:
