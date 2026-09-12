@@ -111,7 +111,7 @@ def render_plan(profile: Profile, ecu: EcuSpec, test: dict[str, Any]) -> str:
     lines.append("runtime: executable; transmission still requires explicit --execute acknowledgement")
   elif executor.can_materialize_direct_runtime_length(test, plan):
     lines.append(
-      "runtime: live-materializable; with --execute, Toyota's exact mode-0 22 <DID> initial read supplies N before mutation")
+      "runtime: live-materializable; with --execute, Toyota's exact selector-0xCA 22 <DID> support probe supplies N before mutation")
   elif execution == "executable":
     lines.append("runtime: blocked despite complete static geometry")
     lines.extend(f"  refusal: {reason}" for reason in runtime_refusals)

@@ -2,12 +2,12 @@
 
 Static execution remains fail-closed: fixed routines require fully materialized
 request geometry, while direct tests require an exact payload width. Current P5
-mode-0 direct tests may materialize that one missing runtime fact after explicit
-execution acknowledgement by issuing Toyota's recovered selector-0xCA initial
-read (`22 <DID>`). GTS+ stores `received_length - 3` in `DataIdLengthList`; the
-shared UDS client returns the already-stripped value bytes, so their length is the
-same exact N. Mode-1/ambiguous rows and every other unresolved input remain
-non-executable. No option record, session requirement, or request geometry is
+direct tests with an exported runtime-length probe may materialize that one missing
+fact after explicit execution acknowledgement by issuing Toyota's recovered
+selector-0xCA support read (`22 <DID>`). GTS+ stores `received_length - 3` in
+`DataIdLengthList`; the shared UDS client returns the already-stripped value
+bytes, so their length is the same exact N. Ambiguous rows and every other
+unresolved input remain non-executable. No option record, session requirement, or request geometry is
 guessed from partial data.
 
 Run backends are explicit-by-default: `execute=False` (the default) performs a
@@ -174,44 +174,74 @@ def resolve_plan(ecu: EcuSpec, row: dict[str, Any]) -> TestPlan:
                   refusals=(f"kind is {kind!r}, expected 'direct' or 'routine'",))
 
 
-def can_materialize_direct_runtime_length(row: dict[str, Any], plan: TestPlan) -> bool:
-  """Return whether Toyota's recovered mode-0 initial read can supply direct-test N.
-
-  Current P5 builds `CCmdDataIdLengthList` entries from the positive response
-  length of selector 0xCA (`22 <DID>`): N is the received UDS length minus the
-  three-byte `62 <DID>` prefix. `UdsClient.read_data_by_identifier()` already
-  strips that prefix, so the returned value length is the same N.
-
-  This predicate is pure/zero-transmit. It deliberately accepts only the exact
-  mode-0 request for the same control DID; mode-1 and ambiguous rows remain
-  fail-closed.
-  """
+def _direct_runtime_length_probe(row: dict[str, Any], plan: TestPlan) -> dict[str, Any] | None:
+  """Return a validated exact Toyota runtime-length probe, without transmitting."""
   if not isinstance(plan, DirectTestPlan) or plan.runtime_length is not None:
-    return False
+    return None
   if row.get("kind") != "direct" or row.get("execution") not in {"plan_only", "executable"}:
-    return False
+    return None
+
+  probe = row.get("runtime_length_probe")
+  if isinstance(probe, dict):
+    try:
+      kind = str(probe.get("kind") or "")
+      selector = registry.parse_int(probe.get("selector"), "runtime_length_probe.selector")
+      request = registry.parse_bytes(probe.get("request"), "runtime_length_probe.request")
+      check = registry.parse_bytes(probe.get("check"), "runtime_length_probe.check")
+      prefix_length = registry.parse_int(probe.get("response_prefix_length"), "runtime_length_probe.response_prefix_length")
+    except registry.RegistryError:
+      return None
+    if (kind == "read_data_by_identifier_value_length" and selector == 0xCA
+        and request == bytes([0x22]) + plan.did.to_bytes(2, "big")
+        and check == b"\x62" and prefix_length == 3):
+      return dict(probe)
+    return None
+
+  # Backward compatibility for registry/bundle revisions produced before the
+  # explicit probe descriptor was exported. Role-0x08 mode-0 used the same
+  # selector-0xCA request, so this is still an exact recovered transaction.
   initial = row.get("initial_read")
   if not isinstance(initial, dict):
-    return False
+    return None
   try:
     if registry.parse_int(initial.get("mode"), "initial_read.mode") != 0:
-      return False
+      return None
     request = registry.parse_bytes(initial.get("request"), "initial_read.request")
     check = registry.parse_bytes(initial.get("check"), "initial_read.check")
   except registry.RegistryError:
-    return False
-  return request == bytes([0x22]) + plan.did.to_bytes(2, "big") and bool(check) and check[0] == 0x62
+    return None
+  if request != bytes([0x22]) + plan.did.to_bytes(2, "big") or check != b"\x62":
+    return None
+  return {
+    "kind": "read_data_by_identifier_value_length",
+    "selector": "0xCA",
+    "request": request.hex(),
+    "check": check.hex(),
+    "response_prefix_length": 3,
+  }
+
+
+def can_materialize_direct_runtime_length(row: dict[str, Any], plan: TestPlan) -> bool:
+  """Return whether Toyota's recovered selector-0xCA probe can supply direct-test N.
+
+  Current P5 `CheckSupportDid` builds `CCmdDataIdLengthList` from `22 <DID>`:
+  N is the received UDS payload length minus the three-byte `62 <DID>` echo.
+  `UdsClient.read_data_by_identifier()` already strips that echo, so the returned
+  value length is exactly N. The predicate is pure and zero-transmit.
+  """
+  return _direct_runtime_length_probe(row, plan) is not None
 
 
 def materialize_direct_runtime_length(session: DiagnosticSession, row: dict[str, Any],
                                       plan: DirectTestPlan) -> DirectTestPlan:
-  """Materialize Toyota's live direct-test payload length from its exact initial read.
+  """Materialize Toyota's live direct-test payload length from its exact support probe.
 
   The caller must have explicit mutation acknowledgement before invoking this: the
-  function performs the recovered read-only initial transaction and may enter the
-  row's recovered diagnostic session. No guessed length is ever substituted.
+  function performs the recovered read-only selector-0xCA transaction and may enter
+  the row's recovered diagnostic session. No guessed length is ever substituted.
   """
-  if not can_materialize_direct_runtime_length(row, plan):
+  probe = _direct_runtime_length_probe(row, plan)
+  if probe is None:
     raise PlanNotExecutable(plan)
 
   # Prove that N is the only missing piece before touching the vehicle. A
@@ -238,10 +268,10 @@ def materialize_direct_runtime_length(session: DiagnosticSession, row: dict[str,
   length = len(data)
   if length < minimum:
     raise ExecutorError(
-      f"Toyota initial read DID 0x{plan.did:04X} returned {length} data byte(s), "
+      f"Toyota runtime-length probe DID 0x{plan.did:04X} returned {length} data byte(s), "
       f"below the recovered static minimum {minimum}")
   if length <= 0:
-    raise ExecutorError(f"Toyota initial read DID 0x{plan.did:04X} returned no data bytes")
+    raise ExecutorError(f"Toyota runtime-length probe DID 0x{plan.did:04X} returned no data bytes")
 
   live_row = dict(row)
   live_row["execution"] = EXECUTION_EXECUTABLE

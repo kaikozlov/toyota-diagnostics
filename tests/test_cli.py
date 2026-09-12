@@ -438,6 +438,26 @@ class TestLiveCli(unittest.TestCase):
       ("session", 1),
     ])
 
+  def test_universal_mode1_direct_active_test_uses_separate_runtime_length_probe(self):
+    scripted = support.ScriptedUds()
+    scripted.did[0x700] = {0x2811: b"\x00"}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12704", "active-test", "run", "engine", "0x2134",
+        "--execute", "--value", "01", "--hold", "0.001",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertIn("runtime length: 1 byte(s)", output)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("read_did", 0x2811),
+      ("io_control", 0x2811, 3, b"\x01", b""),
+      ("io_control", 0x2811, 0, b"", b"\xff"),
+      ("session", 1),
+    ])
+
   def test_universal_direct_active_test_dry_run_never_materializes_length(self):
     with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
       rc, output = run_cli([

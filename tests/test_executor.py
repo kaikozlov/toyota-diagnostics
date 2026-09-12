@@ -145,7 +145,7 @@ class TestPlanResolution(unittest.TestCase):
       ("session", 1), ("session", 3), ("read_did", 0x2801), ("session", 1),
     ])
 
-  def test_runtime_length_materialization_rejects_mode1_and_short_responses(self):
+  def test_runtime_length_materialization_uses_explicit_probe_for_mode1_and_rejects_short_responses(self):
     row = executable_direct(
       execution="plan_only", runtime_length=None, runtime_length_minimum=2,
       bit_start=15, bit_end=15, initial_read={"mode": 1},
@@ -153,10 +153,19 @@ class TestPlanResolution(unittest.TestCase):
     profile = support.load_profile(None, active_tests=[row], session_control=current_p5())
     ecu = support.synthetic_ecu(profile)
     plan = resolve_plan(ecu, row)
-    self.assertFalse(can_materialize_direct_runtime_length(row, plan))
+    self.assertFalse(can_materialize_direct_runtime_length(row, plan))  # old bundle: no exact probe descriptor
 
-    row = {**row, "initial_read": {"mode": 0, "request": "222801", "check": "62"}}
+    row = {
+      **row,
+      "runtime_length_probe": {
+        "kind": "read_data_by_identifier_value_length", "selector": "0xCA",
+        "request": "222801", "check": "62", "response_prefix_length": 3,
+      },
+    }
     profile = support.load_profile(None, active_tests=[row], session_control=current_p5())
+    ecu = support.synthetic_ecu(profile)
+    plan = resolve_plan(ecu, row)
+    self.assertTrue(can_materialize_direct_runtime_length(row, plan))
     ecu = support.synthetic_ecu(profile)
     plan = resolve_plan(ecu, row)
     scripted = support.ScriptedUds()
