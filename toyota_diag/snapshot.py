@@ -1,115 +1,252 @@
-"""High-level read-only Toyota vehicle inventory snapshots."""
+"""Toyota all-system read-only Health Check foundation.
+
+This surface starts from Toyota's resolved vehicle/install-set model rather than
+the maintainer Camry's historical address sweep. It first executes only the
+family-local mount/support probes the runtime has recovered, then collects DTCs
+and exact exported generic-CID identity reads from responding logical ECUs.
+
+GTS+ Health Check also stores generic FFD, Info Code, Operation History, monitor,
+and optional timestamp data. Those surfaces remain explicit coverage gaps in the
+snapshot instead of being silently approximated here.
+"""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
+from pathlib import Path
 from typing import Any
 
-from toyota_diag import dtc
-from toyota_diag.registry import Profile, decode_status_bits
+from opendbc.car.uds import MessageTimeoutError, NegativeResponseError
 
-IDENTITY_DIDS = (0xF181, 0xF18C, 0x0105)
+from toyota_diag import dtc, registry, resolver
+from toyota_diag.executor import SESSION_REQUIREMENT_EXTENDED
+from toyota_diag.session import DiagnosticSession
+
+SCHEMA = "toyota-health-check-v1"
 
 
-def _safe_read(client, did: int) -> bytes | None:
-  try:
-    return bytes(client.read_data_by_identifier(did))
-  except Exception:
+def _endpoint_key(address: int, sub_addr: int | None) -> tuple[int, int | None]:
+  return int(address), None if sub_addr is None else int(sub_addr)
+
+
+def _mount_by_endpoint(profile: registry.Profile, rows: list[dict[str, Any]]) -> dict[tuple[int, int | None], dict[str, Any]]:
+  out: dict[tuple[int, int | None], dict[str, Any]] = {}
+  for row in rows:
+    route = row.get("transport_route")
+    if not isinstance(route, dict):
+      continue
+    try:
+      parsed = resolver.route_for_candidate(row)
+    except resolver.ResolverError:
+      continue
+    out[_endpoint_key(parsed.request_address, parsed.sub_addr)] = row
+  return out
+
+
+def _catalog_command(profile: registry.Profile, ecu: registry.EcuSpec, kind: str) -> dict[str, Any] | None:
+  catalog = profile.category(ecu)
+  if not isinstance(catalog, dict):
     return None
+  rows = [row for row in catalog.get("commands", []) if isinstance(row, dict) and row.get("kind") == kind]
+  return rows[0] if len(rows) == 1 else None
 
 
-def _ascii(data: bytes | None) -> str | None:
+def _generic_cid_plan(profile: registry.Profile, ecu: registry.EcuSpec) -> tuple[dict[str, Any], int] | None:
+  """Return the exact exported generic-CID command and DID, or None."""
+  command = _catalog_command(profile, ecu, "generic_cid")
+  if command is None:
+    return None
+  requests = [row for row in command.get("requests", []) if isinstance(row, dict) and row.get("resolved")]
+  if len(requests) != 1:
+    return None
+  try:
+    request = registry.parse_bytes(requests[0].get("send"), "generic_cid request")
+    check = registry.parse_bytes(requests[0].get("check"), "generic_cid positive check")
+  except registry.RegistryError:
+    return None
+  if len(request) != 3 or request[0] != 0x22:
+    return None
+  did = int.from_bytes(request[1:], "big")
+  if len(check) < 3 or check[:3] != bytes([0x62]) + request[1:]:
+    return None
+  return command, did
+
+
+def _printable_ascii(data: bytes) -> str | None:
   if not data:
     return None
-  text = "".join(chr(value) if 32 <= value < 127 else "" for value in data).strip("\x00 \t\r\n")
-  return text or None
+  text = data.rstrip(b"\x00").decode("ascii", errors="ignore").strip()
+  if not text or not all(32 <= ord(char) < 127 for char in text):
+    return None
+  return text
 
 
-def build(profile: Profile, client_factory, transport_state: dict[str, Any] | None = None, *, show_all_dtcs: bool = False) -> dict[str, Any]:
-  responding, faults = dtc.scan(
-    client_factory,
-    profile.scanned_ecus(),
-    profile.fault_status_mask,
-    show_all=show_all_dtcs,
-    echo=lambda _: None,
-  )
-  ecus = []
-  for target, records in responding.items():
-    if hasattr(target, "address"):
-      spec = target
-    else:
-      try:
-        spec = profile.lookup_ecu(target)
-      except Exception:
-        spec = None
-    address = spec.address if spec is not None else int(target)
-    sub_addr = spec.sub_addr if spec is not None else None
-    key = spec.key if spec is not None else None
-    name = spec.name if spec is not None else profile.name_for(address)
-    category_id = spec.category_id if spec is not None else None
-    client = client_factory(address, sub_addr)
-    identity = {}
-    for did in IDENTITY_DIDS:
-      raw = _safe_read(client, did)
-      if raw is not None:
-        identity[f"0x{did:04X}"] = {"data_hex": raw.hex(), "ascii": _ascii(raw)}
-    dtcs = []
-    for code, status in records:
-      dtcs.append({
-        "code": code,
-        "status": status,
-        "status_bits": decode_status_bits(status),
-        "fault_status": bool(status & profile.fault_status_mask),
-        "descriptions": profile.describe_dtc(spec or address, code) if spec is not None else [],
-      })
-    ecus.append({
-      "key": key,
-      "name": name,
-      "address": address,
-      "sub_addr": sub_addr,
-      "category_id": category_id,
-      "identity": identity,
-      "dtcs": dtcs,
-      "fault_count": sum(1 for row in dtcs if row["fault_status"]),
+def _identity(profile: registry.Profile, ecu: registry.EcuSpec, client_factory) -> dict[str, Any] | None:
+  plan = _generic_cid_plan(profile, ecu)
+  if plan is None:
+    return None
+  command, did = plan
+  session = DiagnosticSession(profile, ecu, client_factory=client_factory, operation_row=command)
+  try:
+    with session:
+      requests = [row for row in command["requests"] if row.get("resolved")]
+      if requests[0].get("session_requirement") == SESSION_REQUIREMENT_EXTENDED:
+        session.enter_extended()
+      value = bytes(session.client().read_data_by_identifier(did))
+  except MessageTimeoutError:
+    return {"did": did, "state": "no_response", "data_hex": None, "ascii": None}
+  except NegativeResponseError as e:
+    return {"did": did, "state": "negative_response", "data_hex": None, "ascii": None, "error": str(e)}
+  except Exception as e:
+    return {"did": did, "state": "error", "data_hex": None, "ascii": None, "error": str(e)}
+  return {"did": did, "state": "positive", "data_hex": value.hex(), "ascii": _printable_ascii(value)}
+
+
+def _dtcs(profile: registry.Profile, ecu: registry.EcuSpec, client_factory) -> dict[str, Any]:
+  try:
+    data = client_factory(ecu.address, ecu.sub_addr).read_dtc_information(
+      dtc.DTC_REPORT_TYPE.DTC_BY_STATUS_MASK, dtc.DTC_STATUS_MASK_TYPE.ALL)
+    records = dtc.parse_dtc_response(data)
+  except MessageTimeoutError:
+    return {"state": "no_response", "records": [], "fault_count": 0}
+  except NegativeResponseError as e:
+    return {"state": "negative_response", "records": [], "fault_count": 0, "error": str(e)}
+  except Exception as e:
+    return {"state": "error", "records": [], "fault_count": 0, "error": str(e)}
+
+  rows = []
+  for code, status in records:
+    rows.append({
+      "code": code,
+      "status": status,
+      "status_bits": registry.decode_status_bits(status),
+      "fault_status": bool(status & profile.fault_status_mask),
+      "descriptions": profile.describe_dtc(ecu, code),
     })
-  mount_candidates = [dict(candidate) for candidate in profile.mount_candidates()]
+  return {"state": "positive", "records": rows, "fault_count": sum(row["fault_status"] for row in rows)}
+
+
+def build(profile: registry.Profile, client_factory, transport_state: dict[str, Any] | None = None, *,
+          include_identities: bool = True) -> dict[str, Any]:
+  """Collect one all-system read-only Health Check from Toyota's vehicle profile."""
+  if profile.vehicle_type is None or profile.vehicle_resolution is None:
+    raise registry.RegistryError("Health Check requires a selected Toyota vehicle profile")
+
+  mount_rows = resolver.probe_mount_candidates(profile, client_factory)
+  mount_lookup = _mount_by_endpoint(profile, mount_rows)
+  ecus: list[dict[str, Any]] = []
+  fault_count = 0
+  dtc_positive = 0
+  identity_positive = 0
+
+  for ecu in profile.ecus:
+    mount = mount_lookup.get(ecu.endpoint)
+    responding = bool(mount and mount.get("transport_responded") is True)
+    dtc_result = {"state": "not_queried", "records": [], "fault_count": 0}
+    identity = None
+    if responding:
+      dtc_result = _dtcs(profile, ecu, client_factory)
+      dtc_positive += int(dtc_result["state"] == "positive")
+      fault_count += int(dtc_result["fault_count"])
+      if include_identities:
+        identity = _identity(profile, ecu, client_factory)
+        identity_positive += int(identity is not None and identity.get("state") == "positive")
+
+    ecus.append({
+      "key": ecu.key,
+      "name": ecu.name,
+      "category_id": ecu.category_id,
+      "generation": ecu.generation,
+      "address": ecu.address,
+      "sub_addr": ecu.sub_addr,
+      "transport_kind": ecu.transport_kind,
+      "controller": ecu.controller,
+      "mount": None if mount is None else {
+        "install_set_id": mount.get("install_set_id"),
+        "live_state": mount.get("live_state"),
+        "transport_responded": mount.get("transport_responded"),
+        "probe_available": mount.get("probe_available"),
+        "support_mode": mount.get("support_mode"),
+        "support_root": mount.get("support_root"),
+        "supported_group_count": mount.get("supported_group_count"),
+        "probe_error": mount.get("probe_error") or mount.get("support_error"),
+      },
+      "dtc": dtc_result,
+      "identity": identity,
+    })
+
+  responding_count = sum(row.get("transport_responded") is True for row in mount_rows)
   return {
+    "schema": SCHEMA,
+    "captured_at": datetime.now(timezone.utc).isoformat(),
     "profile": profile.name,
     "vehicle": profile.vehicle,
-    "panda_bus": profile.bus,
+    "vehicle_type": profile.vehicle_type,
+    "region": profile.region,
+    "logical_bus": profile.bus,
     "transport": transport_state,
-    "responding_ecus": len(ecus),
-    "fault_status_records": len(faults),
+    "summary": {
+      "install_candidates": len(mount_rows),
+      "mount_responding": responding_count,
+      "mount_no_response": sum(row.get("live_state") == "no_response" for row in mount_rows),
+      "mount_probe_unavailable": sum(row.get("live_state") == "probe_unavailable" for row in mount_rows),
+      "dtc_positive_ecus": dtc_positive,
+      "identity_positive_ecus": identity_positive,
+      "fault_status_records": fault_count,
+    },
+    "coverage": {
+      "mount_support": "implemented for recovered family-local support modes",
+      "dtc": "UDS ReadDTCInformation DTC_BY_STATUS_MASK over responding routed ECUs",
+      "identity": "exact exported generic_cid request where available" if include_identities else "disabled by caller",
+      "generic_ffd": "not_implemented",
+      "info_code": "not_implemented",
+      "operation_history": "not_implemented",
+      "monitor_data": "not_implemented",
+      "timestamp_data": "not_implemented",
+    },
     "ecus": ecus,
-    "toyota_mount_candidates": mount_candidates,
   }
 
 
+def save(document: dict[str, Any], path: str | Path) -> Path:
+  out = Path(path).expanduser()
+  out.parent.mkdir(parents=True, exist_ok=True)
+  out.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+  return out
+
+
 def render(document: dict[str, Any]) -> str:
-  transport = document.get("transport") or {}
-  lines = [document["vehicle"], ""]
-  if transport:
-    lines.append(f"Transport: {transport.get('mode', '?')} ({'ready' if transport.get('ready') else 'not ready'})")
-  lines.append(f"Profile:   {document['profile']}  Panda bus={document['panda_bus']}")
-  lines.append(f"ECUs:      {document['responding_ecus']} responding Toyota logical ECU endpoint(s)")
-  candidates = document.get("toyota_mount_candidates") or []
-  if candidates:
-    routed = sum(isinstance(row.get("transport_route"), dict) for row in candidates)
-    lines.append(f"Toyota:    {len(candidates)} logical mount candidates; {routed} Toyota transport routes")
-  lines.append(f"DTCs:      {document['fault_status_records']} fault-status record(s)")
-  lines.append("")
+  summary = document["summary"]
+  lines = [
+    f"{document['vehicle']} Health Check",
+    f"Toyota type {document['vehicle_type']}  region={document.get('region')}  logical bus={document.get('logical_bus')}",
+    (
+      f"Installed candidates: {summary['install_candidates']}  responding: {summary['mount_responding']}  "
+      f"DTC responders: {summary['dtc_positive_ecus']}  faults: {summary['fault_status_records']}"
+    ),
+    "",
+  ]
   for row in document["ecus"]:
-    mark = "!" if row["fault_count"] else "✓"
-    ident = row.get("identity", {})
-    f181 = (ident.get("0xF181") or {}).get("ascii")
-    suffix = f"  {f181}" if f181 else ""
-    key = row.get("key") or "?"
-    endpoint = f"{row['address']:#05x}" + (f"/{row['sub_addr']:#04x}" if row.get("sub_addr") is not None else "")
-    lines.append(f"{mark} {row['name']:<30} {endpoint:<12}  {key:<18}{suffix}")
-    for fault in row["dtcs"]:
+    mount = row.get("mount") or {}
+    live_state = mount.get("live_state") or "unresolved"
+    dtc_result = row["dtc"]
+    mark = "!" if dtc_result["fault_count"] else ("✓" if live_state == "responding" else "-")
+    endpoint = f"0x{row['address']:X}" + (f"/0x{row['sub_addr']:02X}" if row.get("sub_addr") is not None else "")
+    ident = row.get("identity") or {}
+    ident_text = ident.get("ascii") or (ident.get("data_hex") if ident.get("state") == "positive" else None)
+    suffix = f"  {ident_text}" if ident_text else ""
+    lines.append(
+      f"{mark} {row['name']:<38} {endpoint:<14} cat={row['category_id']:<5} "
+      f"mount={live_state:<17} dtc={dtc_result['state']}{suffix}"
+    )
+    for fault in dtc_result["records"]:
       if not fault["fault_status"]:
         continue
-      desc = fault["descriptions"][0] if fault["descriptions"] else {}
-      label = desc.get("description") or fault["code"]
-      failure = desc.get("failure")
-      extra = f" — {failure}" if failure else ""
-      lines.append(f"    {fault['code']} {fault['status']:#04x}  {label}{extra}")
+      description = fault["descriptions"][0] if fault["descriptions"] else {}
+      name = description.get("description") or fault["code"]
+      failure = description.get("failure")
+      lines.append(f"    {fault['code']} status=0x{fault['status']:02X} {name}" + (f" — {failure}" if failure else ""))
+  pending = [key for key, value in document["coverage"].items() if value == "not_implemented"]
+  if pending:
+    lines.extend(("", "GTS+ Health Check parity still pending: " + ", ".join(pending)))
   return "\n".join(lines)

@@ -86,15 +86,14 @@ Missing work includes:
 
 ### 4. Health Check
 
-`toyota scan` is not yet GTS+ Health Check parity. GTS+ Health Check aggregates and stores substantially more than live DTCs, including DTC/FFD/Info Code/Operation History/Monitor Data and optional time-stamp data.
+`toyota health-check` (with `scan` as an exact CLI alias) now provides the all-system foundation over the selected Toyota vehicle's install-set/mount model. It preserves every logical candidate, probes Toyota's recovered family-local support root where available, acquires DTCs only from responding routed ECUs, performs exact exported generic-CID identity reads where available, and can persist the complete open JSON document with `--out`. There is no separate maintainer-address scan implementation.
 
-Needed:
+Still needed for GTS+ Health Check parity:
 
-- all-system mounted-ECU inventory using Toyota's live capability model;
-- generic freeze-frame retrieval;
+- generic per-DTC freeze-frame retrieval and decoding;
 - Info Code / Operation History / VCH / RoB collection;
-- report/store format independent of Toyota proprietary binaries;
-- refresh/diff behavior over saved snapshots.
+- monitor-data and optional timestamp-data capture;
+- refresh/diff behavior over saved snapshots and report presentation.
 
 ### 5. DTC and generic freeze-frame families
 
@@ -196,7 +195,7 @@ GTS+ also relies on Toyota-hosted services for operations such as reprogramming 
 ## Recommended implementation order
 
 1. **Finish transport breadth:** the Panda/J2534 raw-CAN abstraction is landed; next add native J2534 ISO15765 as needed, then CAN-FD/DoIP and older J2534 protocols.
-2. **Health Check foundation:** generic mounted-ECU inventory, DTC + generic FFD + Info Code collection, durable open snapshots.
+2. **Health Check breadth:** all-system mount/DTC/identity snapshot and durable JSON are landed; next generic FFD, Info Code/Operation History/VCH/RoB, and refresh/diff.
 3. **Active Test completion:** ordinary P5 direct runtime length is landed; next parameterized routines, multi-control writes, and P6 execution.
 4. **Customize.** High user value and relatively bounded compared with reflash.
 5. **Utilities/registration/learning.** Add concrete operations family-by-family from exact recovered plugin semantics.

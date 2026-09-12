@@ -15,7 +15,7 @@ The bundled metadata is copied byte-for-byte from generated outputs in `ghidra_r
 
 ## CLI reference
 
-`toyota` is a standalone entry point for Toyota diagnostics recovered from Techstream/GTS+. The bundled `camry-2026-f33` registry is a generated, derived artifact: it contains Toyota's current vehicle/VIN resolver, install sets and 34 logical mount candidates, Toyota's category+phase transport routes from `CDbProtInfoTable`, literal multi-family support dispatch and live P5/P6 capability metadata, GTS DID/DTC catalogs, static Active-Test plans, exact-F33 identity observations, and the live-validated DTC-clear route. The historical 17-address Camry sweep remains observation data for DTC maintenance; it is not used to admit or route Toyota logical categories. The CLI also bundles clean generated metadata for the current GTS+ TSS3 Operation/Image FFD protocols and PCS Data Viewer recorder schema. It does **not** contain Toyota DLL/DDB/EXE binaries.
+`toyota` is a standalone entry point for Toyota diagnostics recovered from Techstream/GTS+. The default bundled database is the current universal Toyota resolver: vehicle/VIN decision tables, install sets, logical mount candidates, category+phase transport routes from `CDbProtInfoTable`, literal support-family dispatch, live P5/P6 capability metadata, GTS DID/DTC catalogs, and static Active-Test plans. The older Camry JSON is retained only as a compatibility/evidence fixture; live all-system commands use the selected vehicle's Toyota install set and resolved routes, not a maintainer-specific address list. The CLI also bundles clean generated metadata for the current GTS+ TSS3 Operation/Image FFD protocols and PCS Data Viewer recorder schema. It does **not** contain Toyota DLL/DDB/EXE binaries.
 
 Offline discovery works without Panda access. The CLI is ECU-first now, so you can browse by Toyota names instead of memorizing DIDs or command families:
 
@@ -72,8 +72,9 @@ toyota monitor frc 0x1601 0x1914 --jsonl > frc-monitor.jsonl
 toyota monitor frc 0x1601 0x1914 --csv > frc-monitor.csv
 toyota observe tss3-longitudinal --changed
 toyota observe frc:0x1601 brake:0x10A1 --jsonl > joined-monitor.jsonl
-toyota scan
-toyota scan --json > car-snapshot.json
+toyota health-check --out car-health.json
+toyota health-check --json > car-health.json
+toyota scan --json > car-health.json  # exact alias of health-check
 toyota vehicle detect
 toyota vehicle mounted
 toyota did support frc 0x1601 0x1914
@@ -118,7 +119,7 @@ For the exact Camry live witness, frame `0201` is split 1 / data set 1 / trigger
 
 `observe` extends the same read-only monitor machinery across multiple ECUs. Each argument is `ECU:DID_OR_TERM`; the renderer adds an ECU column only when needed and `--changed` keys state by ECU+DID+signal so identically named signals cannot collide. The built-in `tss3-longitudinal` preset captures the current recovered request/source-sink join in one sample group: FRC `0x1B03..0x1B07` plus Brake `0x10A1..0x10A4`. Those Brake values are the Toyota-named upper/lower request acceleration and request IDs "from Toyota Safety Sense"; the FRC values are the corresponding request-side ISA upper-limit state. This preset is an observation convenience, not an assertion that either ECU owns final arbitration or the protected wire publisher.
 
-`scan` produces a read-only vehicle inventory over the historical 17-address post-repin DTC sweep, with F181/F18C/0105 identity reads where supported, DTC status, active-fault summaries, transport state, and profile identity. It carries the 34 Toyota logical mount candidates separately with their Toyota-derived routes; DTC-sweep responses are not projected onto those logical categories.
+`health-check` is the all-system read-only snapshot surface; `scan` is only a command alias to the same handler. The selected Toyota vehicle's install sets define the candidate ECUs, `vehicle mounted` support probing determines which routed logical endpoints respond, and DTC acquisition is then performed only on those live responders. Exact exported `generic_cid` identity reads are collected where the category has that recovered command; no arbitrary F181/F18C/0105 sweep is invented. The snapshot stores every candidate—including nonresponders—with category, route, mount/support state, DTC state, identity state, and explicit coverage gaps. `--out` writes the same open JSON document printed by `--json`.
 
 `vehicle detect` obtains the VIN once through opendbc's standard read-only VIN query and executes the recovered Toyota resolver stage appropriate to the VIN-source category. Phase5/Phase6 type-59 `CDbVinVehicleDecisionTable` hits are final at this stage. Phase3/Phase4 hits are explicitly non-final because Toyota next runs the Spe-master probe program and type-41 `CDbVehicleDecisionTable`; the CLI will not silently promote such a candidate to a selected vehicle until that live stage is materialized. VIN10 itself rejects generation-low5 5..19, but Toyota's master separately binds legacy `SelectCarType.dll`/`SelectCarTypeVin.dll`; those binaries are absent from the current GTS+ corpus, so that path is reported as unresolved rather than unsupported. `vehicle mounted` starts from the selected Toyota vehicle's own install sets and keeps every logical category. Class-`0x10D` supplies the category+phase route, and the bundle also records Toyota's selected transport controller rather than assuming every raw address field is an 11-bit CAN ID. Phase `0x12` categories use the Phase5 ISO15765 controller and ordinary/extended-address routes (for example Camry FRC `0x792`, Combination Meter `0x7C0`, or TPM `0x750/0x2A`). Phase `0x18`/`0x38` selects `CCommCtrlISO15765_29BitCan`; its class-`0x10D +0x08` byte is a target address and materializes as normal-fixed `0x18DA<target>F1` with response `0x18DAF1<target>` (for example P6 Engine category 6000 target `00` -> `0x18DA00F1`). Other Toyota controller families remain represented even when this Panda runtime does not implement them; that state is `probe_unavailable`, not category absence. Class-`0x10D +0x14` is interpreted as a standard legislated physical request only when it lies in `0x7E0..0x7E7`; other values are preserved as route metadata rather than rejected. Timeouts remain observations, not absence claims.
 
@@ -130,7 +131,7 @@ The exact Camry maintenance clear is now:
 toyota dtc clear
 ```
 
-It scans the exact 17-address post-repin maintenance set, attempts physical `14 FF FF FF` on responding ECUs, sends the validated functional `0x7DF` Mode 04 frame, then rescans and fails if any `status & 0xAF` fault bits remain. Exact-F33 F181 remains available as an identity observation, but it is not re-read as an admission check before clearing.
+It uses the selected vehicle's resolved UDS-capable logical ECU set, attempts physical `14 FF FF FF` on responders, sends the validated functional `0x7DF` Mode 04 frame where that clear contract applies, then rescans and fails if any `status & 0xAF` fault bits remain. Exact-F33 F181 remains evidence, not an admission check or routing authority.
 
 Raw/functional requests use a small service classifier only to decide whether explicit `--force` acknowledgement is required. That acknowledgement is a CLI user-intent boundary, not a Toyota capability resolver or vehicle-permission layer; after it is supplied, an explicit numeric endpoint is not required to be pre-registered.
 

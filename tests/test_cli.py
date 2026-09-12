@@ -508,28 +508,64 @@ class TestLiveCli(unittest.TestCase):
       with self.assertRaisesRegex(SystemExit, "no concrete executable utility resolved"):
         run_cli(["utility", "run", "frc", "0xD4", "--execute"])
 
-  def test_scan_builds_high_level_inventory(self):
+  def test_health_check_and_scan_alias_use_toyota_install_set(self):
     import json
+
     scripted = support.ScriptedUds()
     scripted.dtc[0x7A1] = support.dtc_payload()
-    scripted.did[0x7A1] = {
-      0xF181: b"\x00" + support.EXPECTED_EPS_F181 + b"\x00",
-      0xF18C: b"SERIAL123",
-      0x0105: b"PART123",
-    }
+    scripted.did[0x7A1] = {0xF181: support.EXPECTED_EPS_F181}
     panda = support.FakePanda()
-    state = {"pandad_running": True, "mode": "managed-sendcan", "ready": True, "detail": "ready"}
-    with self.patch_live(panda, scripted), mock.patch("toyota_diag.transport.status", return_value=state):
-      rc, output = run_cli(["scan", "--json"])
+    state = {"backend": "panda", "mode": "managed-sendcan", "ready": True, "detail": "ready"}
+
+    def mounted(profile, client_factory):
+      del client_factory
+      rows = []
+      for candidate in profile.mount_candidates():
+        row = dict(candidate)
+        responding = int(row["category_id"]) == 405
+        row.update(
+          live_state="responding" if responding else "no_response",
+          transport_responded=responding,
+          probe_available=True,
+          support_mode="p5-standard",
+          support_root=True if responding else None,
+          supported_group_count=1 if responding else None,
+          support_error=None,
+        )
+        rows.append(row)
+      return rows
+
+    with self.patch_live(panda, scripted), \
+         mock.patch("toyota_diag.transport.status", return_value=state), \
+         mock.patch("toyota_diag.snapshot.resolver.probe_mount_candidates", side_effect=mounted):
+      rc, output = run_cli(["--vehicle", "12704", "health-check", "--json"], use_default_registry=True)
     self.assertEqual(rc, 0, output)
     document = json.loads(output)
-    self.assertEqual((document["profile"], document["responding_ecus"]), ("camry-2026-f33", 1))
-    self.assertEqual(document["ecus"][0]["key"], "eps")
-    self.assertIn("8965F3307000", document["ecus"][0]["identity"]["0xF181"]["ascii"])
-    self.assertEqual(len(document["toyota_mount_candidates"]), 34)
-    eps_candidate = next(row for row in document["toyota_mount_candidates"] if row["category_id"] == 405)
-    self.assertEqual(eps_candidate["transport_route"]["request_address"], 0x7A1)
-    self.assertNotIn("dtc_scan_responded", eps_candidate)
+    self.assertEqual(document["schema"], "toyota-health-check-v1")
+    self.assertEqual(document["vehicle_type"], 12704)
+    self.assertEqual(document["summary"]["install_candidates"], 34)
+    self.assertEqual(document["summary"]["mount_responding"], 1)
+    self.assertEqual(len(document["ecus"]), 34)
+    eps = next(row for row in document["ecus"] if row["key"] == "eps")
+    self.assertEqual(eps["mount"]["live_state"], "responding")
+    self.assertEqual(eps["dtc"]["state"], "positive")
+    self.assertEqual(eps["identity"]["did"], 0xF181)
+    self.assertEqual(eps["identity"]["ascii"], support.EXPECTED_EPS_F181.decode())
+    engine = next(row for row in document["ecus"] if row["key"] == "engine")
+    self.assertEqual(engine["dtc"]["state"], "not_queried")
+
+    # `scan` is only a command alias: same handler, same snapshot schema, no legacy path.
+    with self.patch_live(panda, scripted), \
+         mock.patch("toyota_diag.transport.status", return_value=state), \
+         mock.patch("toyota_diag.snapshot.resolver.probe_mount_candidates", side_effect=mounted):
+      rc, output = run_cli([
+        "--vehicle", "12704", "scan", "--json", "--no-identities",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    alias_document = json.loads(output)
+    self.assertEqual(alias_document["schema"], document["schema"])
+    self.assertEqual(alias_document["summary"]["install_candidates"], 34)
+    self.assertEqual(alias_document["coverage"]["identity"], "disabled by caller")
 
   def test_vehicle_detect_uses_toyota_vin_decision_not_f181_guard(self):
     scripted = support.ScriptedUds()

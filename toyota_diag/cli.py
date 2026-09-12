@@ -31,7 +31,7 @@ def _cli_int(value: str, what: str) -> int:
 
 
 LIVE_VEHICLE_CONTEXT_FUNCS = frozenset({
-  "cmd_vehicle_mounted", "cmd_scan", "cmd_monitor", "cmd_observe",
+  "cmd_vehicle_mounted", "cmd_health_check", "cmd_monitor", "cmd_observe",
   "cmd_did_read", "cmd_did_support", "cmd_did_watch", "cmd_rid_support", "cmd_dtc_scan", "cmd_dtc_clear",
   "cmd_ffd_operation_list", "cmd_ffd_operation_records", "cmd_ffd_operation_read",
   "cmd_ffd_image_info", "cmd_ffd_image_list", "cmd_ffd_image_read",
@@ -1487,17 +1487,33 @@ def cmd_observe(args, profile: Profile) -> int:
     raise SystemExit(f"observe refused/failed: {e}") from e
 
 
-def cmd_scan(args, profile: Profile) -> int:
+def cmd_health_check(args, profile: Profile) -> int:
+  if profile.vehicle_type is None:
+    raise SystemExit("Health Check requires a selected Toyota vehicle; use --vehicle or allow live VIN resolution")
   transport = _live_transport()
   state = transport.status(profile, **_transport_options(args))
   panda = _connect_live(args, profile, transport)
-  client_factory = transport.uds_client_factory(panda, profile)
-  document = snapshot.build(profile, client_factory, state, show_all_dtcs=args.all_dtcs)
+  try:
+    client_factory = transport.uds_client_factory(panda, profile)
+    document = snapshot.build(
+      profile, client_factory, state,
+      include_identities=not bool(getattr(args, "no_identities", False)),
+    )
+  except (registry.RegistryError, resolver.ResolverError) as e:
+    raise SystemExit(f"Health Check failed: {e}") from e
+  finally:
+    close = getattr(panda, "close", None)
+    if callable(close):
+      close()
+
+  out_path = snapshot.save(document, args.out) if args.out else None
   if args.json:
     print(json.dumps(document, sort_keys=True))
   else:
     print(snapshot.render(document))
-  return 1 if document["fault_status_records"] else 0
+    if out_path is not None:
+      print(f"\nsaved: {out_path}")
+  return 1 if document["summary"]["fault_status_records"] else 0
 
 
 def _raw_uds_target(profile: Profile, ref: str):
@@ -1855,10 +1871,14 @@ def build_parser() -> argparse.ArgumentParser:
   p.set_defaults(func=cmd_vehicle_mounted)
   vehicle.set_defaults(func=cmd_vehicle_show, json=False)
 
-  p = commands.add_parser("scan", help="read-only vehicle inventory, identity, and DTC snapshot")
+  p = commands.add_parser(
+    "health-check", aliases=("scan",),
+    help="all-system Toyota install-set Health Check (scan is an alias)",
+  )
+  p.add_argument("--no-identities", action="store_true", help="skip exact exported generic-CID identity reads")
+  p.add_argument("--out", help="write the complete open JSON snapshot to FILE")
   p.add_argument("--json", action="store_true")
-  p.add_argument("--all-dtcs", action="store_true", help="preserve non-fault-status DTC records too")
-  p.set_defaults(func=cmd_scan)
+  p.set_defaults(func=cmd_health_check)
 
   p = commands.add_parser("monitor", help="live decoded Techstream Data List monitor")
   p.add_argument("ecu")
@@ -2144,7 +2164,7 @@ def _normalize_argv(argv: list[str]) -> list[str]:
   tail = argv[index:]
   ecu_actions = {"list", "info", "functions", "plugins", "data", "dtcs", "active-tests"}
   top_level = {
-    "search", "vehicle", "scan", "monitor", "observe", "transport", "can", "ecu", "did", "dtc",
+    "search", "vehicle", "health-check", "scan", "monitor", "observe", "transport", "can", "ecu", "did", "dtc",
     "uds", "ffd", "functional", "active-test", "utility", "rid",
   }
   live_ecu_actions = {"monitor", "read", "watch"}

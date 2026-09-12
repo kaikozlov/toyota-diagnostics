@@ -640,7 +640,7 @@ def probe_mount_candidates(profile: Profile, client_factory) -> list[dict[str, A
       row.update(live_state="probe_unavailable", transport_responded=None, probe_available=False,
                  support_root=None, supported_group_count=None,
                  probe_error=(f"Toyota route uses {route.transport_kind} ({route.controller or 'controller unresolved'}); "
-                              + "this Panda UDS runtime does not implement that transport"))
+                              + "the selected raw-CAN UDS runtime does not implement that transport"))
       result.append(row)
       continue
     root_did = _support_root_did(profile, family or "")
