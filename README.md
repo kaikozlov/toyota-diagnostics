@@ -142,6 +142,8 @@ For ordinary P5 direct `0x2F` tests, a static `plan_only` grade likewise no long
 
 Direct control-enable masks are generated internally from Toyota's recovered encoding-mode rules; there is no Active-Test `--mask` override. Mode 0 derives both start and stop masks from the matching type-67 rows and selected type-68 byte span; modes 1/4 use no start mask and a minimal MSB0 selected-bit-range mask on return-control; mode 3 uses no mask. Mask length is independent of N. The host also owns direct value packing for every current NA/EU/JP ordinary-P5 encoding mode (`0/1/3/4`). Callers provide exactly one of `--raw-value`, `--engineering-value`, or `--choice`; engineering input uses the exported role-`0x70` Mul/Div/Offset/precision/unit metadata and current `CStartActTstSnd::SetValue` inverse conversion, while `--choice` resolves Toyota's OEM display text. Arbitrary N-byte direct payload input is no longer part of the Active-Test CLI. The registry also carries raw Toyota CommSet rows (for example CommSet 1 `receive_timeout=1020`, retry count 1); the runtime exposes those rows but deliberately does not reinterpret the raw timeout as seconds until Techstream's `CheckAndConvertRcvTimeOut` conversion is fully recovered.
 
+Current type-33 **multi-control** execution is also recovered instead of treating the group parent as an ordinary direct test. The generated group catalog carries Toyota's input-slot mapping (`+0x06`: slot 1/2), member IDs/DIDs, and current composer status. `active-test group-run` materializes N once from the shared DID, packs each member through the same direct mode/engineering metadata, OR-composes member payload/start-mask/stop-mask bytes exactly like current `DataMonitorPhase5`, and sends one grouped `0x2F` start/return-control pair. Engine has four materializable two-member groups; group 102 is deliberately blocked because its two members resolve different DIDs and current GTS rejects that mismatch. `active-test group-stop` provides the matching explicit recovery path. A type-33 parent ID is refused by ordinary `active-test run` so the multi composer cannot be accidentally bypassed.
+
 Viewing and listing never transmits. `active-test list --json` and `active-test plan --json` expose the registry geometry grade and concrete runtime construction failures, so automation does not have to infer executability from the catalog. Mutation requires the literal `--execute` user acknowledgement; without `--execute`, `active-test run/stop` is a dry-run. There is no second F181 or session-acknowledgement gate. Started operations always attempt their recovered stop/return-control request on exception or Ctrl-C, and context cleanup returns an extended session to D1. Cleanup failures are surfaced separately and produce a nonzero result instead of looking successful.
 
 ```bash
@@ -154,6 +156,10 @@ toyota active-test run frc 0xA429 --execute --hold 1
 toyota --vehicle 12704 active-test run engine 40000 --execute --button 02 --hold 1
 toyota --vehicle 12704 active-test run engine 4 --execute --engineering-value 0 --hold 1
 toyota --vehicle 12704 active-test run hybrid 1 --execute --choice ON --hold 1
+toyota --vehicle 12704 active-test groups engine
+toyota --vehicle 12704 active-test group-plan engine 76
+toyota --vehicle 12704 active-test group-run engine 76 --execute \
+  --member-choice '77=#2' --member-choice '78=0mm3/st' --hold 1
 toyota active-test stop frc 0xA429 --execute
 ```
 

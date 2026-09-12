@@ -3,11 +3,14 @@ import unittest
 from opendbc.car.uds import MessageTimeoutError, NegativeResponseError
 
 from toyota_diag import registry
-from toyota_diag.executor import (DirectTestPlan, ExecutorError, PlanNotExecutable, RoutineTestPlan,
-                                        can_materialize_direct_runtime_length, can_materialize_routine_runtime,
+from toyota_diag.executor import (DirectTestPlan, ExecutorError, MultiDirectTestPlan, PlanNotExecutable, RoutineTestPlan,
+                                        can_materialize_direct_runtime_length, can_materialize_multi_direct_runtime_length,
+                                        can_materialize_routine_runtime, compose_multi_direct_payload,
                                         direct_choice_to_raw, direct_control_enable_mask, direct_control_enable_masks,
                                         direct_engineering_to_raw, pack_direct_raw_value, materialize_direct_runtime_length,
-                                        materialize_routine_runtime, resolve_plan, run_direct_test, run_routine_test,
+                                        materialize_multi_direct_runtime_length,
+                                        materialize_routine_runtime, resolve_multi_direct_group, resolve_plan,
+                                        run_direct_test, run_multi_direct_test, run_routine_test,
                                         runtime_refusals)
 from toyota_diag.session import DiagnosticSession
 from tests import support
@@ -257,6 +260,50 @@ class TestPlanResolution(unittest.TestCase):
 
     cylinder = profile.lookup_active_test("engine", "77")
     self.assertEqual(direct_choice_to_raw(cylinder, "#3"), 4)
+
+  def test_type33_group_parent_refuses_single_direct_and_group_composes_members(self):
+    profile = registry.load_database().profile("NA", 12704, bus=0)
+    ecu = profile.lookup_ecu("engine")
+    parent = profile.lookup_active_test(ecu, "76", "direct")
+    parent_plan = resolve_plan(ecu, parent)
+    self.assertFalse(parent_plan.executable)
+    self.assertIn("multi-control group parent", " ".join(parent_plan.refusals))
+    self.assertFalse(can_materialize_direct_runtime_length(parent, parent_plan))
+
+    group = profile.lookup_active_test_group(ecu, 76)
+    plan = resolve_multi_direct_group(profile, ecu, group)
+    self.assertIsInstance(plan, MultiDirectTestPlan)
+    self.assertEqual((plan.did, plan.member_ids, plan.input_slots), (0x284A, (77, 78), (1, 2)))
+    self.assertTrue(can_materialize_multi_direct_runtime_length(plan))
+
+    scripted = support.ScriptedUds()
+    scripted.did[0x700] = {0x284A: b"\x00\x00"}
+    with DiagnosticSession(profile, ecu, client_factory=scripted.factory) as session:
+      live = materialize_multi_direct_runtime_length(session, plan)
+      self.assertEqual(live.runtime_length, 2)
+      payload, start_mask, stop_mask = compose_multi_direct_payload(live, {77: 2, 78: 128})
+      self.assertEqual((payload, start_mask, stop_mask), (b"\x02\x80", b"\xc0", b"\xc0"))
+      result = run_multi_direct_test(
+        session, live, hold_s=0.01, raw_values={77: 2, 78: 128}, execute=True,
+        sleep=lambda seconds: None,
+      )
+    self.assertTrue(result.executed)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("read_did", 0x284A),
+      ("io_control", 0x284A, 3, b"\x02\x80", b"\xc0"),
+      ("io_control", 0x284A, 0, b"", b"\xc0"),
+      ("session", 1),
+    ])
+
+  def test_type33_mixed_did_group_fails_closed_without_transport(self):
+    profile = registry.load_database().profile("NA", 12704, bus=0)
+    ecu = profile.lookup_ecu("engine")
+    group = profile.lookup_active_test_group(ecu, 102)
+    plan = resolve_multi_direct_group(profile, ecu, group)
+    self.assertFalse(can_materialize_multi_direct_runtime_length(plan))
+    self.assertIn("DID bytes differ", " ".join(plan.refusals))
 
   def test_direct_raw_scalar_packer_matches_current_modes(self):
     mode0 = {"encoding_mode": 0, "bit_start": 8, "bit_end": 15}

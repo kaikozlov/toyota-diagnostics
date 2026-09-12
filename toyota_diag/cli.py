@@ -611,7 +611,10 @@ def _result_document(result: executor.ActiveTestResult, cleanup_errors: tuple[st
     "test_id": result.plan.test_id,
     "name": result.plan.name,
     "kind": result.plan.kind,
-    "runtime_length": result.plan.runtime_length if isinstance(result.plan, executor.DirectTestPlan) else None,
+    "runtime_length": (
+      result.plan.runtime_length
+      if isinstance(result.plan, (executor.DirectTestPlan, executor.MultiDirectTestPlan)) else None
+    ),
     "executed": result.executed,
     "session_requirement": result.session_requirement,
     "start_response_hex": result.start.hex() if result.start is not None else None,
@@ -661,6 +664,163 @@ def _active_test_lookup(profile: Profile, args) -> tuple[Any, dict[str, Any], ex
   except registry.RegistryError as e:
     raise SystemExit(str(e)) from e
   return ecu, row, executor.resolve_plan(ecu, row)
+
+
+def _active_test_group_lookup(profile: Profile, args) -> tuple[Any, dict[str, Any], executor.MultiDirectTestPlan]:
+  try:
+    ecu = profile.lookup_ecu(args.ecu)
+    group = profile.lookup_active_test_group(ecu, args.item)
+  except registry.RegistryError as e:
+    raise SystemExit(str(e)) from e
+  return ecu, group, executor.resolve_multi_direct_group(profile, ecu, group)
+
+
+def cmd_active_test_groups(args, profile: Profile) -> int:
+  ecu = None
+  if args.ecu:
+    try:
+      ecu = profile.lookup_ecu(args.ecu)
+    except registry.RegistryError as e:
+      raise SystemExit(str(e)) from e
+  if args.json:
+    print(json.dumps(active_test.group_list_document(profile, ecu), sort_keys=True))
+  else:
+    print(active_test.render_group_list(profile, ecu))
+  return 0
+
+
+def cmd_active_test_group_plan(args, profile: Profile) -> int:
+  ecu, group, _ = _active_test_group_lookup(profile, args)
+  if args.json:
+    print(json.dumps({
+      "profile": profile.name, "vehicle": profile.vehicle,
+      "active_test_group": active_test.describe_group(profile, ecu, group),
+    }, sort_keys=True))
+  else:
+    print(active_test.render_group_plan(profile, ecu, group))
+  return 0
+
+
+def _member_assignment(value: str, what: str) -> tuple[int, str]:
+  if "=" not in value:
+    raise SystemExit(f"{what} requires MEMBER_ID=VALUE")
+  member_text, member_value = value.split("=", 1)
+  if not member_value:
+    raise SystemExit(f"{what} requires a non-empty value after '='")
+  return _cli_int(member_text, f"{what} member ID"), member_value
+
+
+def _multi_group_raw_values(plan: executor.MultiDirectTestPlan, args) -> dict[int, int]:
+  by_id = {member_id: row for member_id, row in zip(plan.member_ids, plan.member_rows)}
+  values: dict[int, int] = {}
+
+  def add(member_id: int, raw: int, source: str) -> None:
+    if member_id not in by_id:
+      raise SystemExit(f"{source}: member 0x{member_id:X} is not part of group 0x{plan.test_id:X}")
+    if member_id in values:
+      raise SystemExit(f"member 0x{member_id:X} was assigned more than once")
+    values[member_id] = raw
+
+  for text in args.member_raw_value or []:
+    member_id, raw_text = _member_assignment(text, "--member-raw-value")
+    add(member_id, _cli_int(raw_text, "--member-raw-value"), "--member-raw-value")
+  for text in args.member_engineering_value or []:
+    member_id, engineering = _member_assignment(text, "--member-engineering-value")
+    try:
+      raw = executor.direct_engineering_to_raw(by_id.get(member_id, {}), engineering)
+    except executor.ExecutorError as e:
+      raise SystemExit(f"--member-engineering-value: {e}") from e
+    add(member_id, raw, "--member-engineering-value")
+  for text in args.member_choice or []:
+    member_id, choice = _member_assignment(text, "--member-choice")
+    try:
+      raw = executor.direct_choice_to_raw(by_id.get(member_id, {}), choice)
+    except executor.ExecutorError as e:
+      raise SystemExit(f"--member-choice: {e}") from e
+    add(member_id, raw, "--member-choice")
+
+  missing = [member_id for member_id in plan.member_ids if member_id not in values]
+  if missing:
+    raise SystemExit(
+      "multi-control execution requires exactly one value for every member; missing "
+      + ", ".join(f"0x{member_id:X}" for member_id in missing))
+  # Fail value width/range before transport using the largest static member minimum.
+  static_length = max(int(row.get("runtime_length_minimum") or 1) for row in plan.member_rows)
+  for member_id, row in by_id.items():
+    try:
+      executor.pack_direct_raw_value(row, static_length, values[member_id])
+    except executor.ExecutorError as e:
+      raise SystemExit(f"member 0x{member_id:X}: {e}") from e
+  return values
+
+
+def cmd_active_test_group_run(args, profile: Profile) -> int:
+  ecu, group, plan = _active_test_group_lookup(profile, args)
+  if not args.execute:
+    print(active_test.render_group_plan(profile, ecu, group))
+    print("\nDRY RUN: no request sent; pass --execute to acknowledge mutation")
+    return 0
+  if args.hold <= 0:
+    raise SystemExit("--hold must be > 0 seconds")
+  if not executor.can_materialize_multi_direct_runtime_length(plan):
+    raise SystemExit("Active Test group refused before transport: " + "; ".join(plan.refusals))
+  raw_values = _multi_group_raw_values(plan, args)
+
+  live = _live_transport()
+  panda = _connect_live(args, profile, live)
+  operation_row = plan.member_rows[0] if plan.member_rows else None
+  session = DiagnosticSession(profile, ecu, panda=panda, operation_row=operation_row)
+  try:
+    with session:
+      plan = executor.materialize_multi_direct_runtime_length(session, plan)
+      result = executor.run_multi_direct_test(
+        session, plan, hold_s=args.hold, raw_values=raw_values, execute=True)
+  except KeyboardInterrupt as e:
+    _report_exception_cleanup(e, session)
+    print("interrupted; emergency group stop and default-session cleanup were attempted", file=sys.stderr)
+    return 130
+  except (executor.ExecutorError, executor.PlanNotExecutable, LifecycleError, registry.RegistryError) as e:
+    _report_exception_cleanup(e, session)
+    raise SystemExit(f"Active Test group refused/failed: {e}") from e
+  except Exception as e:
+    _report_exception_cleanup(e, session)
+    raise SystemExit(f"Active Test group failed after cleanup attempt: {e}") from e
+  cleanup_errors = tuple(session.cleanup_errors)
+  if args.json:
+    print(json.dumps(_result_document(result, cleanup_errors), sort_keys=True))
+  else:
+    print(_render_result(result, cleanup_errors))
+  return 3 if _result_document(result, cleanup_errors)["cleanup_errors"] else 0
+
+
+def cmd_active_test_group_stop(args, profile: Profile) -> int:
+  ecu, group, plan = _active_test_group_lookup(profile, args)
+  if not args.execute:
+    print(active_test.render_group_plan(profile, ecu, group))
+    print("\nSTOP PLAN ONLY: no request sent; pass --execute to acknowledge recovery mutation")
+    return 0
+  if not executor.can_materialize_multi_direct_runtime_length(plan):
+    raise SystemExit("Active Test group stop refused before transport: " + "; ".join(plan.refusals))
+  live = _live_transport()
+  panda = _connect_live(args, profile, live)
+  operation_row = plan.member_rows[0] if plan.member_rows else None
+  session = DiagnosticSession(profile, ecu, panda=panda, operation_row=operation_row)
+  try:
+    with session:
+      plan = executor.materialize_multi_direct_runtime_length(session, plan)
+      result = executor.stop_multi_direct_test(session, plan, execute=True)
+  except (executor.ExecutorError, executor.PlanNotExecutable, LifecycleError, registry.RegistryError) as e:
+    _report_exception_cleanup(e, session)
+    raise SystemExit(f"Active Test group stop refused/failed: {e}") from e
+  except Exception as e:
+    _report_exception_cleanup(e, session)
+    raise SystemExit(f"Active Test group stop failed after cleanup attempt: {e}") from e
+  cleanup_errors = tuple(session.cleanup_errors)
+  if args.json:
+    print(json.dumps(_result_document(result, cleanup_errors), sort_keys=True))
+  else:
+    print(_render_result(result, cleanup_errors))
+  return 3 if _result_document(result, cleanup_errors)["cleanup_errors"] else 0
 
 
 def cmd_active_test_run(args, profile: Profile) -> int:
@@ -2132,6 +2292,31 @@ def build_parser() -> argparse.ArgumentParser:
   p.add_argument("--kind", choices=("direct", "routine"))
   p.add_argument("--json", action="store_true", help="emit the zero-transmit plan and runtime refusal reasons as JSON")
   p.set_defaults(func=cmd_active_test_plan)
+  p = at_sub.add_parser("groups", help="list current type-33 multi-control Active Test groups")
+  p.add_argument("ecu", nargs="?")
+  p.add_argument("--json", action="store_true")
+  p.set_defaults(func=cmd_active_test_groups)
+  p = at_sub.add_parser("group-plan", help="show one recovered type-33 group composer plan")
+  p.add_argument("ecu")
+  p.add_argument("item")
+  p.add_argument("--json", action="store_true")
+  p.set_defaults(func=cmd_active_test_group_plan)
+  p = at_sub.add_parser("group-run", help="run one materializable type-33 group")
+  p.add_argument("ecu")
+  p.add_argument("item")
+  p.add_argument("--hold", type=float, default=1.0)
+  p.add_argument("--member-raw-value", action="append", help="MEMBER_ID=raw_integer; repeat per member")
+  p.add_argument("--member-engineering-value", action="append", help="MEMBER_ID=engineering_value; repeat per member")
+  p.add_argument("--member-choice", action="append", help="MEMBER_ID=OEM_choice; repeat per member")
+  p.add_argument("--execute", action="store_true")
+  p.add_argument("--json", action="store_true")
+  p.set_defaults(func=cmd_active_test_group_run)
+  p = at_sub.add_parser("group-stop", help="send only the recovered composed return-control for a type-33 group")
+  p.add_argument("ecu")
+  p.add_argument("item")
+  p.add_argument("--execute", action="store_true")
+  p.add_argument("--json", action="store_true")
+  p.set_defaults(func=cmd_active_test_group_stop)
   p = at_sub.add_parser("run", help="run a recovered Active Test with fully materialized runtime geometry")
   p.add_argument("ecu")
   p.add_argument("item")

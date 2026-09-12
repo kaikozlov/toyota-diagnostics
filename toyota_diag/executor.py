@@ -99,6 +99,16 @@ class DirectTestPlan(TestPlan):
 
 
 @dataclass(frozen=True, kw_only=True)
+class MultiDirectTestPlan(TestPlan):
+  """Current P5 type-33 group composed from ordinary direct member controls."""
+  did: int = 0
+  member_ids: tuple[int, ...] = ()
+  input_slots: tuple[int, ...] = ()
+  member_rows: tuple[dict[str, Any], ...] = ()
+  runtime_length: int | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class RoutineTestPlan(TestPlan):
   """Recovered 0x31 RoutineControl plan with start/status/stop phases."""
   rid: int = 0
@@ -134,6 +144,9 @@ def _base_refusals(row: dict[str, Any], kind: str, service: int, positive_sid: i
     refusals.append(f"service is {row.get('service')!r}, expected {service:#04x}")
   if row.get("positive_response") != positive_sid:
     refusals.append(f"positive response SID is {row.get('positive_response')!r}, expected {positive_sid:#04x}")
+  if kind == "direct" and row.get("multi_control_group"):
+    refusals.append(
+      "selected Active Test is a type-33 multi-control group parent; use the grouped composer")
   if row.get("session_requirement") not in DECLARED_SESSION_REQUIREMENTS:
     declared = ", ".join(sorted(DECLARED_SESSION_REQUIREMENTS))
     refusals.append(f"session_requirement {row.get('session_requirement')!r} is not one of {declared}")
@@ -179,7 +192,8 @@ def _direct_runtime_length_probe(row: dict[str, Any], plan: TestPlan) -> dict[st
   """Return a validated exact Toyota runtime-length probe, without transmitting."""
   if not isinstance(plan, DirectTestPlan) or plan.runtime_length is not None:
     return None
-  if row.get("kind") != "direct" or row.get("execution") not in {"plan_only", "executable"}:
+  if (row.get("kind") != "direct" or row.get("execution") not in {"plan_only", "executable"}
+      or row.get("multi_control_group")):
     return None
 
   probe = row.get("runtime_length_probe")
@@ -284,6 +298,158 @@ def materialize_direct_runtime_length(session: DiagnosticSession, row: dict[str,
   if not isinstance(live_plan, DirectTestPlan):
     raise ExecutorError("runtime materialization did not resolve a direct Active Test plan")
   return live_plan
+
+
+def resolve_multi_direct_group(
+    profile: registry.Profile,
+    ecu: EcuSpec,
+    group: dict[str, Any],
+) -> MultiDirectTestPlan:
+  refusals: list[str] = []
+  try:
+    group_id = registry.parse_int(group["group_id"], "multi group id")
+  except (KeyError, registry.RegistryError) as e:
+    return MultiDirectTestPlan(ecu=ecu, test_id=0, name=str(group.get("name") or ""), kind="multi_direct",
+                               refusals=(f"malformed multi group id: {e}",))
+  name = str(group.get("name") or "")
+  if group.get("execution") != "materializable":
+    refusals.append(str(group.get("reason") or "group is not materializable by the recovered current composer"))
+  if group.get("composer") != "or_member_start_stop_frames":
+    refusals.append(f"unsupported multi composer {group.get('composer')!r}")
+  try:
+    did = registry.parse_int(group["did"], "multi group DID")
+  except (KeyError, registry.RegistryError) as e:
+    did = 0
+    refusals.append(f"multi group has no single recovered DID: {e}")
+
+  member_inputs = group.get("member_inputs")
+  if not isinstance(member_inputs, list) or not member_inputs:
+    refusals.append("multi group has no exported member inputs")
+    member_inputs = []
+  member_rows: list[dict[str, Any]] = []
+  member_ids: list[int] = []
+  input_slots: list[int] = []
+  session_requirements: set[str] = set()
+  for entry in member_inputs:
+    if not isinstance(entry, dict):
+      refusals.append("multi group contains malformed member input metadata")
+      continue
+    try:
+      member_id = registry.parse_int(entry["active_test_id"], "multi member id")
+      input_slot = registry.parse_int(entry["input_slot"], "multi input slot")
+      member_did = registry.parse_int(entry["did"], "multi member DID")
+      member = profile.lookup_active_test(ecu, str(member_id), "direct")
+    except (KeyError, registry.RegistryError) as e:
+      refusals.append(f"cannot resolve multi member: {e}")
+      continue
+    if input_slot not in {1, 2}:
+      refusals.append(f"multi member 0x{member_id:X} uses unsupported input slot {input_slot}")
+    if did and member_did != did:
+      refusals.append(f"multi member 0x{member_id:X} DID 0x{member_did:04X} != group DID 0x{did:04X}")
+    if int(member.get("did", -1)) != member_did:
+      refusals.append(f"multi member 0x{member_id:X} registry DID disagrees with group metadata")
+    member_plan = resolve_plan(ecu, member)
+    if not isinstance(member_plan, DirectTestPlan):
+      refusals.append(f"multi member 0x{member_id:X} does not resolve as a direct plan")
+    elif not can_materialize_direct_runtime_length(member, member_plan):
+      refusals.append(f"multi member 0x{member_id:X} has no exact current runtime-length probe")
+    requirement = member.get("session_requirement")
+    if requirement in DECLARED_SESSION_REQUIREMENTS:
+      session_requirements.add(str(requirement))
+    else:
+      refusals.append(f"multi member 0x{member_id:X} has invalid session requirement {requirement!r}")
+    member_ids.append(member_id)
+    input_slots.append(input_slot)
+    member_rows.append(member)
+  if len(set(member_ids)) != len(member_ids):
+    refusals.append("multi group contains duplicate member IDs")
+  if len(set(input_slots)) != len(input_slots):
+    refusals.append("multi group contains duplicate input slots")
+  if len(session_requirements) > 1:
+    refusals.append("multi members disagree on session requirement")
+  session_requirement = next(iter(session_requirements), None)
+  # N is the one live fact intentionally absent from the static group plan.
+  if not refusals:
+    refusals.append("runtime payload length not definitively recovered")
+  return MultiDirectTestPlan(
+    ecu=ecu, test_id=group_id, name=name, kind="multi_direct",
+    session_requirement=session_requirement, positive_sid=DIRECT_POSITIVE_SID,
+    refusals=tuple(refusals), did=did, member_ids=tuple(member_ids), input_slots=tuple(input_slots),
+    member_rows=tuple(member_rows), runtime_length=None,
+  )
+
+
+def can_materialize_multi_direct_runtime_length(plan: TestPlan) -> bool:
+  return (
+    isinstance(plan, MultiDirectTestPlan)
+    and plan.runtime_length is None
+    and plan.refusals == ("runtime payload length not definitively recovered",)
+    and bool(plan.member_rows)
+  )
+
+
+def materialize_multi_direct_runtime_length(
+    session: DiagnosticSession,
+    plan: MultiDirectTestPlan,
+) -> MultiDirectTestPlan:
+  if not can_materialize_multi_direct_runtime_length(plan):
+    raise PlanNotExecutable(plan)
+  if plan.session_requirement == SESSION_REQUIREMENT_EXTENDED:
+    session.enter_extended()
+  data = session.client().read_data_by_identifier(plan.did)
+  length = len(data)
+  if length <= 0:
+    raise ExecutorError(f"Toyota multi-control runtime-length probe DID 0x{plan.did:04X} returned no data bytes")
+  for member in plan.member_rows:
+    minimum_raw = member.get("runtime_length_minimum")
+    minimum = registry.parse_int(minimum_raw, "runtime_length_minimum") if minimum_raw is not None else 1
+    if length < minimum:
+      raise ExecutorError(
+        f"Toyota multi-control runtime-length probe DID 0x{plan.did:04X} returned {length} byte(s), "
+        f"below member 0x{int(member['id']):X} minimum {minimum}")
+  return MultiDirectTestPlan(
+    ecu=plan.ecu, test_id=plan.test_id, name=plan.name, kind=plan.kind,
+    session_requirement=plan.session_requirement, positive_sid=plan.positive_sid, refusals=(),
+    did=plan.did, member_ids=plan.member_ids, input_slots=plan.input_slots,
+    member_rows=plan.member_rows, runtime_length=length,
+  )
+
+
+def _or_bytes(current: bytearray, incoming: bytes) -> bytearray:
+  if len(current) < len(incoming):
+    current.extend(b"\x00" * (len(incoming) - len(current)))
+  for index, value in enumerate(incoming):
+    current[index] |= value
+  return current
+
+
+def compose_multi_direct_payload(
+    plan: MultiDirectTestPlan,
+    raw_values: dict[int, int],
+) -> tuple[bytes, bytes, bytes]:
+  """Reproduce FUN_10014440's per-member materialize + bytewise OR composition."""
+  if plan.runtime_length is None or plan.refusals:
+    raise PlanNotExecutable(plan)
+  expected = set(plan.member_ids)
+  supplied = set(raw_values)
+  if supplied != expected:
+    missing = sorted(expected - supplied)
+    extra = sorted(supplied - expected)
+    raise ExecutorError(f"multi group values mismatch; missing={missing}, extra={extra}")
+  payload = bytearray(plan.runtime_length)
+  start_mask = bytearray()
+  stop_mask = bytearray()
+  for member in plan.member_rows:
+    member_id = int(member["id"])
+    if int(member.get("did", -1)) != plan.did:
+      raise ExecutorError(
+        f"multi composer DID mismatch for member 0x{member_id:X}: 0x{int(member.get('did', 0)):04X} != 0x{plan.did:04X}")
+    part_payload = pack_direct_raw_value(member, plan.runtime_length, int(raw_values[member_id]))
+    part_start_mask, part_stop_mask = direct_control_enable_masks(member, plan.runtime_length)
+    _or_bytes(payload, part_payload)
+    _or_bytes(start_mask, part_start_mask)
+    _or_bytes(stop_mask, part_stop_mask)
+  return bytes(payload), bytes(start_mask), bytes(stop_mask)
 
 
 def _routine_runtime_masks(row: dict[str, Any], plan: TestPlan) -> tuple[bytes, bytes, int] | None:
@@ -777,6 +943,78 @@ def run_direct_test(session: DiagnosticSession, plan: DirectTestPlan, *, hold_s:
     raise
   return ActiveTestResult(plan=plan, executed=True, session_requirement=session_requirement, start=start,
                           statuses=statuses, stop=stop, cleanup_errors=tuple(cleanup_errors + session.cleanup_errors))
+
+
+def run_multi_direct_test(
+    session: DiagnosticSession,
+    plan: MultiDirectTestPlan,
+    *,
+    hold_s: float,
+    raw_values: dict[int, int],
+    execute: bool = False,
+    echo: Callable[[str], None] = print,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> ActiveTestResult:
+  """Run one recovered type-33 current-P5 group as a single OR-composed 0x2F control."""
+  if plan.kind != "multi_direct" or not isinstance(plan, MultiDirectTestPlan):
+    raise ExecutorError(f"expected a multi-direct plan, got kind {plan.kind!r}")
+  if hold_s <= 0:
+    raise ExecutorError("hold_s must be positive")
+  if execute and (plan.runtime_length is None or plan.refusals):
+    raise PlanNotExecutable(plan)
+  session_requirement = _prepare(session, plan, execute=execute)
+  if not execute:
+    return ActiveTestResult(plan=plan, executed=False, session_requirement=session_requirement)
+
+  payload, start_mask, stop_mask = compose_multi_direct_payload(plan, raw_values)
+  client = session.client()
+
+  def start_control() -> bytes:
+    return client.input_output_control_by_identifier(
+      plan.did, CONTROL_PARAMETER_TYPE.SHORT_TERM_ADJUSTMENT, payload, start_mask)
+
+  def stop_control() -> bytes:
+    return client.input_output_control_by_identifier(
+      plan.did, CONTROL_PARAMETER_TYPE.RETURN_CONTROL_TO_ECU, b"", stop_mask)
+
+  started = False
+  cleanup_errors: list[str] = []
+  try:
+    start = start_control()
+    started = True
+    statuses = _hold(session, hold_s=hold_s, status_fn=None, poll_interval_s=None, sleep=sleep, clock=clock)
+    stop = stop_control()
+  except BaseException as e:
+    if started:
+      _best_effort_stop(cleanup_errors, stop_control)
+    _attach_cleanup_errors(e, cleanup_errors)
+    raise
+  return ActiveTestResult(
+    plan=plan, executed=True, session_requirement=session_requirement, start=start,
+    statuses=statuses, stop=stop, cleanup_errors=tuple(cleanup_errors + session.cleanup_errors),
+  )
+
+
+def stop_multi_direct_test(
+    session: DiagnosticSession,
+    plan: MultiDirectTestPlan,
+    *,
+    execute: bool = False,
+) -> ActiveTestResult:
+  """Send the recovered OR-composed return-control mask for one current P5 type-33 group."""
+  session_requirement = _prepare(session, plan, execute=execute)
+  if not execute:
+    return ActiveTestResult(plan=plan, executed=False, session_requirement=session_requirement)
+  if plan.runtime_length is None or plan.refusals:
+    raise PlanNotExecutable(plan)
+  _, _, stop_mask = compose_multi_direct_payload(plan, {member_id: 0 for member_id in plan.member_ids})
+  stop = session.client().input_output_control_by_identifier(
+    plan.did, CONTROL_PARAMETER_TYPE.RETURN_CONTROL_TO_ECU, b"", stop_mask)
+  return ActiveTestResult(
+    plan=plan, executed=True, session_requirement=session_requirement, stop=stop,
+    cleanup_errors=tuple(session.cleanup_errors),
+  )
 
 
 def run_routine_test(session: DiagnosticSession, plan: RoutineTestPlan, *, hold_s: float,

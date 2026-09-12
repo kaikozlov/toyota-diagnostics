@@ -139,3 +139,84 @@ def render_plan(profile: Profile, ecu: EcuSpec, test: dict[str, Any]) -> str:
     lines.append("runtime: plan-only; unresolved runtime data prevents execution")
     lines.extend(f"  refusal: {reason}" for reason in runtime_refusals)
   return "\n".join(lines)
+
+
+def describe_group(profile: Profile, ecu: EcuSpec, group: dict[str, Any]) -> dict[str, Any]:
+  plan = executor.resolve_multi_direct_group(profile, ecu, group)
+  members = []
+  for member_id, slot, row in zip(plan.member_ids, plan.input_slots, plan.member_rows):
+    members.append({
+      "active_test_id": member_id,
+      "input_slot": slot,
+      "name": row.get("name") or "",
+      "did": row.get("did"),
+      "bit_start": row.get("bit_start"),
+      "bit_end": row.get("bit_end"),
+      "signal_info": row.get("signal_info"),
+    })
+  return {
+    "ecu": {"key": ecu.key, "name": ecu.name, "address": ecu.address, "category_id": ecu.category_id},
+    "group_id": int(group.get("group_id", 0)),
+    "name": str(group.get("name") or ""),
+    "registry_execution": group.get("execution"),
+    "runtime_executable": not executor.runtime_refusals(profile, plan),
+    "runtime_materializable": executor.can_materialize_multi_direct_runtime_length(plan),
+    "runtime_refusals": list(executor.runtime_refusals(profile, plan)),
+    "did": plan.did or None,
+    "members": members,
+    "composer": group.get("composer"),
+    "reason": group.get("reason"),
+    "boundary": (profile.category(ecu) or {}).get("active_test_groups", {}).get("boundary"),
+  }
+
+
+def group_list_document(profile: Profile, ecu: EcuSpec | None = None) -> dict[str, Any]:
+  targets = [ecu] if ecu is not None else [item for item in profile.ecus if profile.active_test_groups(item)]
+  groups = [describe_group(profile, spec, group) for spec in targets for group in profile.active_test_groups(spec)]
+  return {"profile": profile.name, "vehicle": profile.vehicle, "active_test_groups": groups}
+
+
+def render_group_list(profile: Profile, ecu: EcuSpec | None = None) -> str:
+  document = group_list_document(profile, ecu)
+  lines = [PLAN_VIEW_BANNER]
+  for group in document["active_test_groups"]:
+    members = ", ".join(f"0x{member['active_test_id']:X}" for member in group["members"])
+    state = "materializable" if group["runtime_materializable"] else "blocked"
+    lines.append(
+      f"{group['ecu']['key']} group 0x{group['group_id']:04X} {state:<14} {group['name']} [{members}]")
+  if len(lines) == 1:
+    lines.append("no type-33 multi-control Active Test groups in selected catalog")
+  return "\n".join(lines)
+
+
+def render_group_plan(profile: Profile, ecu: EcuSpec, group: dict[str, Any]) -> str:
+  document = describe_group(profile, ecu, group)
+  lines = [
+    PLAN_VIEW_BANNER,
+    f"ECU: {ecu.key} ({ecu.name})",
+    f"Active Test group: 0x{document['group_id']:04X} {document['name']}",
+    f"composer: {document.get('composer')}",
+    "DID: " + (f"0x{document['did']:04X}" if document.get("did") is not None else "(mixed/unresolved)"),
+  ]
+  for member in document["members"]:
+    lines.append(
+      f"  slot {member['input_slot']}: 0x{member['active_test_id']:04X} {member['name']} "
+      f"bits {member['bit_start']}..{member['bit_end']}")
+    info = member.get("signal_info")
+    if isinstance(info, dict):
+      physical = info.get("physical") or {}
+      lines.append(
+        f"    engineering Mul={physical.get('mul')} Div={physical.get('div')} Offset={physical.get('offset')} "
+        f"decimals={physical.get('decimal_point_count')} unit={physical.get('unit') or '-'}")
+      choices = info.get("choices") or []
+      if choices:
+        lines.append("    choices: " + ", ".join(
+          f"{entry.get('text')}={entry.get('value')}" for entry in choices if isinstance(entry, dict)))
+  if document["runtime_materializable"]:
+    lines.append("runtime: live-materializable; one Toyota 22 <DID> probe supplies N, then member frames are OR-composed")
+  elif document["runtime_executable"]:
+    lines.append("runtime: executable")
+  else:
+    lines.append("runtime: blocked")
+    lines.extend(f"  refusal: {reason}" for reason in document["runtime_refusals"])
+  return "\n".join(lines)

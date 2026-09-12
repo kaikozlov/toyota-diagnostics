@@ -453,6 +453,85 @@ class TestLiveCli(unittest.TestCase):
       ("session", 1),
     ])
 
+  def test_active_test_group_plan_and_blocked_group_are_offline(self):
+    import json
+    with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+      rc, output = run_cli([
+        "--vehicle", "12704", "active-test", "group-plan", "engine", "76", "--json",
+      ], use_default_registry=True)
+      self.assertEqual(rc, 0, output)
+      document = json.loads(output)["active_test_group"]
+      self.assertEqual((document["group_id"], document["did"], document["runtime_materializable"]),
+                       (76, 0x284A, True))
+      self.assertEqual([(row["active_test_id"], row["input_slot"]) for row in document["members"]],
+                       [(77, 1), (78, 2)])
+
+      rc, output = run_cli([
+        "--vehicle", "12704", "active-test", "group-plan", "engine", "102", "--json",
+      ], use_default_registry=True)
+      self.assertEqual(rc, 0, output)
+      blocked = json.loads(output)["active_test_group"]
+      self.assertFalse(blocked["runtime_materializable"])
+      self.assertTrue(any("DID bytes differ" in reason for reason in blocked["runtime_refusals"]))
+
+      with self.assertRaisesRegex(SystemExit, "multi-control group parent"):
+        run_cli([
+          "--vehicle", "12704", "active-test", "run", "engine", "76",
+          "--execute", "--raw-value", "1",
+        ], use_default_registry=True)
+
+  def test_active_test_group_run_or_composes_member_frames(self):
+    scripted = support.ScriptedUds()
+    scripted.did[0x700] = {0x284A: b"\x00\x00"}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12704", "active-test", "group-run", "engine", "76",
+        "--execute", "--member-choice", "77=#2", "--member-choice", "78=0mm3/st",
+        "--hold", "0.001",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertIn("executed: yes", output)
+    self.assertIn("runtime length: 2 byte(s)", output)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("read_did", 0x284A),
+      ("io_control", 0x284A, 3, b"\x02\x80", b"\xc0"),
+      ("io_control", 0x284A, 0, b"", b"\xc0"),
+      ("session", 1),
+    ])
+
+  def test_active_test_group_stop_materializes_composed_return_mask(self):
+    scripted = support.ScriptedUds()
+    scripted.did[0x700] = {0x284A: b"\x00\x00"}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12704", "active-test", "group-stop", "engine", "76", "--execute",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("read_did", 0x284A),
+      ("io_control", 0x284A, 0, b"", b"\xc0"),
+      ("session", 1),
+    ])
+
+  def test_active_test_group_run_requires_every_member_before_transport(self):
+    with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+      with self.assertRaisesRegex(SystemExit, "missing 0x4E"):
+        run_cli([
+          "--vehicle", "12704", "active-test", "group-run", "engine", "76",
+          "--execute", "--member-choice", "77=#2",
+        ], use_default_registry=True)
+      with self.assertRaisesRegex(SystemExit, "DID bytes differ"):
+        run_cli([
+          "--vehicle", "12704", "active-test", "group-run", "engine", "102",
+          "--execute", "--member-choice", "103=Open", "--member-choice", "104=Open",
+        ], use_default_registry=True)
+
   def test_universal_direct_active_test_accepts_engineering_value(self):
     scripted = support.ScriptedUds()
     scripted.did[0x700] = {0x2803: b"\x00"}

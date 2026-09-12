@@ -314,6 +314,38 @@ class Profile:
     category = self.category(ecu)
     return [] if category is None else category.get("active_tests", [])
 
+  def active_test_groups(self, ecu: EcuSpec | str | int) -> list[dict[str, Any]]:
+    category = self.category(ecu)
+    if category is None:
+      return []
+    metadata = category.get("active_test_groups")
+    rows = metadata.get("groups") if isinstance(metadata, dict) else None
+    return rows if isinstance(rows, list) else []
+
+  def lookup_active_test_group(self, ecu: EcuSpec | str | int, query: str | int) -> dict[str, Any]:
+    rows = self.active_test_groups(ecu)
+    numeric = None
+    if isinstance(query, int):
+      numeric = query
+    else:
+      text = str(query).strip()
+      try:
+        numeric = int(text, 0)
+      except ValueError:
+        numeric = None
+    if numeric is not None:
+      matches = [row for row in rows if int(row.get("group_id", -1)) == numeric]
+    else:
+      needle = str(query).casefold()
+      exact = [row for row in rows if str(row.get("name") or "").casefold() == needle]
+      matches = exact or [row for row in rows if needle in str(row.get("name") or "").casefold()]
+    if len(matches) == 1:
+      return matches[0]
+    if not matches:
+      raise RegistryError(f"no Active Test group matches {query!r}")
+    summary = ", ".join(f"{row.get('group_id')} {row.get('name') or ''}" for row in matches)
+    raise RegistryError(f"ambiguous Active Test group {query!r}: {summary}")
+
   def functions(self, ecu: EcuSpec | str | int) -> list[dict[str, Any]]:
     category = self.category(ecu)
     return [] if category is None else category.get("functions", [])
