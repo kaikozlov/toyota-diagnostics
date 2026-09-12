@@ -19,7 +19,7 @@ from typing import Any
 
 from opendbc.car.uds import MessageTimeoutError, NegativeResponseError
 
-from toyota_diag import dtc, registry, resolver
+from toyota_diag import dtc, registry, resolver, transport
 from toyota_diag.executor import SESSION_REQUIREMENT_EXTENDED
 from toyota_diag.session import DiagnosticSession
 
@@ -103,6 +103,81 @@ def _p5_snapshot_plan(profile: registry.Profile, ecu: registry.EcuSpec) -> dict[
   return command
 
 
+def _rob_inventory_plan(profile: registry.Profile, ecu: registry.EcuSpec) -> dict[str, Any] | None:
+  """Return the exact exported ordinary-P5 RoB behavior-code inventory command."""
+  command = _catalog_command(profile, ecu, "p5_rob_code_inventory")
+  if command is None or command.get("execution") != "read_only":
+    return None
+  binding = command.get("plugin_binding")
+  if not isinstance(binding, dict) or binding.get("dll") != "GetRoBP5_DT.dll" or binding.get("exact_category_binding") is not True:
+    return None
+  requests = [row for row in command.get("requests", []) if isinstance(row, dict) and row.get("resolved")]
+  if len(requests) != 2:
+    return None
+  try:
+    shape = sorted((registry.parse_bytes(row.get("send"), "RoB request"),
+                    registry.parse_bytes(row.get("check"), "RoB positive check")) for row in requests)
+  except registry.RegistryError:
+    return None
+  if shape != [(bytes.fromhex("ab01"), bytes.fromhex("eb01")), (bytes.fromhex("ab11"), bytes.fromhex("eb11"))]:
+    return None
+  return command
+
+
+def _rob_inventory_from_client(command: dict[str, Any] | None, client) -> dict[str, Any]:
+  if command is None:
+    return {"state": "not_available", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0}
+  groups: list[dict[str, Any]] = []
+  all_codes: list[int] = []
+  for row in command.get("requests", []):
+    try:
+      request = registry.parse_bytes(row.get("send"), "RoB request")
+      check = registry.parse_bytes(row.get("check"), "RoB positive check")
+    except registry.RegistryError as e:
+      groups.append({"state": "error", "error": str(e), "behavior_codes": []})
+      continue
+    try:
+      response = bytes(transport.raw_isotp(client, request))
+    except MessageTimeoutError:
+      groups.append({"subfunction": request[1], "state": "no_response", "behavior_codes": []})
+      continue
+    except Exception as e:
+      groups.append({"subfunction": request[1], "state": "error", "behavior_codes": [], "error": str(e)})
+      continue
+    if len(response) >= 3 and response[0] == 0x7F:
+      groups.append({
+        "subfunction": request[1], "state": "negative_response", "behavior_codes": [],
+        "response_hex": response.hex(), "nrc": response[2],
+      })
+      continue
+    if not response.startswith(check):
+      groups.append({
+        "subfunction": request[1], "state": "parse_error", "behavior_codes": [],
+        "response_hex": response.hex(), "error": f"expected response prefix {check.hex()}",
+      })
+      continue
+    payload = response[len(check):]
+    if len(payload) % 2:
+      groups.append({
+        "subfunction": request[1], "state": "parse_error", "behavior_codes": [],
+        "response_hex": response.hex(), "error": f"odd behavior-code payload length {len(payload)}",
+      })
+      continue
+    codes = [int.from_bytes(payload[index:index + 2], "big") for index in range(0, len(payload), 2)]
+    all_codes.extend(codes)
+    groups.append({
+      "subfunction": request[1], "state": "positive", "behavior_codes": codes,
+      "response_hex": response.hex(),
+    })
+  return {
+    "state": "available",
+    "groups": groups,
+    "behavior_code_count": len(all_codes),
+    "unique_behavior_code_count": len(set(all_codes)),
+    "record_bodies": "not_retrieved",
+  }
+
+
 def _identity_from_client(plan: tuple[dict[str, Any], int] | None, client) -> dict[str, Any] | None:
   if plan is None:
     return None
@@ -158,10 +233,13 @@ def _freeze_frames_from_client(command: dict[str, Any] | None, client, dtc_rows:
   }
 
 
-def _extended_details(profile: registry.Profile, ecu: registry.EcuSpec, client_factory,
-                      dtc_result: dict[str, Any], *, include_identities: bool) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+def _extended_details(
+    profile: registry.Profile, ecu: registry.EcuSpec, client_factory,
+    dtc_result: dict[str, Any], *, include_identities: bool,
+) -> tuple[dict[str, Any] | None, dict[str, Any], dict[str, Any]]:
   identity_plan = _generic_cid_plan(profile, ecu) if include_identities else None
   ffd_plan = _p5_snapshot_plan(profile, ecu)
+  rob_plan = _rob_inventory_plan(profile, ecu)
   dtc_rows = list(dtc_result.get("records") or []) if dtc_result.get("state") == "positive" else []
   identity = None
   if ffd_plan is None:
@@ -172,17 +250,27 @@ def _extended_details(profile: registry.Profile, ecu: registry.EcuSpec, client_f
     freeze_frames = {"state": "available", "dtcs": [], "positive_dtc_count": 0, "record_count": 0, "signal_decode": "raw_only"}
   else:
     freeze_frames = None
+  rob = None if rob_plan is not None else {
+    "state": "not_available", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0,
+  }
 
   needs_identity = identity_plan is not None
   needs_ffd = freeze_frames is None
-  if not needs_identity and not needs_ffd:
-    return identity, freeze_frames
+  needs_rob = rob is None
+  if not needs_identity and not needs_ffd and not needs_rob:
+    return identity, freeze_frames, rob
 
-  operation = identity_plan[0] if identity_plan is not None else ffd_plan
+  operation = identity_plan[0] if identity_plan is not None else (ffd_plan if needs_ffd else rob_plan)
   session = DiagnosticSession(profile, ecu, client_factory=client_factory, operation_row=operation)
   try:
     with session:
-      plans = [plan for plan in (identity_plan[0] if identity_plan else None, ffd_plan if needs_ffd else None) if plan is not None]
+      plans = [
+        plan for plan in (
+          identity_plan[0] if identity_plan else None,
+          ffd_plan if needs_ffd else None,
+          rob_plan if needs_rob else None,
+        ) if plan is not None
+      ]
       requests = [request for plan in plans for request in plan.get("requests", []) if request.get("resolved")]
       if any(request.get("session_requirement") == SESSION_REQUIREMENT_EXTENDED for request in requests):
         session.enter_extended()
@@ -191,6 +279,8 @@ def _extended_details(profile: registry.Profile, ecu: registry.EcuSpec, client_f
         identity = _identity_from_client(identity_plan, client)
       if needs_ffd:
         freeze_frames = _freeze_frames_from_client(ffd_plan, client, dtc_rows)
+      if needs_rob:
+        rob = _rob_inventory_from_client(rob_plan, client)
   except Exception as e:
     message = str(e)
     if needs_identity and identity is None:
@@ -198,12 +288,17 @@ def _extended_details(profile: registry.Profile, ecu: registry.EcuSpec, client_f
       identity = {"did": did, "state": "error", "data_hex": None, "ascii": None, "error": message}
     if needs_ffd and freeze_frames is None:
       freeze_frames = {"state": "error", "dtcs": [], "positive_dtc_count": 0, "record_count": 0, "error": message}
+    if needs_rob and rob is None:
+      rob = {"state": "error", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0, "error": message}
   assert freeze_frames is not None
+  assert rob is not None
   if session.cleanup_errors:
-    freeze_frames["cleanup_errors"] = list(session.cleanup_errors)
+    cleanup = list(session.cleanup_errors)
+    freeze_frames["cleanup_errors"] = cleanup
+    rob["cleanup_errors"] = cleanup
     if identity is not None:
-      identity["cleanup_errors"] = list(session.cleanup_errors)
-  return identity, freeze_frames
+      identity["cleanup_errors"] = cleanup
+  return identity, freeze_frames, rob
 
 
 def _dtcs(profile: registry.Profile, ecu: registry.EcuSpec, client_factory) -> dict[str, Any]:
@@ -245,6 +340,8 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
   freeze_frame_positive_dtcs = 0
   freeze_frame_records = 0
   freeze_frame_available_ecus = 0
+  rob_available_ecus = 0
+  rob_behavior_codes = 0
 
   for ecu in profile.ecus:
     mount = mount_lookup.get(ecu.endpoint)
@@ -252,16 +349,19 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
     dtc_result = {"state": "not_queried", "records": [], "fault_count": 0}
     identity = None
     freeze_frames = {"state": "not_queried", "dtcs": [], "positive_dtc_count": 0, "record_count": 0}
+    rob = {"state": "not_queried", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0}
     if responding:
       dtc_result = _dtcs(profile, ecu, client_factory)
       dtc_positive += int(dtc_result["state"] == "positive")
       fault_count += int(dtc_result["fault_count"])
-      identity, freeze_frames = _extended_details(
+      identity, freeze_frames, rob = _extended_details(
         profile, ecu, client_factory, dtc_result, include_identities=include_identities)
       identity_positive += int(identity is not None and identity.get("state") == "positive")
       freeze_frame_available_ecus += int(freeze_frames.get("state") == "available")
       freeze_frame_positive_dtcs += int(freeze_frames.get("positive_dtc_count", 0))
       freeze_frame_records += int(freeze_frames.get("record_count", 0))
+      rob_available_ecus += int(rob.get("state") == "available")
+      rob_behavior_codes += int(rob.get("behavior_code_count", 0))
 
     ecus.append({
       "key": ecu.key,
@@ -284,6 +384,7 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
       },
       "dtc": dtc_result,
       "freeze_frames": freeze_frames,
+      "rob": rob,
       "identity": identity,
     })
 
@@ -307,6 +408,8 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
       "freeze_frame_available_ecus": freeze_frame_available_ecus,
       "freeze_frame_positive_dtcs": freeze_frame_positive_dtcs,
       "freeze_frame_records": freeze_frame_records,
+      "rob_available_ecus": rob_available_ecus,
+      "rob_behavior_codes": rob_behavior_codes,
       "fault_status_records": fault_count,
     },
     "coverage": {
@@ -318,7 +421,10 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
         "signal-level freeze-frame decoding not yet implemented"
       ),
       "info_code": "not_implemented",
-      "operation_history": "not_implemented",
+      "operation_history": (
+        "current-P5 RoB behavior-code inventory via exact exported role-0xA0 AB01/AB11 contracts; "
+        "per-behavior record bodies not yet retrieved"
+      ),
       "monitor_data": "not_implemented",
       "timestamp_data": "not_implemented",
     },
@@ -368,6 +474,18 @@ def _freeze_frame_map(row: dict[str, Any]) -> dict[tuple[str, int, int], str]:
       for item in record.get("identifiers", []) if isinstance(record.get("identifiers"), list) else []:
         if isinstance(item, dict) and item.get("did") is not None and item.get("data_hex") is not None:
           out[(code, record_number, int(item["did"]))] = str(item["data_hex"])
+  return out
+
+
+def _rob_code_set(row: dict[str, Any]) -> set[tuple[int, int]]:
+  out: set[tuple[int, int]] = set()
+  rob = row.get("rob") if isinstance(row.get("rob"), dict) else {}
+  for group in rob.get("groups", []) if isinstance(rob.get("groups"), list) else []:
+    if not isinstance(group, dict) or group.get("state") != "positive":
+      continue
+    subfunction = int(group.get("subfunction", -1))
+    for code in group.get("behavior_codes", []) if isinstance(group.get("behavior_codes"), list) else []:
+      out.add((subfunction, int(code)))
   return out
 
 
@@ -428,6 +546,13 @@ def compare(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     if ffd_added or ffd_removed or ffd_changed:
       entry["freeze_frames"] = {"added": ffd_added, "removed": ffd_removed, "changed": ffd_changed}
 
+    old_rob = _rob_code_set(old)
+    new_rob = _rob_code_set(new)
+    rob_added = [{"subfunction": key[0], "behavior_code": key[1]} for key in sorted(new_rob - old_rob)]
+    rob_removed = [{"subfunction": key[0], "behavior_code": key[1]} for key in sorted(old_rob - new_rob)]
+    if rob_added or rob_removed:
+      entry["rob"] = {"added": rob_added, "removed": rob_removed}
+
     old_ident = old.get("identity") if isinstance(old.get("identity"), dict) else None
     new_ident = new.get("identity") if isinstance(new.get("identity"), dict) else None
     old_hex = old_ident.get("data_hex") if old_ident else None
@@ -453,6 +578,7 @@ def compare(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
       "mount_state_changes": sum("mount" in row for row in changes),
       "dtc_changes": sum("dtcs" in row for row in changes),
       "freeze_frame_changes": sum("freeze_frames" in row for row in changes),
+      "rob_changes": sum("rob" in row for row in changes),
       "identity_changes": sum("identity" in row for row in changes),
     },
     "changes": changes,
@@ -465,7 +591,8 @@ def render_diff(document: dict[str, Any]) -> str:
     "Health Check changes",
     (
       f"ECUs changed: {summary['changed_ecus']}  mount: {summary['mount_state_changes']}  "
-      f"dtc: {summary['dtc_changes']}  ffd: {summary.get('freeze_frame_changes', 0)}  identity: {summary['identity_changes']}"
+      f"dtc: {summary['dtc_changes']}  ffd: {summary.get('freeze_frame_changes', 0)}  "
+      f"rob: {summary.get('rob_changes', 0)}  identity: {summary['identity_changes']}"
     ),
   ]
   if not document["changes"]:
@@ -498,6 +625,11 @@ def render_diff(document: dict[str, Any]) -> str:
       lines.append(
         f"  ~ FFD {item['dtc']} rec=0x{item['record_number']:02X} DID=0x{item['did']:04X} "
         f"{item['before']} -> {item['after']}")
+    rob = row.get("rob") or {}
+    for item in rob.get("added", []):
+      lines.append(f"  + RoB sub=0x{item['subfunction']:02X} code=0x{item['behavior_code']:04X}")
+    for item in rob.get("removed", []):
+      lines.append(f"  - RoB sub=0x{item['subfunction']:02X} code=0x{item['behavior_code']:04X}")
   return "\n".join(lines)
 
 
@@ -509,7 +641,7 @@ def render(document: dict[str, Any]) -> str:
     (
       f"Installed candidates: {summary['install_candidates']}  responding: {summary['mount_responding']}  "
       f"DTC responders: {summary['dtc_positive_ecus']}  faults: {summary['fault_status_records']}  "
-      f"FFD records: {summary.get('freeze_frame_records', 0)}"
+      f"FFD records: {summary.get('freeze_frame_records', 0)}  RoB codes: {summary.get('rob_behavior_codes', 0)}"
     ),
     "",
   ]

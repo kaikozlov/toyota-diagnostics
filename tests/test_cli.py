@@ -595,9 +595,18 @@ class TestLiveCli(unittest.TestCase):
         rows.append(row)
       return rows
 
+    def rob_response(client, request):
+      del client
+      if request == bytes.fromhex("ab01"):
+        return bytes.fromhex("eb0112345678")
+      if request == bytes.fromhex("ab11"):
+        return bytes.fromhex("eb1128182845")
+      raise AssertionError(f"unexpected raw request {request.hex()}")
+
     with self.patch_live(panda, scripted), \
          mock.patch("toyota_diag.transport.status", return_value=state), \
-         mock.patch("toyota_diag.snapshot.resolver.probe_mount_candidates", side_effect=mounted):
+         mock.patch("toyota_diag.snapshot.resolver.probe_mount_candidates", side_effect=mounted), \
+         mock.patch("toyota_diag.transport.raw_isotp", side_effect=rob_response):
       rc, output = run_cli([
         "--vehicle", "12704", "health-check", "--json", "--no-identities",
       ], use_default_registry=True)
@@ -614,6 +623,16 @@ class TestLiveCli(unittest.TestCase):
     self.assertEqual(document["summary"]["freeze_frame_records"], 1)
     self.assertEqual(document["summary"]["freeze_frame_positive_dtcs"], 1)
     self.assertIn("raw ordinary-P5", document["coverage"]["generic_ffd"])
+    self.assertEqual(eps["rob"]["state"], "available")
+    self.assertEqual(eps["rob"]["behavior_code_count"], 4)
+    self.assertEqual(eps["rob"]["unique_behavior_code_count"], 4)
+    self.assertEqual(eps["rob"]["groups"], [
+      {"subfunction": 0x01, "state": "positive", "behavior_codes": [0x1234, 0x5678], "response_hex": "eb0112345678"},
+      {"subfunction": 0x11, "state": "positive", "behavior_codes": [0x2818, 0x2845], "response_hex": "eb1128182845"},
+    ])
+    self.assertEqual(document["summary"]["rob_available_ecus"], 1)
+    self.assertEqual(document["summary"]["rob_behavior_codes"], 4)
+    self.assertIn("behavior-code inventory", document["coverage"]["operation_history"])
 
   def test_health_check_invalid_compare_refuses_before_transport(self):
     import tempfile
