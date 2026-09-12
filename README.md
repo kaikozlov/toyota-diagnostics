@@ -48,7 +48,7 @@ toyota ffd robs "Hands Free"
 
 Live commands use a selectable transport backend. `--transport panda` remains the default: if `pandad` is stopped, the CLI takes direct Panda ownership using Panda's ordinary ELM327 diagnostic safety mode; if `pandad` is already running, it reuses openpilot's `can`/`sendcan` path only when the Panda is already in ELM327 safety. Direct Panda mode preserves normal-harness routing by default (`ELM327` param 1); `--obd-multiplexing` explicitly remaps logical bus 1 onto the OBD-II pins (`ELM327` param 0).
 
-`--transport j2534` uses a standard J2534 v04.04 provider as a raw classic-CAN link and reuses the same opendbc ISO-TP/UDS implementation as Panda. The backend supports ordinary 11-bit CAN diagnostics, 29-bit normal-fixed routes, and Toyota ISO-TP address-extension routes without changing the Toyota operation layer. PassThru providers are discovered from the Windows `PassThruSupport.04.04` registry, `TOYOTA_J2534_LIBRARY`, or an installed OpenMVCI library; `--j2534-library` selects one explicitly and `--j2534-device` passes a provider-specific selector to `PassThruOpen`. A vendor `MVCI32.dll` must match the Python process architecture. Native J2534 ISO15765, CAN-FD, K-Line, and DoIP transports are future backends; unsupported Toyota transport-controller families continue to fail closed instead of being coerced to CAN.
+`--transport j2534` uses a standard J2534 v04.04 provider as a raw classic-CAN link and reuses the same opendbc ISO-TP/UDS implementation as Panda. The backend supports ordinary 11-bit CAN diagnostics, 29-bit normal-fixed routes, and Toyota ISO-TP address-extension routes without changing the Toyota operation layer. PassThru providers are discovered from the Windows `PassThruSupport.04.04` registry, `TOYOTA_J2534_LIBRARY`, or an installed OpenMVCI library. With no selector, OpenMVCI discovers a compatible adapter automatically; on modern macOS it uses the available `/dev/cu.usbserial-*` node instead of libusb. `--j2534-library` and `--j2534-device` explicitly override provider and device selection. A vendor `MVCI32.dll` must match the Python process architecture. Native J2534 ISO15765, CAN-FD, K-Line, and DoIP transports are future backends; unsupported Toyota transport-controller families continue to fail closed instead of being coerced to CAN.
 
 `toyota transport status` is non-transmitting: it verifies transport/provider availability but does not open the vehicle hardware. `toyota transport list` shows known backends and J2534 providers.
 
@@ -58,9 +58,9 @@ toyota transport status
 toyota --bus 1 --obd-multiplexing transport status  # explicit direct-Panda OBD bus-1 remap
 
 toyota --transport j2534 --j2534-library /path/to/MVCI32.dll transport status
-toyota --transport j2534 --j2534-library /path/to/libopenmvci.dylib --j2534-device 0403:6001 vehicle detect
-toyota --transport j2534 --j2534-library /path/to/libopenmvci.dylib dtc scan
-toyota --transport j2534 --j2534-library /path/to/libopenmvci.dylib did read frc 0x1601
+toyota --transport j2534 vehicle detect  # installed OpenMVCI and attached adapter are auto-detected
+toyota --transport j2534 dtc scan
+toyota --transport j2534 did read frc 0x1601
 toyota can sniff 0xB6 --duration 10
 toyota can sniff 0x30 0x412 --duration 0 --json > can.jsonl
 toyota dtc scan

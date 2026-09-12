@@ -206,9 +206,9 @@ GTS+ also relies on Toyota-hosted services for operations such as reprogramming 
 
 ## J2534 / MVCI backend
 
-**Implemented baseline (2026-09-12):** the CLI now has a first-class `--transport j2534` backend. It discovers Windows v04.04 providers or accepts an explicit shared library, opens a raw CAN channel with separate 11-bit and 29-bit pass filters, and presents the same CAN contract used by the existing opendbc ISO-TP/UDS layer. This gives the current DID/DTC/VIN/Active-Test/FFD operations a transport-independent path through J2534 without duplicating their protocol logic. The implementation was ABI-tested and load-tested against a locally built OpenMVCI dylib; no physical MVCI was attached for a live vehicle test.
+**Implemented baseline (2026-09-12):** the CLI now has a first-class `--transport j2534` backend. It discovers Windows v04.04 providers or accepts an explicit shared library, opens a raw CAN channel with separate 11-bit and 29-bit pass filters, and presents the same CAN contract used by the existing opendbc ISO-TP/UDS layer. This gives the current DID/DTC/VIN/Active-Test/FFD operations a transport-independent path through J2534 without duplicating their protocol logic. The implementation was ABI-tested and load-tested against a locally built OpenMVCI dylib. A physical XHorse Mini-VCI clone was then auto-detected through its macOS serial node and completed firmware bootstrap plus raw-CAN channel initialization; no vehicle bus was connected for that validation.
 
-Still missing on the J2534 side: native J2534 ISO15765 channels, CAN-FD/ISO15765-PS, ISO9141/ISO14230 for older Toyotas, DoIP, and live validation against the maintainer Mini-VCI clone.
+Still missing on the J2534 side: native J2534 ISO15765 channels, CAN-FD/ISO15765-PS, ISO9141/ISO14230 for older Toyotas, DoIP, and live validation against a vehicle bus.
 
 J2534 is a natural backend, not an adapter-specific exception: Techstream/GTS+ itself uses the J2534 pass-thru model.
 

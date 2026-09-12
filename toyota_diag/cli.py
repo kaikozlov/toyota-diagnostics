@@ -1850,7 +1850,7 @@ def build_parser() -> argparse.ArgumentParser:
   parser.add_argument("--obd-multiplexing", action="store_true",
                       help="direct-Panda only: remap logical bus 1 to OBD-II pins (default: preserve normal harness routing)")
   parser.add_argument("--j2534-library", help="J2534 provider DLL/dylib/so; otherwise use environment/registry/system discovery")
-  parser.add_argument("--j2534-device", help="optional provider-specific PassThruOpen device selector (OpenMVCI accepts vid:pid[:serial] or serial:/dev/...)")
+  parser.add_argument("--j2534-device", help="optional provider-specific device override; otherwise the provider auto-detects (OpenMVCI uses serial nodes automatically on macOS)")
   parser.add_argument("--j2534-baud", type=int, default=500_000, help="raw CAN bitrate for the J2534 backend (default: 500000)")
   commands = parser.add_subparsers(dest="command", required=True)
 
