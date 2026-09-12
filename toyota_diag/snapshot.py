@@ -19,7 +19,7 @@ from typing import Any
 
 from opendbc.car.uds import MessageTimeoutError, NegativeResponseError
 
-from toyota_diag import dtc, recorder, registry, resolver, transport
+from toyota_diag import decode, dtc, recorder, registry, resolver, transport
 from toyota_diag.executor import SESSION_REQUIREMENT_EXTENDED
 from toyota_diag.session import DiagnosticSession
 
@@ -172,18 +172,78 @@ def _raw_request(client, request: bytes) -> tuple[str, bytes | None, str | None]
   return "positive", response, None
 
 
-def _p5_rob_from_client(command: dict[str, Any] | None, client) -> dict[str, Any]:
+def _rob_semantic_indexes(metadata: dict[str, Any] | None) -> tuple[dict[int, dict[str, Any]], dict[int, list[dict[str, Any]]]]:
+  if not isinstance(metadata, dict):
+    return {}, {}
+  behavior_by_code: dict[int, dict[str, Any]] = {}
+  for row in metadata.get("behavior_codes", []) if isinstance(metadata.get("behavior_codes"), list) else []:
+    if isinstance(row, dict) and row.get("behavior_code") is not None:
+      behavior_by_code.setdefault(int(row["behavior_code"]), row)
+  signals_by_did: dict[int, list[dict[str, Any]]] = {}
+  for row in metadata.get("signals", []) if isinstance(metadata.get("signals"), list) else []:
+    if isinstance(row, dict) and row.get("did") is not None:
+      signals_by_did.setdefault(int(row["did"]), []).append(row)
+  for rows in signals_by_did.values():
+    rows.sort(key=lambda row: (int(row.get("sort_key") or 0), int(row.get("record_key") or 0)))
+  return behavior_by_code, signals_by_did
+
+
+def _decode_p5_rob_block(block: dict[str, Any], signals_by_did: dict[int, list[dict[str, Any]]]) -> dict[str, Any]:
+  did = int(block["data_id"])
+  data = bytes(block["data"])
+  rows = signals_by_did.get(did, [])
+  decoded_signals: list[dict[str, Any]] = []
+  decode_errors: list[str] = []
+  suppressed = 0
+  for row in rows:
+    try:
+      decoded = decode.decode_rob_signal(data, row)
+    except decode.DecodeError as e:
+      decode_errors.append(f"{row.get('name') or 'unnamed'}: {e}")
+      continue
+    if decoded.get("state") == "not_supported":
+      suppressed += 1
+      continue
+    decoded.update({
+      "bit_start": int(row["bit_start"]),
+      "bit_end": int(row["bit_end"]),
+      "extraction_mode": int(row.get("extraction_mode") or 0),
+    })
+    decoded_signals.append(decoded)
+  if not rows:
+    state = "no_schema"
+  elif decode_errors:
+    state = "partial" if decoded_signals else "decode_error"
+  else:
+    state = "decoded"
+  return {
+    "did": did,
+    "length": int(block["length"]),
+    "data_hex": data.hex(),
+    "signal_decode": state,
+    "signals": decoded_signals,
+    "suppressed_signal_count": suppressed,
+    "decode_errors": decode_errors,
+  }
+
+
+def _p5_rob_from_client(command: dict[str, Any] | None, client, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
   if command is None:
     return {
       "state": "not_available", "groups": [], "behavior_code_count": 0,
       "unique_behavior_code_count": 0, "frame_count": 0, "record_count": 0, "did_block_count": 0,
+      "decoded_signal_count": 0, "suppressed_signal_count": 0, "decode_error_count": 0,
     }
 
+  behavior_by_code, signals_by_did = _rob_semantic_indexes(metadata)
   groups: list[dict[str, Any]] = []
   all_codes: list[int] = []
   frame_count = 0
   record_count = 0
   did_block_count = 0
+  decoded_signal_count = 0
+  suppressed_signal_count = 0
+  decode_error_count = 0
 
   for protocol in command.get("protocols", []):
     inventory_row = protocol["inventory"]
@@ -232,6 +292,13 @@ def _p5_rob_from_client(command: dict[str, Any] | None, client) -> dict[str, Any
       behavior_row: dict[str, Any] = {
         "behavior_code": int(behavior), "state": frame_state, "frames": [],
       }
+      behavior_meta = behavior_by_code.get(int(behavior))
+      if behavior_meta is not None:
+        behavior_row.update({
+          "behavior_signature": behavior_meta.get("signature"),
+          "behavior_name": behavior_meta.get("name"),
+          "behavior_comment": behavior_meta.get("comment"),
+        })
       if frame_response is not None:
         behavior_row["frame_response_hex"] = frame_response.hex()
       if frame_error is not None:
@@ -264,10 +331,10 @@ def _p5_rob_from_client(command: dict[str, Any] | None, client) -> dict[str, Any
           except recorder.RecorderError as e:
             frame_row.update(state="parse_error", error=str(e))
           else:
-            blocks = [
-              {"did": int(block["data_id"]), "length": int(block["length"]), "data_hex": bytes(block["data"]).hex()}
-              for block in parsed_record["blocks"]
-            ]
+            blocks = [_decode_p5_rob_block(block, signals_by_did) for block in parsed_record["blocks"]]
+            decoded_signal_count += sum(len(block["signals"]) for block in blocks)
+            suppressed_signal_count += sum(int(block["suppressed_signal_count"]) for block in blocks)
+            decode_error_count += sum(len(block["decode_errors"]) for block in blocks)
             frame_row["record"] = {
               "behavior_echo": parsed_record["behavior_echo"],
               "frame_echo": parsed_record["frame_echo"],
@@ -289,7 +356,10 @@ def _p5_rob_from_client(command: dict[str, Any] | None, client) -> dict[str, Any
     "frame_count": frame_count,
     "record_count": record_count,
     "did_block_count": did_block_count,
-    "signal_decode": "raw_only",
+    "decoded_signal_count": decoded_signal_count,
+    "suppressed_signal_count": suppressed_signal_count,
+    "decode_error_count": decode_error_count,
+    "signal_decode": "gts_current_p5" if signals_by_did else "raw_only",
   }
 
 
@@ -355,6 +425,8 @@ def _extended_details(
   identity_plan = _generic_cid_plan(profile, ecu) if include_identities else None
   ffd_plan = _p5_snapshot_plan(profile, ecu)
   rob_plan = _p5_rob_plan(profile, ecu)
+  category = profile.category(ecu) or {}
+  rob_metadata = category.get("rob") if isinstance(category.get("rob"), dict) else None
   dtc_rows = list(dtc_result.get("records") or []) if dtc_result.get("state") == "positive" else []
   identity = None
   if ffd_plan is None:
@@ -368,6 +440,7 @@ def _extended_details(
   rob = None if rob_plan is not None else {
     "state": "not_available", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0,
     "frame_count": 0, "record_count": 0, "did_block_count": 0,
+    "decoded_signal_count": 0, "suppressed_signal_count": 0, "decode_error_count": 0,
   }
 
   needs_identity = identity_plan is not None
@@ -396,7 +469,7 @@ def _extended_details(
       if needs_ffd:
         freeze_frames = _freeze_frames_from_client(ffd_plan, client, dtc_rows)
       if needs_rob:
-        rob = _p5_rob_from_client(rob_plan, client)
+        rob = _p5_rob_from_client(rob_plan, client, rob_metadata)
   except Exception as e:
     message = str(e)
     if needs_identity and identity is None:
@@ -407,7 +480,9 @@ def _extended_details(
     if needs_rob and rob is None:
       rob = {
         "state": "error", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0,
-        "frame_count": 0, "record_count": 0, "did_block_count": 0, "error": message,
+        "frame_count": 0, "record_count": 0, "did_block_count": 0,
+        "decoded_signal_count": 0, "suppressed_signal_count": 0, "decode_error_count": 0,
+        "error": message,
       }
   assert freeze_frames is not None
   assert rob is not None
@@ -464,6 +539,9 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
   rob_frames = 0
   rob_records = 0
   rob_did_blocks = 0
+  rob_decoded_signals = 0
+  rob_suppressed_signals = 0
+  rob_decode_errors = 0
 
   for ecu in profile.ecus:
     mount = mount_lookup.get(ecu.endpoint)
@@ -474,6 +552,7 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
     rob = {
       "state": "not_queried", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0,
       "frame_count": 0, "record_count": 0, "did_block_count": 0,
+      "decoded_signal_count": 0, "suppressed_signal_count": 0, "decode_error_count": 0,
     }
     if responding:
       dtc_result = _dtcs(profile, ecu, client_factory)
@@ -490,6 +569,9 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
       rob_frames += int(rob.get("frame_count", 0))
       rob_records += int(rob.get("record_count", 0))
       rob_did_blocks += int(rob.get("did_block_count", 0))
+      rob_decoded_signals += int(rob.get("decoded_signal_count", 0))
+      rob_suppressed_signals += int(rob.get("suppressed_signal_count", 0))
+      rob_decode_errors += int(rob.get("decode_error_count", 0))
 
     ecus.append({
       "key": ecu.key,
@@ -541,6 +623,9 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
       "rob_frames": rob_frames,
       "rob_records": rob_records,
       "rob_did_blocks": rob_did_blocks,
+      "rob_decoded_signals": rob_decoded_signals,
+      "rob_suppressed_signals": rob_suppressed_signals,
+      "rob_decode_errors": rob_decode_errors,
       "fault_status_records": fault_count,
     },
     "coverage": {
@@ -553,8 +638,8 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
       ),
       "info_code": "not_implemented",
       "operation_history": (
-        "raw current-P5 RoB behavior/frame/record transport via exact exported role-0xA0 F3/F4/F5 contracts; "
-        "behavior-record signal conversion/presentation not yet implemented"
+        "current-P5 RoB behavior/frame/record transport plus OEM behavior names and DID-scoped signal decoding "
+        "from the exported current GTS+ type-87/88/90 + physical/unit/pattern schema"
       ),
       "monitor_data": "not_implemented",
       "timestamp_data": "not_implemented",
@@ -825,7 +910,8 @@ def render(document: dict[str, Any]) -> str:
     (
       f"Installed candidates: {summary['install_candidates']}  responding: {summary['mount_responding']}  "
       f"DTC responders: {summary['dtc_positive_ecus']}  faults: {summary['fault_status_records']}  "
-      f"FFD records: {summary.get('freeze_frame_records', 0)}  RoB records: {summary.get('rob_records', 0)}"
+      f"FFD records: {summary.get('freeze_frame_records', 0)}  RoB records: {summary.get('rob_records', 0)}  "
+      f"RoB signals: {summary.get('rob_decoded_signals', 0)}"
     ),
     "",
   ]

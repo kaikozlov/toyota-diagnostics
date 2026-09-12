@@ -39,6 +39,38 @@ class TestDecode(unittest.TestCase):
       "LTA Control Condition: LTA Disabled (raw=0x01)",
     )
 
+
+  def test_current_p5_rob_steering_angle_and_local_support(self):
+    eps = self.profile.lookup_ecu("eps")
+    eps_rob = self.profile.category(eps)["rob"]
+    steering = next(row for row in eps_rob["signals"] if row["name"] == "Steering Angle")
+    self.assertEqual(decode.decode_rob_signal(bytes.fromhex("0001"), steering), {
+      "state": "decoded", "name": "Steering Angle", "record_key": 7, "sort_key": 9,
+      "raw": 1, "converted_integer": 15, "value": "1.5", "pattern": None,
+      "unit": "deg", "formatted": "1.5 deg",
+    })
+
+    engine = self.profile.lookup_ecu("engine")
+    engine_rob = self.profile.category(engine)["rob"]
+    shift_p = next(row for row in engine_rob["signals"] if row["name"] == "Shift SW Status (P Range)")
+    self.assertEqual(shift_p["local_support_mode"], 1)
+    self.assertEqual(decode.decode_rob_signal(bytes.fromhex("0101"), shift_p)["formatted"], "ON")
+    self.assertEqual(decode.decode_rob_signal(bytes.fromhex("0001"), shift_p), {
+      "state": "not_supported", "name": "Shift SW Status (P Range)",
+    })
+
+  def test_current_p5_rob_unmaterialized_conditions_fail_closed(self):
+    row = {
+      "name": "x", "bit_start": 0, "bit_end": 7, "local_support_mode": 0, "extraction_mode": 1,
+      "support_condition_key": 1, "dynamic_lsb_possible": False, "signal_info": {},
+    }
+    with self.assertRaisesRegex(decode.DecodeError, "cross-DID"):
+      decode.decode_rob_signal(b"\x00", row)
+    row["support_condition_key"] = 0
+    row["dynamic_lsb_possible"] = True
+    with self.assertRaisesRegex(decode.DecodeError, "dynamic-LSB"):
+      decode.decode_rob_signal(b"\x00", row)
+
   def test_unknown_decoder_and_short_payload_fail_closed(self):
     with self.assertRaisesRegex(decode.DecodeError, "unsupported decoder"):
       decode.decode_signal(b"\x00", {"decoder": "unknown"})

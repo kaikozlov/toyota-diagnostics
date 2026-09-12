@@ -598,12 +598,12 @@ class TestLiveCli(unittest.TestCase):
     def rob_response(client, request):
       del client
       responses = {
-        "ab01": "eb011234",
-        "ab021234": "eb0212340101",
-        "ab0312340101": "eb031234010101123402aabb",
-        "ab11": "eb112818",
-        "ab122818": "eb1228180100",
-        "ab1328180100": "eb1328180100025631050000000000600200000003112233",
+        "ab01": "eb010455",
+        "ab020455": "eb0204550101",
+        "ab0304550101": "eb0304550101015035020002",
+        "ab11": "eb112001",
+        "ab122001": "eb1220010100",
+        "ab1320010100": "eb1320010100025037020001600200000003112233",
       }
       value = responses.get(request.hex())
       if value is None:
@@ -636,20 +636,29 @@ class TestLiveCli(unittest.TestCase):
     self.assertEqual((eps["rob"]["frame_count"], eps["rob"]["record_count"], eps["rob"]["did_block_count"]), (2, 2, 3))
     first, second = eps["rob"]["groups"]
     self.assertEqual((first["inventory_subfunction"], first["frame_subfunction"], first["record_subfunction"]), (0x01, 0x02, 0x03))
-    self.assertEqual(first["behavior_codes"], [0x1234])
-    self.assertEqual(first["behaviors"][0]["frames"][0]["record"]["blocks"], [
-      {"did": 0x1234, "length": 2, "data_hex": "aabb"},
-    ])
+    self.assertEqual(first["behavior_codes"], [0x0455])
+    first_behavior = first["behaviors"][0]
+    self.assertEqual((first_behavior["behavior_signature"], first_behavior["behavior_name"]),
+                     ("X0455", "Steering Angle Sensor Incorrect Installation"))
+    first_block = first_behavior["frames"][0]["record"]["blocks"][0]
+    self.assertEqual((first_block["did"], first_block["length"], first_block["data_hex"]), (0x5035, 2, "0002"))
+    self.assertEqual(first_block["signals"][0]["name"], "Steering Wheel Torque")
+    self.assertEqual(first_block["signals"][0]["formatted"], "0.002 Nm")
+
     self.assertEqual((second["inventory_subfunction"], second["frame_subfunction"], second["record_subfunction"]), (0x11, 0x12, 0x13))
-    self.assertEqual(second["behavior_codes"], [0x2818])
-    self.assertEqual(second["behaviors"][0]["frames"][0]["record"]["blocks"], [
-      {"did": 0x5631, "length": 5, "data_hex": "0000000000"},
-      {"did": 0x6002, "length": 3, "data_hex": "112233"},
-    ])
+    self.assertEqual(second["behavior_codes"], [0x2001])
+    second_behavior = second["behaviors"][0]
+    self.assertEqual((second_behavior["behavior_signature"], second_behavior["behavior_name"]),
+                     ("X2001", "Steering Angle Sensor Malfunction"))
+    blocks = second_behavior["frames"][0]["record"]["blocks"]
+    self.assertEqual((blocks[0]["did"], blocks[0]["data_hex"], blocks[0]["signal_decode"]), (0x5037, "0001", "decoded"))
+    self.assertEqual(blocks[0]["signals"][0]["formatted"], "1.5 deg")
+    self.assertEqual((blocks[1]["did"], blocks[1]["data_hex"], blocks[1]["signal_decode"]), (0x6002, "112233", "no_schema"))
     self.assertEqual(document["summary"]["rob_available_ecus"], 1)
     self.assertEqual(document["summary"]["rob_behavior_codes"], 2)
     self.assertEqual((document["summary"]["rob_frames"], document["summary"]["rob_records"], document["summary"]["rob_did_blocks"]), (2, 2, 3))
-    self.assertIn("behavior/frame/record", document["coverage"]["operation_history"])
+    self.assertEqual((document["summary"]["rob_decoded_signals"], document["summary"]["rob_suppressed_signals"], document["summary"]["rob_decode_errors"]), (2, 0, 0))
+    self.assertIn("OEM behavior names", document["coverage"]["operation_history"])
 
   def test_health_check_invalid_compare_refuses_before_transport(self):
     import tempfile

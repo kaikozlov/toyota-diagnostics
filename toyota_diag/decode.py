@@ -103,3 +103,69 @@ def format_decoded_signal(payload: bytes, row: dict[str, Any]) -> str:
     if unit:
       rendered += f" {unit}"
   return f"{name}: {rendered} (raw={raw_text})"
+
+
+def rob_local_supported(payload: bytes, row: dict[str, Any]) -> bool:
+  """Apply current GetRoBP5 type-90 local support semantics for one signal row."""
+  try:
+    bit_end = int(row["bit_end"])
+    mode = int(row["local_support_mode"])
+  except (KeyError, TypeError, ValueError) as e:
+    raise DecodeError("incomplete current-P5 RoB support metadata") from e
+  if bit_end >= len(payload) * 8:
+    return False
+  if mode in (0, 2):
+    return True
+  if mode == 1:
+    byte_index = (bit_end >> 3) - 1
+    if byte_index < 0 or byte_index >= len(payload):
+      return False
+    mask = 0x80 >> (bit_end & 7)
+    return (payload[byte_index] & mask) == mask
+  raise DecodeError(f"unsupported current-P5 RoB local support mode {mode}")
+
+
+def decode_rob_signal(payload: bytes, row: dict[str, Any]) -> dict[str, Any]:
+  """Decode one current ordinary-P5 RoB signal from exported GTS+ metadata."""
+  if int(row.get("support_condition_key") or 0) != 0:
+    raise DecodeError("RoB cross-DID support condition metadata is required before decoding this signal")
+  if bool(row.get("dynamic_lsb_possible")):
+    raise DecodeError("RoB dynamic-LSB materialization is required before decoding this signal")
+  if int(row.get("extraction_mode") or 0) == 4:
+    raise DecodeError("RoB extraction mode 4 is an opaque buffer field, not an integer signal")
+  if not rob_local_supported(payload, row):
+    return {"state": "not_supported", "name": row.get("name")}
+
+  info = row.get("signal_info")
+  if not isinstance(info, dict):
+    raise DecodeError("RoB signal has no exported physical metadata")
+  decoder_row = {
+    "decoder": P5_LINEAR_MSB0_V1,
+    "name": row.get("name"),
+    "bit_start": row.get("bit_start"),
+    "bit_end": row.get("bit_end"),
+    "mul": info.get("mul"),
+    "div": info.get("div"),
+    "offset": info.get("offset"),
+    "signed": info.get("signed", False),
+    "decimal_point_count": info.get("decimal_point_count"),
+    "patterns": info.get("pattern_display") or {},
+    "unit": info.get("unit"),
+  }
+  decoded = decode_signal(payload, decoder_row)
+  rendered = str(decoded["pattern"]) if decoded["pattern"] is not None else str(decoded["value"])
+  unit = info.get("unit")
+  if decoded["pattern"] is None and unit:
+    rendered += f" {unit}"
+  return {
+    "state": "decoded",
+    "name": row.get("name"),
+    "record_key": int(row.get("record_key") or 0),
+    "sort_key": int(row.get("sort_key") or 0),
+    "raw": decoded["raw"],
+    "converted_integer": decoded["converted_integer"],
+    "value": decoded["value"],
+    "pattern": decoded["pattern"],
+    "unit": unit,
+    "formatted": rendered,
+  }
