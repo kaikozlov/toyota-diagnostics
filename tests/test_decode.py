@@ -40,6 +40,28 @@ class TestDecode(unittest.TestCase):
     )
 
 
+  def test_current_p5_generic_ffd_signal_and_same_record_condition(self):
+    eps = self.profile.lookup_ecu("eps")
+    ffd = self.profile.category(eps)["generic_ffd"]
+    steering = next(row for row in ffd["signals"] if row["name"] == "Steering Angle")
+    self.assertEqual(decode.decode_ffd_signal(bytes.fromhex("0001"), steering, {0x3037: bytes.fromhex("0001")}), {
+      "state": "decoded", "name": "Steering Angle", "monitor_key": 17, "sort_key": 17,
+      "raw": 1, "converted_integer": 15, "value": "1.5", "pattern": None,
+      "unit": "deg", "formatted": "1.5 deg",
+    })
+
+    odometer_km = next(row for row in ffd["signals"] if row["monitor_key"] == 9905)
+    self.assertEqual(odometer_km["support_condition"]["referenced_did"], 0x0403)
+    present = bytes.fromhex("01000005")
+    self.assertEqual(decode.decode_ffd_signal(present, odometer_km, {0x0403: present})["formatted"], "5 km")
+    absent = bytes.fromhex("00000005")
+    self.assertEqual(decode.decode_ffd_signal(absent, odometer_km, {0x0403: absent}), {
+      "state": "not_supported", "name": "Total Distance Traveled",
+    })
+    self.assertEqual(decode.decode_ffd_signal(present, odometer_km, {}), {
+      "state": "not_supported", "name": "Total Distance Traveled",
+    })
+
   def test_current_p5_rob_steering_angle_and_local_support(self):
     eps = self.profile.lookup_ecu("eps")
     eps_rob = self.profile.category(eps)["rob"]

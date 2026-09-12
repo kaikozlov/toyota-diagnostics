@@ -576,7 +576,7 @@ class TestLiveCli(unittest.TestCase):
     scripted.dtc[0x7A1] = support.dtc_payload((raw_dtc, 0x08))
     scripted.dtc_report[(
       0x7A1, int(dtc.DTC_REPORT_TYPE.DTC_SNAPSHOT_RECORD_BY_DTC_NUMBER), dtc.dtc_str_to_num(code),
-    )] = bytes.fromhex("c13187080101123402aabb")
+    )] = bytes.fromhex("c131870801013037020001")
     panda = support.FakePanda()
     state = {"backend": "panda", "mode": "managed-sendcan", "ready": True, "detail": "ready"}
 
@@ -624,12 +624,18 @@ class TestLiveCli(unittest.TestCase):
     self.assertEqual(eps["freeze_frames"]["positive_dtc_count"], 1)
     ffd = eps["freeze_frames"]["dtcs"][0]
     self.assertEqual((ffd["dtc"], ffd["state"], ffd["status"]), (code, "positive", 0x08))
-    self.assertEqual(ffd["records"][0]["identifiers"], [
-      {"did": 0x1234, "length": 2, "data_hex": "aabb"},
-    ])
+    ffd_identifier = ffd["records"][0]["identifiers"][0]
+    self.assertEqual((ffd_identifier["did"], ffd_identifier["length"], ffd_identifier["data_hex"]),
+                     (0x3037, 2, "0001"))
+    self.assertEqual(ffd_identifier["signal_decode"], "decoded")
+    steering = next(row for row in ffd_identifier["signals"] if row["name"] == "Steering Angle")
+    self.assertEqual(steering["formatted"], "1.5 deg")
     self.assertEqual(document["summary"]["freeze_frame_records"], 1)
     self.assertEqual(document["summary"]["freeze_frame_positive_dtcs"], 1)
-    self.assertIn("raw ordinary-P5", document["coverage"]["generic_ffd"])
+    self.assertEqual((document["summary"]["freeze_frame_decoded_signals"],
+                      document["summary"]["freeze_frame_suppressed_signals"],
+                      document["summary"]["freeze_frame_decode_errors"]), (1, 0, 0))
+    self.assertIn("OEM FFD signal decoding", document["coverage"]["generic_ffd"])
     self.assertEqual(eps["rob"]["state"], "available")
     self.assertEqual(eps["rob"]["behavior_code_count"], 2)
     self.assertEqual(eps["rob"]["unique_behavior_code_count"], 2)

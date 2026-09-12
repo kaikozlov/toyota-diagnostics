@@ -105,8 +105,8 @@ def format_decoded_signal(payload: bytes, row: dict[str, Any]) -> str:
   return f"{name}: {rendered} (raw={raw_text})"
 
 
-def rob_local_supported(payload: bytes, row: dict[str, Any]) -> bool:
-  """Apply current GetRoBP5 type-90 local support semantics for one signal row."""
+def p5_local_supported(payload: bytes, row: dict[str, Any]) -> bool:
+  """Apply current P5 type-61/type-90 local support semantics for one signal row."""
   try:
     bit_end = int(row["bit_end"])
     mode = int(row["local_support_mode"])
@@ -125,20 +125,14 @@ def rob_local_supported(payload: bytes, row: dict[str, Any]) -> bool:
   raise DecodeError(f"unsupported current-P5 RoB local support mode {mode}")
 
 
-def decode_rob_signal(payload: bytes, row: dict[str, Any]) -> dict[str, Any]:
-  """Decode one current ordinary-P5 RoB signal from exported GTS+ metadata."""
-  if int(row.get("support_condition_key") or 0) != 0:
-    raise DecodeError("RoB cross-DID support condition metadata is required before decoding this signal")
-  if bool(row.get("dynamic_lsb_possible")):
-    raise DecodeError("RoB dynamic-LSB materialization is required before decoding this signal")
-  if int(row.get("extraction_mode") or 0) == 4:
-    raise DecodeError("RoB extraction mode 4 is an opaque buffer field, not an integer signal")
-  if not rob_local_supported(payload, row):
-    return {"state": "not_supported", "name": row.get("name")}
+def rob_local_supported(payload: bytes, row: dict[str, Any]) -> bool:
+  return p5_local_supported(payload, row)
 
+
+def _decode_p5_exported_signal(payload: bytes, row: dict[str, Any]) -> dict[str, Any]:
   info = row.get("signal_info")
   if not isinstance(info, dict):
-    raise DecodeError("RoB signal has no exported physical metadata")
+    raise DecodeError("signal has no exported physical metadata")
   decoder_row = {
     "decoder": P5_LINEAR_MSB0_V1,
     "name": row.get("name"),
@@ -160,8 +154,6 @@ def decode_rob_signal(payload: bytes, row: dict[str, Any]) -> dict[str, Any]:
   return {
     "state": "decoded",
     "name": row.get("name"),
-    "record_key": int(row.get("record_key") or 0),
-    "sort_key": int(row.get("sort_key") or 0),
     "raw": decoded["raw"],
     "converted_integer": decoded["converted_integer"],
     "value": decoded["value"],
@@ -169,3 +161,60 @@ def decode_rob_signal(payload: bytes, row: dict[str, Any]) -> dict[str, Any]:
     "unit": unit,
     "formatted": rendered,
   }
+
+
+def decode_ffd_signal(
+    payload: bytes,
+    row: dict[str, Any],
+    record_payloads: dict[int, bytes],
+) -> dict[str, Any]:
+  """Decode one current ordinary-P5 generic freeze-frame signal."""
+  if bool(row.get("dynamic_lsb_possible")):
+    raise DecodeError("FFD dynamic-LSB materialization is required before decoding this signal")
+  if not p5_local_supported(payload, row):
+    return {"state": "not_supported", "name": row.get("name")}
+
+  condition = row.get("support_condition")
+  if condition is not None:
+    if not isinstance(condition, dict):
+      raise DecodeError("invalid FFD support condition metadata")
+    try:
+      condition_type = int(condition["condition_type"])
+      referenced_did = int(condition["referenced_did"])
+      bit_start = int(condition["bit_start"])
+      bit_end = int(condition["bit_end"])
+    except (KeyError, TypeError, ValueError) as e:
+      raise DecodeError("incomplete FFD support condition metadata") from e
+    if condition_type != 7:
+      raise DecodeError(f"unsupported FFD support condition type {condition_type}")
+    referenced_payload = record_payloads.get(referenced_did)
+    if referenced_payload is None:
+      return {"state": "not_supported", "name": row.get("name")}
+    if extract_msb0(referenced_payload, bit_start, bit_end) == 0:
+      return {"state": "not_supported", "name": row.get("name")}
+
+  decoded = _decode_p5_exported_signal(payload, row)
+  decoded.update({
+    "monitor_key": int(row.get("monitor_key") or 0),
+    "sort_key": int(row.get("sort_key") or 0),
+  })
+  return decoded
+
+
+def decode_rob_signal(payload: bytes, row: dict[str, Any]) -> dict[str, Any]:
+  """Decode one current ordinary-P5 RoB signal from exported GTS+ metadata."""
+  if int(row.get("support_condition_key") or 0) != 0:
+    raise DecodeError("RoB cross-DID support condition metadata is required before decoding this signal")
+  if bool(row.get("dynamic_lsb_possible")):
+    raise DecodeError("RoB dynamic-LSB materialization is required before decoding this signal")
+  if int(row.get("extraction_mode") or 0) == 4:
+    raise DecodeError("RoB extraction mode 4 is an opaque buffer field, not an integer signal")
+  if not p5_local_supported(payload, row):
+    return {"state": "not_supported", "name": row.get("name")}
+
+  decoded = _decode_p5_exported_signal(payload, row)
+  decoded.update({
+    "record_key": int(row.get("record_key") or 0),
+    "sort_key": int(row.get("sort_key") or 0),
+  })
+  return decoded

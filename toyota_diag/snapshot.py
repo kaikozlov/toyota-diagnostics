@@ -378,12 +378,88 @@ def _identity_from_client(plan: tuple[dict[str, Any], int] | None, client) -> di
   return {"did": did, "state": "positive", "data_hex": value.hex(), "ascii": _printable_ascii(value)}
 
 
-def _freeze_frames_from_client(command: dict[str, Any] | None, client, dtc_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _ffd_signals_by_did(metadata: dict[str, Any] | None) -> dict[int, list[dict[str, Any]]]:
+  if not isinstance(metadata, dict):
+    return {}
+  out: dict[int, list[dict[str, Any]]] = {}
+  for row in metadata.get("signals", []) if isinstance(metadata.get("signals"), list) else []:
+    if isinstance(row, dict) and row.get("snapshot_did") is not None:
+      out.setdefault(int(row["snapshot_did"]), []).append(row)
+  for rows in out.values():
+    rows.sort(key=lambda row: (int(row.get("sort_key") or 0), int(row.get("monitor_key") or 0)))
+  return out
+
+
+def _decode_ffd_record(record: dict[str, Any], signals_by_did: dict[int, list[dict[str, Any]]]) -> tuple[int, int, int]:
+  identifiers = record.get("identifiers") if isinstance(record.get("identifiers"), list) else []
+  payloads: dict[int, bytes] = {}
+  for item in identifiers:
+    if isinstance(item, dict) and item.get("did") is not None and item.get("data_hex") is not None:
+      try:
+        payloads[int(item["did"])] = bytes.fromhex(str(item["data_hex"]))
+      except ValueError:
+        continue
+
+  decoded_count = 0
+  suppressed_count = 0
+  error_count = 0
+  for item in identifiers:
+    if not isinstance(item, dict) or item.get("did") is None or item.get("data_hex") is None:
+      continue
+    did = int(item["did"])
+    try:
+      payload = bytes.fromhex(str(item["data_hex"]))
+    except ValueError as e:
+      item.update(signal_decode="decode_error", signals=[], suppressed_signal_count=0, decode_errors=[str(e)])
+      error_count += 1
+      continue
+    rows = signals_by_did.get(did, [])
+    signals: list[dict[str, Any]] = []
+    errors: list[str] = []
+    suppressed = 0
+    for row in rows:
+      try:
+        decoded = decode.decode_ffd_signal(payload, row, payloads)
+      except decode.DecodeError as e:
+        errors.append(f"{row.get('name') or 'unnamed'}: {e}")
+        continue
+      if decoded.get("state") == "not_supported":
+        suppressed += 1
+        continue
+      decoded.update({
+        "bit_start": int(row["bit_start"]),
+        "bit_end": int(row["bit_end"]),
+        "primary_did": int(row.get("primary_did") or 0),
+      })
+      signals.append(decoded)
+    if not rows:
+      state = "no_schema"
+    elif errors:
+      state = "partial" if signals else "decode_error"
+    else:
+      state = "decoded"
+    item.update(
+      signal_decode=state,
+      signals=signals,
+      suppressed_signal_count=suppressed,
+      decode_errors=errors,
+    )
+    decoded_count += len(signals)
+    suppressed_count += suppressed
+    error_count += len(errors)
+  return decoded_count, suppressed_count, error_count
+
+
+def _freeze_frames_from_client(command: dict[str, Any] | None, client, dtc_rows: list[dict[str, Any]], metadata: dict[str, Any] | None = None) -> dict[str, Any]:
   if command is None:
     return {"state": "not_available", "dtcs": [], "positive_dtc_count": 0, "record_count": 0}
+  signals_by_did = _ffd_signals_by_did(metadata)
   results: list[dict[str, Any]] = []
   positive = 0
   record_count = 0
+  decoded_signal_count = 0
+  suppressed_signal_count = 0
+  decode_error_count = 0
   for row in dtc_rows:
     code = str(row["code"])
     try:
@@ -401,6 +477,11 @@ def _freeze_frames_from_client(command: dict[str, Any] | None, client, dtc_rows:
       results.append({"dtc": code, "state": "error", "records": [], "error": str(e)})
       continue
     records = list(parsed["records"])
+    for record in records:
+      decoded, suppressed, errors = _decode_ffd_record(record, signals_by_did)
+      decoded_signal_count += decoded
+      suppressed_signal_count += suppressed
+      decode_error_count += errors
     positive += 1
     record_count += len(records)
     results.append({
@@ -414,7 +495,10 @@ def _freeze_frames_from_client(command: dict[str, Any] | None, client, dtc_rows:
     "dtcs": results,
     "positive_dtc_count": positive,
     "record_count": record_count,
-    "signal_decode": "raw_only",
+    "decoded_signal_count": decoded_signal_count,
+    "suppressed_signal_count": suppressed_signal_count,
+    "decode_error_count": decode_error_count,
+    "signal_decode": "gts_current_p5" if signals_by_did else "raw_only",
   }
 
 
@@ -426,6 +510,7 @@ def _extended_details(
   ffd_plan = _p5_snapshot_plan(profile, ecu)
   rob_plan = _p5_rob_plan(profile, ecu)
   category = profile.category(ecu) or {}
+  ffd_metadata = category.get("generic_ffd") if isinstance(category.get("generic_ffd"), dict) else None
   rob_metadata = category.get("rob") if isinstance(category.get("rob"), dict) else None
   dtc_rows = list(dtc_result.get("records") or []) if dtc_result.get("state") == "positive" else []
   identity = None
@@ -434,7 +519,11 @@ def _extended_details(
   elif dtc_result.get("state") != "positive":
     freeze_frames = {"state": "not_queried", "dtcs": [], "positive_dtc_count": 0, "record_count": 0}
   elif not dtc_rows:
-    freeze_frames = {"state": "available", "dtcs": [], "positive_dtc_count": 0, "record_count": 0, "signal_decode": "raw_only"}
+    freeze_frames = {
+      "state": "available", "dtcs": [], "positive_dtc_count": 0, "record_count": 0,
+      "decoded_signal_count": 0, "suppressed_signal_count": 0, "decode_error_count": 0,
+      "signal_decode": "gts_current_p5" if ffd_metadata and ffd_metadata.get("signals") else "raw_only",
+    }
   else:
     freeze_frames = None
   rob = None if rob_plan is not None else {
@@ -467,7 +556,7 @@ def _extended_details(
       if needs_identity:
         identity = _identity_from_client(identity_plan, client)
       if needs_ffd:
-        freeze_frames = _freeze_frames_from_client(ffd_plan, client, dtc_rows)
+        freeze_frames = _freeze_frames_from_client(ffd_plan, client, dtc_rows, ffd_metadata)
       if needs_rob:
         rob = _p5_rob_from_client(rob_plan, client, rob_metadata)
   except Exception as e:
@@ -534,6 +623,9 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
   freeze_frame_positive_dtcs = 0
   freeze_frame_records = 0
   freeze_frame_available_ecus = 0
+  freeze_frame_decoded_signals = 0
+  freeze_frame_suppressed_signals = 0
+  freeze_frame_decode_errors = 0
   rob_available_ecus = 0
   rob_behavior_codes = 0
   rob_frames = 0
@@ -564,6 +656,9 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
       freeze_frame_available_ecus += int(freeze_frames.get("state") == "available")
       freeze_frame_positive_dtcs += int(freeze_frames.get("positive_dtc_count", 0))
       freeze_frame_records += int(freeze_frames.get("record_count", 0))
+      freeze_frame_decoded_signals += int(freeze_frames.get("decoded_signal_count", 0))
+      freeze_frame_suppressed_signals += int(freeze_frames.get("suppressed_signal_count", 0))
+      freeze_frame_decode_errors += int(freeze_frames.get("decode_error_count", 0))
       rob_available_ecus += int(rob.get("state") == "available")
       rob_behavior_codes += int(rob.get("behavior_code_count", 0))
       rob_frames += int(rob.get("frame_count", 0))
@@ -618,6 +713,9 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
       "freeze_frame_available_ecus": freeze_frame_available_ecus,
       "freeze_frame_positive_dtcs": freeze_frame_positive_dtcs,
       "freeze_frame_records": freeze_frame_records,
+      "freeze_frame_decoded_signals": freeze_frame_decoded_signals,
+      "freeze_frame_suppressed_signals": freeze_frame_suppressed_signals,
+      "freeze_frame_decode_errors": freeze_frame_decode_errors,
       "rob_available_ecus": rob_available_ecus,
       "rob_behavior_codes": rob_behavior_codes,
       "rob_frames": rob_frames,
@@ -633,8 +731,8 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
       "dtc": "UDS ReadDTCInformation DTC_BY_STATUS_MASK over responding routed ECUs",
       "identity": "exact exported generic_cid request where available" if include_identities else "disabled by caller",
       "generic_ffd": (
-        "raw ordinary-P5 per-DTC snapshots via exact exported role-0xB5/selector-0xCF contract; "
-        "signal-level freeze-frame decoding not yet implemented"
+        "ordinary current-P5 per-DTC snapshots plus OEM FFD signal decoding via the exported "
+        "type-62/157 membership, type-61 local support, type-80 same-record conditions, and physical/unit/pattern schema"
       ),
       "info_code": "not_implemented",
       "operation_history": (
@@ -910,8 +1008,8 @@ def render(document: dict[str, Any]) -> str:
     (
       f"Installed candidates: {summary['install_candidates']}  responding: {summary['mount_responding']}  "
       f"DTC responders: {summary['dtc_positive_ecus']}  faults: {summary['fault_status_records']}  "
-      f"FFD records: {summary.get('freeze_frame_records', 0)}  RoB records: {summary.get('rob_records', 0)}  "
-      f"RoB signals: {summary.get('rob_decoded_signals', 0)}"
+      f"FFD records: {summary.get('freeze_frame_records', 0)}  FFD signals: {summary.get('freeze_frame_decoded_signals', 0)}  "
+      f"RoB records: {summary.get('rob_records', 0)}  RoB signals: {summary.get('rob_decoded_signals', 0)}"
     ),
     "",
   ]
