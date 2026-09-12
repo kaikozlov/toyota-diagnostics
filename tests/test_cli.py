@@ -1,0 +1,658 @@
+import sys
+import unittest
+from contextlib import ExitStack, redirect_stdout
+from io import StringIO
+from unittest import mock
+
+from toyota_diag import active_test, cli, dtc, registry, resolver
+from tests import support
+
+
+def run_cli(argv, *, use_default_registry=False):
+  args = list(argv)
+  if not use_default_registry and "--registry" not in args and "--profile" not in args:
+    args = ["--registry", str(registry.LEGACY_CAMRY_REGISTRY), *args]
+  output = StringIO()
+  with redirect_stdout(output):
+    rc = cli.main(args)
+  return rc, output.getvalue()
+
+
+class TestOfflineCli(unittest.TestCase):
+  def test_transport_status_is_machine_readable(self):
+    state = {"pandad_running": True, "mode": "managed-sendcan", "ready": True, "detail": "ready"}
+    with mock.patch("toyota_diag.transport.status", return_value=state) as status:
+      rc, output = run_cli(["transport", "status", "--json"])
+    self.assertEqual(rc, 0)
+    self.assertEqual(__import__("json").loads(output), state)
+    status.assert_called_once_with(mock.ANY, obd_multiplexing=False)
+
+    with mock.patch("toyota_diag.transport.status", return_value=state) as status:
+      rc, output = run_cli(["--obd-multiplexing", "transport", "status", "--json"])
+    self.assertEqual(rc, 0)
+    self.assertEqual(__import__("json").loads(output), state)
+    status.assert_called_once_with(mock.ANY, obd_multiplexing=True)
+
+  def test_tss3_ffd_catalog_and_search_are_first_class(self):
+    import json
+
+    rc, output = run_cli(["search", "Arbitration result Lateral ID", "--limit", "10"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("ffd-signal", output)
+    self.assertIn("0x5285", output)
+
+    rc, output = run_cli(["ffd", "data", "LTA Control Request Pinion Angle", "--json"])
+    self.assertEqual(rc, 0, output)
+    signals = json.loads(output)["signals"]
+    self.assertTrue(any(row["data_id"] == 0x5631 for row in signals))
+
+    rc, output = run_cli(["frc", "ffd", "robs", "Hands Free", "--json"])
+    self.assertEqual(rc, 0, output)
+    robs = json.loads(output)["robs"]
+    self.assertTrue(any(row["rob"] == 0x2845 for row in robs))
+
+  def test_search_and_ecu_first_browsing(self):
+    rc, output = run_cli(["search", "LTA", "--limit", "20"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("did          frc", output)
+    self.assertIn("0x1601", output)
+    self.assertNotIn("High Voltage Electric Heater", output)
+
+    rc, output = run_cli(["ecu", "frc"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("Front Recognition Camera", output)
+    self.assertIn("Data List: 148 DID(s), 283 signal(s)", output)
+
+    rc, output = run_cli(["ecu", "frc", "data", "LTA Control"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("0x1601", output)
+    self.assertIn("LTA Control Condition", output)
+
+    rc, output = run_cli(["ecu", "frc", "plugins"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("GetDatMonListP5_DT.dll", output)
+    self.assertIn("p5_monitor_list", output)
+
+    rc, output = run_cli(["search", "single_routine_active_test"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("utility-family", output)
+    self.assertIn("0xD4", output)
+
+  def test_offline_catalog_browsing_json_is_consistent(self):
+    import json
+
+    cases = [
+      (["ecu", "list", "--json"], "ecus"),
+      (["ecu", "frc", "--json"], "ecu"),
+      (["ecu", "frc", "functions", "--limit", "2", "--json"], "functions"),
+      (["ecu", "frc", "plugins", "--limit", "2", "--json"], "plugins"),
+      (["ecu", "frc", "data", "LTA Control", "--json"], "signals"),
+      (["ecu", "frc", "dtcs", "U0131", "--json"], "dtcs"),
+      (["did", "list", "frc", "LTA Control", "--json"], "signals"),
+      (["dtc", "catalog", "frc", "U0131", "--json"], "dtcs"),
+    ]
+    for argv, key in cases:
+      with self.subTest(argv=argv):
+        rc, output = run_cli(argv)
+        self.assertEqual(rc, 0, output)
+        self.assertIn(key, json.loads(output))
+
+    rc, output = run_cli(["dtc", "decode", "0xAF", "--json"])
+    self.assertEqual(rc, 0, output)
+    status = json.loads(output)
+    self.assertEqual(status["status"], 0xAF)
+    self.assertTrue(status["is_fault_status"])
+
+  def test_active_test_list_and_plan_json_expose_runtime_boundary(self):
+    import json
+
+    rc, output = run_cli(["active-test", "list", "frc", "--json"])
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual(document["profile"], "camry-2026-f33")
+    a429 = next(row for row in document["active_tests"] if row["id"] == 0xA429)
+    self.assertEqual((a429["registry_execution"], a429["runtime_execution"], a429["runtime_executable"]),
+                     ("executable", "executable", True))
+    self.assertEqual(a429["wire_plan"]["routine_id"], 0x1588)
+
+    rc, output = run_cli(["active-test", "plan", "brake", "42001", "--json"])
+    self.assertEqual(rc, 0, output)
+    blocked = json.loads(output)["active_test"]
+    self.assertEqual((blocked["registry_execution"], blocked["runtime_execution"], blocked["runtime_executable"]),
+                     ("executable", "blocked", False))
+    self.assertTrue(any("0xFFFF" in reason for reason in blocked["runtime_refusals"]))
+
+  def test_direct_ecu_shorthand_preserves_top_level_commands(self):
+    rc, output = run_cli(["frc"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("Front Recognition Camera", output)
+
+    rc, output = run_cli(["frc", "data", "LTA Control"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("LTA Control Condition", output)
+
+    rc, output = run_cli(["--profile", "camry-2026-f33", "frc", "plugins", "--json"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("GetDatMonListP5_DT.dll", output)
+
+    rc, output = run_cli(["search", "LTA", "--limit", "1"])
+    self.assertEqual(rc, 0, output)
+    self.assertNotIn("no ECU matches", output)
+
+    with self.assertRaisesRegex(SystemExit, "did you mean frc"):
+      run_cli(["frontcam"])
+
+  def test_profile_name_alias_resolves_bundled_registry(self):
+    rc, output = run_cli(["--profile", "camry-2026-f33", "ecu", "eps"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("Power Steering", output)
+
+  def test_vehicle_commands_are_offline_and_machine_readable(self):
+    import json
+    rc, output = run_cli(["vehicle", "--json"])
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual((document["profile"], document["panda_bus"]), ("camry-2026-f33", 0))
+    rc, output = run_cli(["vehicle", "list", "--json"])
+    self.assertEqual(rc, 0, output)
+    rows = json.loads(output)
+    self.assertTrue(any(row["profile"] == "camry-2026-f33" for row in rows))
+
+  def test_ecu_typo_suggests_match(self):
+    with self.assertRaisesRegex(SystemExit, "did you mean frc"):
+      run_cli(["ecu", "frontcam"])
+
+  def test_offline_catalog_and_plans_do_not_import_panda(self):
+    with mock.patch.dict(sys.modules, {"panda": None}):
+      cases = [
+        (["ecu", "info", "eps"], "8965033K9011J2740743"),
+        (["ecu", "info", "frc"], "8646C06091"),
+        (["can", "topology"], "Power Steering (EPS) via Central Gateway"),
+        (["did", "list", "frc", "LTA Control Condition"], "0x1601"),
+        (["did", "decode", "eps", "0x1037", "0001"], "Steering Angle: 1.5 deg"),
+        (["dtc", "catalog", "frc", "U0131"], "Missing Message"),
+        (["active-test", "plan", "frc", "0xA429"], "runtime: executable"),
+        (["utility", "list"], "single_routine_active_test"),
+        (["utility", "plan", "single_routine_active_test"], "31 <01 start|02 stop|03 result>"),
+      ]
+      for argv, expected in cases:
+        with self.subTest(argv=argv):
+          rc, output = run_cli(argv)
+          self.assertEqual(rc, 0)
+          self.assertIn(expected, output)
+    self.assertFalse(hasattr(active_test, "Panda"))
+    self.assertFalse(hasattr(active_test, "UdsClient"))
+
+
+class TestLiveCli(unittest.TestCase):
+  def patch_live(self, panda, scripted, raw_response=b"\x62\xF1\x81"):
+    stack = ExitStack()
+    stack.enter_context(mock.patch("toyota_diag.transport.connect", return_value=panda))
+    stack.enter_context(mock.patch("toyota_diag.transport.uds_client_factory", return_value=scripted.factory))
+    stack.enter_context(mock.patch("toyota_diag.transport.raw_isotp", return_value=raw_response))
+    stack.enter_context(mock.patch("time.sleep", return_value=None))
+    return stack
+
+  @staticmethod
+  def scripted_clear(post_clear_clean=True):
+    scripted = support.ScriptedUds()
+    reads = {"count": 0}
+    def engine_dtc():
+      reads["count"] += 1
+      status = 0 if post_clear_clean and reads["count"] > 1 else 1
+      return support.dtc_payload((b"\x00\x01\x21", status))
+    scripted.dtc[0x700] = engine_dtc
+    return scripted
+
+  @staticmethod
+  def mode04_panda():
+    return support.FakePanda(recv_batches=[[(addr, b"\x01\x44\x00\x00\x00\x00\x00\x00", 0) for addr in support.LEGISLATED_RESPONDERS]])
+
+  def test_operation_ffd_live_commands_use_exact_read_only_ab_family(self):
+    import json
+
+    scripted = support.ScriptedUds()
+    panda = support.FakePanda()
+
+    with self.patch_live(panda, scripted), mock.patch(
+        "toyota_diag.transport.raw_isotp", return_value=bytes.fromhex("eb1128182845")) as raw:
+      rc, output = run_cli(["ffd", "operation", "list", "--json"])
+    self.assertEqual(rc, 0, output)
+    self.assertEqual([row["behavior"] for row in json.loads(output)["behaviors"]], [0x2818, 0x2845])
+    raw.assert_called_once_with(mock.ANY, bytes.fromhex("ab11"))
+
+    scripted.calls.clear()
+    with self.patch_live(panda, scripted), mock.patch(
+        "toyota_diag.transport.raw_isotp", return_value=bytes.fromhex("eb12281801000101")) as raw:
+      rc, output = run_cli(["ffd", "operation", "records", "2818", "--json"])
+    self.assertEqual(rc, 0, output)
+    self.assertEqual(json.loads(output)["records"], [0x0100, 0x0101])
+    raw.assert_called_once_with(mock.ANY, bytes.fromhex("ab122818"))
+
+    scripted.calls.clear()
+    response = bytes.fromhex("eb13281801000156310500ffc76400")
+    with self.patch_live(panda, scripted), mock.patch(
+        "toyota_diag.transport.raw_isotp", return_value=response) as raw:
+      rc, output = run_cli(["frc", "ffd", "operation", "read", "2818", "0100", "--query", "pinion", "--json"])
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual(document["blocks"][0]["data_id"], 0x5631)
+    pinion = next(signal for signal in document["blocks"][0]["signals"] if "Pinion" in signal["name"])
+    self.assertEqual(pinion["formatted"], "-0.057")
+    raw.assert_called_once_with(mock.ANY, bytes.fromhex("ab1328180100"))
+
+  def test_image_ffd_live_list_uses_validated_level49_unlock(self):
+    import json
+
+    scripted = support.ScriptedUds()
+    panda = support.FakePanda()
+    seed = bytes.fromhex("690f82163710")
+    responses = [bytes.fromhex("6703") + seed, bytes.fromhex("6704"), bytes.fromhex("eb3128222821")]
+    with self.patch_live(panda, scripted), mock.patch(
+        "toyota_diag.transport.raw_isotp", side_effect=responses) as raw:
+      rc, output = run_cli(["ffd", "image", "list", "--json"])
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual(document["robs"], [0x2822, 0x2821])
+    self.assertEqual(document["security"]["key_hex"], "e1ff8791db01")
+    self.assertEqual([call.args[1].hex() for call in raw.call_args_list], [
+      "2703", "2704e1ff8791db01", "ab31",
+    ])
+    self.assertEqual([call[1:] for call in scripted.calls], [("session", 3), ("session", 1)])
+
+  def test_can_sniff_is_receive_only_and_filters_bus_and_address(self):
+    import json
+    panda = support.FakePanda(recv_batches=[[
+      (0x0B6, b"\x01\x02", 0),
+      (0x0B6, b"\x99", 1),
+      (0x123, b"\x55", 0),
+      (0x0B6, b"\x03\x04", 0),
+    ]])
+    with mock.patch("toyota_diag.transport.passive_receiver", return_value=panda):
+      rc, output = run_cli(["can", "sniff", "0xB6", "--duration", "0", "--count", "2", "--json"])
+    self.assertEqual(rc, 0, output)
+    rows = [json.loads(line) for line in output.splitlines()]
+    self.assertEqual([(row["address"], row["bus"], row["data_hex"]) for row in rows], [
+      (0x0B6, 0, "0102"), (0x0B6, 0, "0304"),
+    ])
+    self.assertEqual(panda.sent, [])
+    self.assertEqual(panda.safety, [])
+
+  def test_did_read_decodes_gts_engineering_value(self):
+    scripted = support.ScriptedUds()
+    scripted.did[0x7A1] = {0x1037: bytes.fromhex("0001")}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["did", "read", "eps", "0x1037"])
+    self.assertEqual(rc, 0, output)
+    self.assertEqual(scripted.calls, [(0x7A1, "read_did", 0x1037)])
+    self.assertIn("Power Steering DID 0x1037: 0001", output)
+    self.assertIn("Steering Angle: 1.5 deg (raw=0x0001)", output)
+
+  def test_did_watch_reuses_client_and_decodes_samples(self):
+    scripted = support.ScriptedUds()
+    values = iter((bytes.fromhex("0001"), bytes.fromhex("0002")))
+    scripted.did[0x7A1] = {0x1037: lambda: next(values)}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["did", "watch", "eps", "0x1037", "--interval", "0", "--count", "2"])
+    self.assertEqual(rc, 0, output)
+    self.assertEqual(scripted.calls, [(0x7A1, "read_did", 0x1037), (0x7A1, "read_did", 0x1037)])
+    self.assertIn("[0001] Power Steering DID 0x1037", output)
+    self.assertIn("Steering Angle: 1.5 deg", output)
+    self.assertIn("[0002] Power Steering DID 0x1037", output)
+    self.assertIn("Steering Angle: 3.0 deg", output)
+
+  def test_multi_did_read_reuses_client_and_json_is_machine_readable(self):
+    import json
+    scripted = support.ScriptedUds()
+    scripted.did[0x792] = {
+      0x1601: bytes.fromhex("00010000"),
+      0x1501: bytes.fromhex("00" * 8),
+    }
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["did", "read", "frc", "0x1601", "0x1501", "--json"])
+    self.assertEqual(rc, 0, output)
+    self.assertEqual(scripted.calls, [(0x792, "read_did", 0x1601), (0x792, "read_did", 0x1501)])
+    document = json.loads(output)
+    self.assertEqual([row["did"] for row in document["values"]], [0x1601, 0x1501])
+    condition = next(row for row in document["values"][0]["signals"] if row["name"] == "LTA Control Condition")
+    self.assertEqual((condition["raw"], condition["pattern"]), (1, "LTA Disabled"))
+
+  def test_watch_json_emits_one_object_per_sample_group(self):
+    import json
+    scripted = support.ScriptedUds()
+    scripted.did[0x792] = {
+      0x1601: bytes.fromhex("00010000"),
+      0x1501: bytes.fromhex("00" * 8),
+    }
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["did", "watch", "frc", "0x1601", "0x1501", "--interval", "0", "--count", "2", "--json"])
+    self.assertEqual(rc, 0, output)
+    documents = [json.loads(line) for line in output.splitlines()]
+    self.assertEqual([row["sample"] for row in documents], [1, 2])
+    self.assertEqual([[value["did"] for value in row["values"]] for row in documents], [[0x1601, 0x1501], [0x1601, 0x1501]])
+    self.assertEqual(len(scripted.calls), 4)
+
+  def test_monitor_jsonl_reuses_one_session_and_restores_default(self):
+    import json
+    scripted = support.ScriptedUds()
+    scripted.did[0x792] = {0x1601: bytes.fromhex("01000000")}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["monitor", "frc", "LTA Control Condition", "--interval", "0", "--count", "2", "--jsonl"])
+    self.assertEqual(rc, 0, output)
+    documents = [json.loads(line) for line in output.splitlines()]
+    self.assertEqual([row["sample"] for row in documents], [1, 2])
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("read_did", 0x1601), ("read_did", 0x1601),
+      ("session", 1),
+    ])
+    condition = next(signal for signal in documents[0]["values"][0]["signals"] if signal["name"] == "LTA Control Condition")
+    self.assertEqual(condition["pattern"], "LTA Enabled")
+
+  def test_monitor_engine_uses_category_local_toyota_lifecycle(self):
+    scripted = support.ScriptedUds()
+    scripted.did[0x700] = {0x0000: b"\x01"}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["monitor", "engine", "0x0000", "--interval", "0", "--count", "1", "--jsonl"])
+    self.assertEqual(rc, 0, output)
+    self.assertEqual(scripted.calls, [
+      (0x700, "read_did", 0xF186),
+      (0x700, "session", 1), (0x700, "session", 3),
+      (0x700, "read_did", 0x0000),
+      (0x700, "session", 1),
+    ])
+
+  def test_observe_tss3_longitudinal_reads_frc_and_brake_in_one_sample(self):
+    import json
+
+    scripted = support.ScriptedUds()
+    scripted.did[0x792] = {did: bytes(8) for did in range(0x1B03, 0x1B08)}
+    scripted.did[0x7B0] = {did: bytes(8) for did in range(0x10A1, 0x10A5)}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["observe", "tss3-longitudinal", "--interval", "0", "--count", "1", "--jsonl"])
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual(len(document["values"]), 9)
+    self.assertEqual({row["ecu"]["key"] for row in document["values"]}, {"frc", "brake"})
+    self.assertEqual(
+      [(row["ecu"]["key"], row["did"]) for row in document["values"]],
+      [("frc", did) for did in range(0x1B03, 0x1B08)] + [("brake", did) for did in range(0x10A1, 0x10A5)],
+    )
+
+  def test_active_test_dry_run_and_geometry_blocks_do_not_connect(self):
+    with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+      rc, output = run_cli(["active-test", "run", "frc", "0xA429"])
+      self.assertEqual(rc, 0, output)
+      self.assertIn("DRY RUN", output)
+
+      with self.assertRaisesRegex(SystemExit, "placeholder 0xFFFF"):
+        run_cli(["active-test", "run", "brake", "42001", "--execute"])
+
+  def test_active_test_run_and_stop_use_recovered_lifecycle_without_identity_gate(self):
+    scripted = support.ScriptedUds()
+    # F186 intentionally absent: the recovered SendProc falls through to D1→D2.
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "active-test", "run", "frc", "0xA429", "--execute", "--hold", "0.001", "--poll-interval", "1",
+      ])
+    self.assertEqual(rc, 0, output)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("routine", 1, 0x1588, b""),
+      ("routine", 2, 0x1588, b""),
+      ("session", 1),
+    ])
+    self.assertIn("executed: yes", output)
+
+    scripted.calls.clear()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["active-test", "stop", "frc", "0xA429", "--execute"])
+    self.assertEqual(rc, 0, output)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("routine", 2, 0x1588, b""),
+      ("session", 1),
+    ])
+
+  def test_v4_utility_families_are_plan_only_not_concrete_execution(self):
+    rc, output = run_cli(["utility", "list"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("0xD4", output)
+    self.assertIn("metadata only", output)
+    rc, output = run_cli(["utility", "plan", "single_routine_active_test"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("runtime: metadata/plan only", output)
+    with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+      with self.assertRaisesRegex(SystemExit, "no concrete executable utility resolved"):
+        run_cli(["utility", "run", "frc", "0xD4", "--execute"])
+
+  def test_scan_builds_high_level_inventory(self):
+    import json
+    scripted = support.ScriptedUds()
+    scripted.dtc[0x7A1] = support.dtc_payload()
+    scripted.did[0x7A1] = {
+      0xF181: b"\x00" + support.EXPECTED_EPS_F181 + b"\x00",
+      0xF18C: b"SERIAL123",
+      0x0105: b"PART123",
+    }
+    panda = support.FakePanda()
+    state = {"pandad_running": True, "mode": "managed-sendcan", "ready": True, "detail": "ready"}
+    with self.patch_live(panda, scripted), mock.patch("toyota_diag.transport.status", return_value=state):
+      rc, output = run_cli(["scan", "--json"])
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual((document["profile"], document["responding_ecus"]), ("camry-2026-f33", 1))
+    self.assertEqual(document["ecus"][0]["key"], "eps")
+    self.assertIn("8965F3307000", document["ecus"][0]["identity"]["0xF181"]["ascii"])
+    self.assertEqual(len(document["toyota_mount_candidates"]), 34)
+    eps_candidate = next(row for row in document["toyota_mount_candidates"] if row["category_id"] == 405)
+    self.assertEqual(eps_candidate["transport_route"]["request_address"], 0x7A1)
+    self.assertNotIn("dtc_scan_responded", eps_candidate)
+
+  def test_vehicle_detect_uses_toyota_vin_decision_not_f181_guard(self):
+    scripted = support.ScriptedUds()
+    panda = support.FakePanda()
+    vin_info = {"vin": "XXXXAXXKXSX123456", "rx_address": 0x7E8, "rx_bus": 0}
+    with self.patch_live(panda, scripted), mock.patch(
+        "toyota_diag.resolver.read_vehicle_vin", return_value=vin_info) as read_vin:
+      rc, output = run_cli(["vehicle", "detect"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("camry-2026-f33", output)
+    self.assertIn("Toyota type 12704 Camry HV", output)
+    read_vin.assert_called_once()
+    self.assertEqual(scripted.calls, [])
+
+  def test_vehicle_mounted_uses_all_toyota_routes_without_local_endpoint_gate(self):
+    import json
+    scripted = support.ScriptedUds()
+    profile = registry.load_registry(registry.LEGACY_CAMRY_REGISTRY)
+    for _, route in resolver.mount_routes(profile):
+      if resolver.support_family(profile, route.category_id) != "p5":
+        continue
+      endpoint = (route.request_address, route.sub_addr) if route.sub_addr is not None else route.request_address
+      scripted.did[endpoint] = {0x0101: bytes(32)}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["vehicle", "mounted", "--json"])
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual((document["candidate_count"], document["responding"], document["no_response"], document["probe_unavailable"]),
+                     (34, 33, 0, 1))
+    self.assertEqual(len({row["category_id"] for row in document["candidates"]}), 34)
+    tpm = next(row for row in document["candidates"] if row["category_id"] == 452)
+    self.assertEqual((tpm["transport_route"]["request_address"], tpm["transport_route"]["address_extension"]), (0x750, 0x2A))
+    self.assertIn(((0x750, 0x2A), "read_did", 0x0101), scripted.calls)
+
+  def test_did_support_uses_toyota_c8_bitmap(self):
+    import json
+    scripted = support.ScriptedUds()
+    scripted.did[0x792] = {0x0101: bytes.fromhex("000002"), 0x1600: bytes.fromhex("80")}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["did", "support", "frc", "0x1601", "--json"])
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual((document["category"]["category_id"], document["route"]["request_address"]), (498, 0x792))
+    self.assertEqual(document["supported_groups"], [0x1600])
+    self.assertEqual(document["results"][0]["supported"], True)
+
+  def test_did_support_accepts_toyota_category_and_extended_route_and_can_enumerate(self):
+    import json
+    scripted = support.ScriptedUds()
+    scripted.did[(0x750, 0x2A)] = {0x0101: bytes.fromhex("000080"), 0x1000: bytes.fromhex("a0")}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["did", "support", "452", "--json"])
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual(document["category"]["name"], "Tire Pressure Monitor")
+    self.assertEqual((document["route"]["request_address"], document["route"]["sub_addr"]), (0x750, 0x2A))
+    self.assertEqual([row["did"] for row in document["results"]], [0x1000, 0x1001, 0x1003])
+    self.assertIn(((0x750, 0x2A), "read_did", 0x0101), scripted.calls)
+
+  def test_p6_rid_support_uses_physical_29bit_route(self):
+    import json
+    scripted = support.ScriptedUds()
+    endpoint = 0x18DA00F1
+    root = bytearray(32)
+    root[0] = 0x20  # D102
+    scripted.routine[(endpoint, 1, 0xD100)] = bytes(root)
+    scripted.routine[(endpoint, 1, 0xD102)] = bytes.fromhex("40")  # RID 0x0201
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["--vehicle", "12165", "rid", "support", "6000", "0x0201", "--json"], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual(document["route"]["request_address"], endpoint)
+    self.assertEqual(document["route"]["request_address_field"], 0)
+    self.assertEqual(document["support_root_rid"], 0xD100)
+    self.assertEqual(document["results"], [{"names": [], "rid": 0x0201, "supported": True}])
+    self.assertIn((endpoint, "routine", 1, 0xD100, b""), scripted.calls)
+    self.assertIn((endpoint, "routine", 1, 0xD102, b""), scripted.calls)
+
+  def test_did_read_fails_closed_when_payload_is_short(self):
+    scripted = support.ScriptedUds()
+    scripted.did[0x7A1] = {0x1037: b"\x00"}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["did", "read", "eps", "0x1037"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("decode unavailable: bits 0..15 exceed 1-byte DID payload", output)
+    self.assertIn("Steering Angle", output)
+
+  def test_dtc_scan_json_preserves_status_and_gts_description(self):
+    import json
+    scripted = support.ScriptedUds()
+    scripted.dtc[0x7D2] = support.dtc_payload((bytes.fromhex("C13187"), 0x28))
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["dtc", "scan", "--json"])
+    self.assertEqual(rc, 1, output)
+    document = json.loads(output)
+    self.assertEqual((document["responding_ecus"], document["fault_status_records"]), (1, 1))
+    row = document["ecus"][0]
+    self.assertEqual((row["key"], row["address"]), ("hybrid", 0x7D2))
+    dtc_row = row["dtcs"][0]
+    self.assertEqual((dtc_row["code"], dtc_row["status"], dtc_row["fault_status"]), ("U013187", 0x28, True))
+    self.assertIn("CONFIRMED_DTC", dtc_row["status_bits"])
+    self.assertEqual(dtc_row["descriptions"][0]["failure"], "Missing Message")
+
+  def test_dtc_clear_preserves_exact_maintenance_route_without_identity_gate(self):
+    scripted = self.scripted_clear()
+    panda = self.mode04_panda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["dtc", "clear"])
+    self.assertEqual(rc, 0, output)
+    self.assertNotIn((0x7A1, "read_did", 0xF181), scripted.calls)
+    self.assertEqual([call[0] for call in scripted.calls if call[1] == "read_dtc"], [address for _, address in support.CAMRY_ECUS] * 2)
+    self.assertEqual([call[:2] for call in scripted.calls if call[1] == "clear"], [(0x700, "clear")])
+    self.assertEqual(panda.sent, [(0x7DF, bytes.fromhex("0104000000000000"), 0)])
+    self.assertIn("PASS: all responding ECUs are clear", output)
+
+  def test_identity_witness_does_not_gate_dtc_clear(self):
+    scripted = self.scripted_clear()
+    scripted.did[0x7A1] = {0xF181: b"wrong"}
+    panda = self.mode04_panda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["dtc", "clear"])
+    self.assertEqual(rc, 0, output)
+    self.assertNotIn((0x7A1, "read_did", 0xF181), scripted.calls)
+    self.assertIn("PASS: all responding ECUs are clear", output)
+
+
+  def test_dtc_clear_uses_slow_clear_timing_for_physical_clear(self):
+    # ClearDiagnosticInformation writes ECU NVM; the clear phase must wait longer than
+    # the read-optimized default or slow body ECUs answer into the next ECU's window
+    scripted = self.scripted_clear()
+    panda = self.mode04_panda()
+    stack = ExitStack()
+    stack.enter_context(mock.patch("toyota_diag.transport.connect", return_value=panda))
+    factory = stack.enter_context(
+      mock.patch("toyota_diag.transport.uds_client_factory", return_value=scripted.factory))
+    stack.enter_context(mock.patch("toyota_diag.transport.raw_isotp", return_value=b"\x62\xF1\x81"))
+    stack.enter_context(mock.patch("time.sleep", return_value=None))
+    with stack:
+      rc, output = run_cli(["dtc", "clear"])
+    self.assertEqual(rc, 0, output)
+    profile = registry.load_registry(registry.LEGACY_CAMRY_REGISTRY)
+    slow = registry.CommTimeouts(uds_timeout=dtc.CLEAR_UDS_TIMEOUT, response_pending_timeout=profile.uds_response_pending_timeout)
+    self.assertGreater(slow.uds_timeout, registry.DEFAULT_UDS_TIMEOUT)
+    self.assertEqual(factory.call_args_list, [mock.call(panda, mock.ANY), mock.call(panda, mock.ANY, slow)])
+
+  def test_raw_read_only_accepts_unregistered_numeric_address(self):
+    scripted = support.ScriptedUds()
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted, raw_response=bytes.fromhex("621033" + "00" * 25)):
+      rc, output = run_cli(["uds", "raw", "0x763", "0x22", "1033"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("request:  221033", output)
+    self.assertIn("response: 621033", output)
+
+  def test_raw_read_only_accepts_29bit_normal_fixed_address(self):
+    scripted = support.ScriptedUds()
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted, raw_response=bytes.fromhex("62a100" + "00" * 32)):
+      rc, output = run_cli(["uds", "raw", "0x18DA00F1", "0x22", "A100"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("request:  22a100", output)
+    self.assertIn("response: 62a100", output)
+
+  def test_raw_mutation_accepts_explicit_numeric_address_with_force(self):
+    scripted = support.ScriptedUds()
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted, raw_response=b"\x6E\x10\x35"):
+      rc, output = run_cli(["uds", "raw", "0x763", "0x2E", "103500", "--force"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("request:  2e103500", output)
+    self.assertIn("response: 6e1035", output)
+
+  def test_raw_and_functional_mutations_require_explicit_force_only(self):
+    with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+      with self.assertRaisesRegex(SystemExit, "--force acknowledgement"):
+        run_cli(["uds", "raw", "eps", "0xB0", "0102"])
+      with self.assertRaisesRegex(SystemExit, "--force acknowledgement"):
+        run_cli(["functional", "obd", "0x04"])
+
+    scripted = support.ScriptedUds()
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted, raw_response=b"\xF0\x01"):
+      rc, output = run_cli(["uds", "raw", "eps", "0xB0", "0102", "--force"])
+    self.assertEqual(rc, 0, output)
+    self.assertIn("request:  b00102", output)
+    self.assertIn("response: f001", output)
+    self.assertNotIn((0x7A1, "read_did", 0xF181), scripted.calls)
+
+
+if __name__ == "__main__":
+  unittest.main()

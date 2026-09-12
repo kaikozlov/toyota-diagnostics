@@ -1,0 +1,47 @@
+[project]
+name = "toyota-diagnostics"
+version = "0.1.0"
+description = "Toyota diagnostics CLI backed by clean metadata recovered from Techstream/GTS+"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "opendbc==0.3.1",
+]
+
+[project.urls]
+Repository = "https://github.com/kaikozlov/toyota-diagnostics"
+
+[project.optional-dependencies]
+live = [
+  "pandacan @ git+https://github.com/commaai/panda.git@bbc93b17d8612c60c10b43553b37adce53817bf4",
+]
+
+[project.scripts]
+toyota = "toyota_diag.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8,<9",
+]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["toyota_diag*"]
+
+[tool.setuptools.package-data]
+toyota_diag = ["data/*.json", "data/*.zip"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 160
+target-version = "py311"
+
+[tool.uv]
+override-dependencies = [
+  "opendbc==0.3.1",
+]
