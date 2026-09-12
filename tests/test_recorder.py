@@ -37,6 +37,31 @@ class TestTss3Recorder(unittest.TestCase):
     self.assertEqual(parsed["block_count"], 2)
     self.assertEqual([(block["data_id"], block["length"]) for block in parsed["blocks"]], [(0x568D, 30), (0x5631, 5)])
 
+
+  def test_generic_p5_rob_inventory_frames_and_records(self):
+    self.assertEqual(
+      recorder.parse_p5_rob_behavior_codes(bytes.fromhex("eb0112345678"), bytes.fromhex("eb01")),
+      [0x1234, 0x5678],
+    )
+    frames = recorder.parse_p5_rob_frames(bytes.fromhex("eb12dead010201010102"), bytes.fromhex("eb12"))
+    # Current GetRoBP5 does not validate the echoed behavior; it sorts and de-dupes frame IDs.
+    self.assertEqual(frames, {"behavior_echo": 0xDEAD, "frames": [0x0101, 0x0102]})
+
+    counted = recorder.parse_p5_rob_record(
+      bytes.fromhex("eb13deadbeef02123402aabb600200000003112233"), bytes.fromhex("eb13"))
+    self.assertEqual((counted["behavior_echo"], counted["frame_echo"]), (0xDEAD, 0xBEEF))
+    self.assertEqual((counted["declared_block_count"], counted["block_count"]), (2, 2))
+    self.assertEqual([(row["data_id"], row["length"], row["data"].hex()) for row in counted["blocks"]], [
+      (0x1234, 2, "aabb"), (0x6002, 3, "112233"),
+    ])
+
+    # A zero count invokes the current host's scan-to-end rule from byte 7. Duplicate DIDs
+    # count toward the derived block count but only the first copy is retained by FUN_100016F0.
+    zero_count = recorder.parse_p5_rob_record(
+      bytes.fromhex("eb031234010100123401aa123401bb"), bytes.fromhex("eb03"))
+    self.assertEqual((zero_count["declared_block_count"], zero_count["block_count"]), (0, 2))
+    self.assertEqual([(row["data_id"], row["data"].hex()) for row in zero_count["blocks"]], [(0x1234, "aa")])
+
   def test_image_split_record_parser(self):
     response = bytes.fromhex("eb3328220000020102050102aabb600200000003112233")
     record = recorder.parse_image_record(response, 0x2822, 0x201)

@@ -597,11 +597,18 @@ class TestLiveCli(unittest.TestCase):
 
     def rob_response(client, request):
       del client
-      if request == bytes.fromhex("ab01"):
-        return bytes.fromhex("eb0112345678")
-      if request == bytes.fromhex("ab11"):
-        return bytes.fromhex("eb1128182845")
-      raise AssertionError(f"unexpected raw request {request.hex()}")
+      responses = {
+        "ab01": "eb011234",
+        "ab021234": "eb0212340101",
+        "ab0312340101": "eb031234010101123402aabb",
+        "ab11": "eb112818",
+        "ab122818": "eb1228180100",
+        "ab1328180100": "eb1328180100025631050000000000600200000003112233",
+      }
+      value = responses.get(request.hex())
+      if value is None:
+        raise AssertionError(f"unexpected raw request {request.hex()}")
+      return bytes.fromhex(value)
 
     with self.patch_live(panda, scripted), \
          mock.patch("toyota_diag.transport.status", return_value=state), \
@@ -624,15 +631,25 @@ class TestLiveCli(unittest.TestCase):
     self.assertEqual(document["summary"]["freeze_frame_positive_dtcs"], 1)
     self.assertIn("raw ordinary-P5", document["coverage"]["generic_ffd"])
     self.assertEqual(eps["rob"]["state"], "available")
-    self.assertEqual(eps["rob"]["behavior_code_count"], 4)
-    self.assertEqual(eps["rob"]["unique_behavior_code_count"], 4)
-    self.assertEqual(eps["rob"]["groups"], [
-      {"subfunction": 0x01, "state": "positive", "behavior_codes": [0x1234, 0x5678], "response_hex": "eb0112345678"},
-      {"subfunction": 0x11, "state": "positive", "behavior_codes": [0x2818, 0x2845], "response_hex": "eb1128182845"},
+    self.assertEqual(eps["rob"]["behavior_code_count"], 2)
+    self.assertEqual(eps["rob"]["unique_behavior_code_count"], 2)
+    self.assertEqual((eps["rob"]["frame_count"], eps["rob"]["record_count"], eps["rob"]["did_block_count"]), (2, 2, 3))
+    first, second = eps["rob"]["groups"]
+    self.assertEqual((first["inventory_subfunction"], first["frame_subfunction"], first["record_subfunction"]), (0x01, 0x02, 0x03))
+    self.assertEqual(first["behavior_codes"], [0x1234])
+    self.assertEqual(first["behaviors"][0]["frames"][0]["record"]["blocks"], [
+      {"did": 0x1234, "length": 2, "data_hex": "aabb"},
+    ])
+    self.assertEqual((second["inventory_subfunction"], second["frame_subfunction"], second["record_subfunction"]), (0x11, 0x12, 0x13))
+    self.assertEqual(second["behavior_codes"], [0x2818])
+    self.assertEqual(second["behaviors"][0]["frames"][0]["record"]["blocks"], [
+      {"did": 0x5631, "length": 5, "data_hex": "0000000000"},
+      {"did": 0x6002, "length": 3, "data_hex": "112233"},
     ])
     self.assertEqual(document["summary"]["rob_available_ecus"], 1)
-    self.assertEqual(document["summary"]["rob_behavior_codes"], 4)
-    self.assertIn("behavior-code inventory", document["coverage"]["operation_history"])
+    self.assertEqual(document["summary"]["rob_behavior_codes"], 2)
+    self.assertEqual((document["summary"]["rob_frames"], document["summary"]["rob_records"], document["summary"]["rob_did_blocks"]), (2, 2, 3))
+    self.assertIn("behavior/frame/record", document["coverage"]["operation_history"])
 
   def test_health_check_invalid_compare_refuses_before_transport(self):
     import tempfile

@@ -91,7 +91,7 @@ Missing work includes:
 Still needed for GTS+ Health Check parity:
 
 - signal-level decoding/presentation of the now-retrieved ordinary-P5 per-DTC freeze-frame DID blocks;
-- Info Code / VCH collection and second-stage RoB behavior-record bodies; first-stage P5 RoB behavior-code inventory is implemented;
+- Info Code / VCH collection and signal-level interpretation of the now-retrieved raw P5 RoB behavior records;
 - monitor-data and optional timestamp-data capture;
 - richer report presentation. Saved-snapshot refresh/diff is implemented with `--compare`.
 
@@ -160,15 +160,18 @@ These should be implemented only when an exported operation explicitly requires 
 
 ### 10. Record of Behavior, Vehicle Control History, and other stored evidence
 
-Current GTS+ contains direct RoB command roles and first-class stored-data surfaces. The standalone CLI does not yet expose generic:
+Current ordinary-P5 **Record of Behavior read transport is implemented** in Health Check from the generated role-`0xA0` contract. The runtime executes both current protocol families (`AB01/02/03` and `AB11/12/13`), preserves behavior/frame IDs, raw DID blocks, OEM echoes, count-zero scan semantics, and BE32 lengths for `0x6000..0x6FFF`. It does not project Data Monitor scaling onto those records. RoB deletion remains intentionally separate.
 
-- Record of Behavior read/delete;
+Still missing or incomplete:
+
+- behavior-record signal conversion/presentation and OEM names/factors;
 - Vehicle Control History;
-- Operation History;
+- higher-level Operation History presentation beyond the raw RoB records;
 - generic time-series FFD;
-- saved TSE/GTSE-style diagnostic sessions or an open equivalent.
+- saved TSE/GTSE-style diagnostic sessions or an open equivalent;
+- RoB delete workflows.
 
-TSS3 Operation/Image FFD is an intentionally narrow exception already implemented.
+TSS3 Operation/Image FFD remains a richer specialized decoder on top of its dedicated recorder schemas.
 
 ### 11. Live CAN Bus Check
 
@@ -195,7 +198,7 @@ GTS+ also relies on Toyota-hosted services for operations such as reprogramming 
 ## Recommended implementation order
 
 1. **Finish transport breadth:** the Panda/J2534 raw-CAN abstraction is landed; next add native J2534 ISO15765 as needed, then CAN-FD/DoIP and older J2534 protocols.
-2. **Health Check breadth:** all-system mount/DTC/identity snapshots, raw ordinary-P5 per-DTC FFD retrieval, P5 RoB behavior-code inventory, durable JSON, and refresh/diff are landed; next FFD semantic decoding, second-stage RoB records, and Info Code/VCH.
+2. **Health Check breadth:** all-system mount/DTC/identity snapshots, raw ordinary-P5 per-DTC FFD retrieval, full raw P5 RoB behavior/frame/record retrieval, durable JSON, and refresh/diff are landed; next FFD/RoB semantic decoding and Info Code/VCH.
 3. **Active Test completion:** ordinary P5 direct runtime length is landed; next parameterized routines, multi-control writes, and P6 execution.
 4. **Customize.** High user value and relatively bounded compared with reflash.
 5. **Utilities/registration/learning.** Add concrete operations family-by-family from exact recovered plugin semantics.

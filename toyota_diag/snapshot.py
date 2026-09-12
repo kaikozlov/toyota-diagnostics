@@ -19,7 +19,7 @@ from typing import Any
 
 from opendbc.car.uds import MessageTimeoutError, NegativeResponseError
 
-from toyota_diag import dtc, registry, resolver, transport
+from toyota_diag import dtc, recorder, registry, resolver, transport
 from toyota_diag.executor import SESSION_REQUIREMENT_EXTENDED
 from toyota_diag.session import DiagnosticSession
 
@@ -103,78 +103,193 @@ def _p5_snapshot_plan(profile: registry.Profile, ecu: registry.EcuSpec) -> dict[
   return command
 
 
-def _rob_inventory_plan(profile: registry.Profile, ecu: registry.EcuSpec) -> dict[str, Any] | None:
-  """Return the exact exported ordinary-P5 RoB behavior-code inventory command."""
-  command = _catalog_command(profile, ecu, "p5_rob_code_inventory")
+def _command_requests(command: dict[str, Any] | None) -> list[dict[str, Any]]:
+  if command is None:
+    return []
+  rows = [row for row in command.get("requests", []) if isinstance(row, dict) and row.get("resolved")]
+  for protocol in command.get("protocols", []) if isinstance(command.get("protocols"), list) else []:
+    if not isinstance(protocol, dict):
+      continue
+    for phase in ("inventory", "frames", "record"):
+      row = protocol.get(phase)
+      if isinstance(row, dict) and row.get("resolved"):
+        rows.append(row)
+  return rows
+
+
+def _p5_rob_plan(profile: registry.Profile, ecu: registry.EcuSpec) -> dict[str, Any] | None:
+  """Return the exact exported ordinary-P5 RoB inventory/frame/record command."""
+  command = _catalog_command(profile, ecu, "p5_rob")
   if command is None or command.get("execution") != "read_only":
     return None
   binding = command.get("plugin_binding")
   if not isinstance(binding, dict) or binding.get("dll") != "GetRoBP5_DT.dll" or binding.get("exact_category_binding") is not True:
     return None
-  requests = [row for row in command.get("requests", []) if isinstance(row, dict) and row.get("resolved")]
-  if len(requests) != 2:
+  protocols = command.get("protocols")
+  if not isinstance(protocols, list) or len(protocols) != 2:
     return None
+  expected = [
+    (("ab01", "eb01"), ("ab020000", "eb02"), ("ab0300000000", "eb03")),
+    (("ab11", "eb11"), ("ab120000", "eb12"), ("ab1300000000", "eb13")),
+  ]
+  actual = []
   try:
-    shape = sorted((registry.parse_bytes(row.get("send"), "RoB request"),
-                    registry.parse_bytes(row.get("check"), "RoB positive check")) for row in requests)
+    for protocol in protocols:
+      if not isinstance(protocol, dict):
+        return None
+      phases = []
+      for phase in ("inventory", "frames", "record"):
+        row = protocol.get(phase)
+        if not isinstance(row, dict) or row.get("resolved") is not True:
+          return None
+        phases.append((
+          registry.parse_bytes(row.get("send"), f"P5 RoB {phase} request").hex(),
+          registry.parse_bytes(row.get("check"), f"P5 RoB {phase} positive check").hex(),
+        ))
+      actual.append(tuple(phases))
   except registry.RegistryError:
     return None
-  if shape != [(bytes.fromhex("ab01"), bytes.fromhex("eb01")), (bytes.fromhex("ab11"), bytes.fromhex("eb11"))]:
+  if actual != expected:
+    return None
+  response = command.get("response_model")
+  if not isinstance(response, dict):
+    return None
+  record = response.get("record")
+  if not isinstance(record, dict) or record.get("payload_offset") != 6 or record.get("block_count_offset") != 6:
     return None
   return command
 
 
-def _rob_inventory_from_client(command: dict[str, Any] | None, client) -> dict[str, Any]:
+def _raw_request(client, request: bytes) -> tuple[str, bytes | None, str | None]:
+  try:
+    response = bytes(transport.raw_isotp(client, request))
+  except MessageTimeoutError:
+    return "no_response", None, None
+  except Exception as e:
+    return "error", None, str(e)
+  if len(response) >= 3 and response[0] == 0x7F:
+    return "negative_response", response, f"NRC 0x{response[2]:02X}"
+  return "positive", response, None
+
+
+def _p5_rob_from_client(command: dict[str, Any] | None, client) -> dict[str, Any]:
   if command is None:
-    return {"state": "not_available", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0}
+    return {
+      "state": "not_available", "groups": [], "behavior_code_count": 0,
+      "unique_behavior_code_count": 0, "frame_count": 0, "record_count": 0, "did_block_count": 0,
+    }
+
   groups: list[dict[str, Any]] = []
   all_codes: list[int] = []
-  for row in command.get("requests", []):
+  frame_count = 0
+  record_count = 0
+  did_block_count = 0
+
+  for protocol in command.get("protocols", []):
+    inventory_row = protocol["inventory"]
+    frames_row = protocol["frames"]
+    record_row = protocol["record"]
     try:
-      request = registry.parse_bytes(row.get("send"), "RoB request")
-      check = registry.parse_bytes(row.get("check"), "RoB positive check")
-    except registry.RegistryError as e:
-      groups.append({"state": "error", "error": str(e), "behavior_codes": []})
+      inventory_request = registry.parse_bytes(inventory_row["send"], "P5 RoB inventory request")
+      inventory_check = registry.parse_bytes(inventory_row["check"], "P5 RoB inventory check")
+      frames_base = registry.parse_bytes(frames_row["send"], "P5 RoB frames request")
+      frames_check = registry.parse_bytes(frames_row["check"], "P5 RoB frames check")
+      record_base = registry.parse_bytes(record_row["send"], "P5 RoB record request")
+      record_check = registry.parse_bytes(record_row["check"], "P5 RoB record check")
+    except (KeyError, registry.RegistryError) as e:
+      groups.append({"state": "error", "error": str(e), "behavior_codes": [], "behaviors": []})
+      continue
+
+    state, response, error = _raw_request(client, inventory_request)
+    group: dict[str, Any] = {
+      "inventory_subfunction": inventory_request[1],
+      "frame_subfunction": frames_base[1],
+      "record_subfunction": record_base[1],
+      "state": state,
+      "behavior_codes": [],
+      "behaviors": [],
+    }
+    if response is not None:
+      group["inventory_response_hex"] = response.hex()
+    if error is not None:
+      group["error"] = error
+    if state != "positive" or response is None:
+      groups.append(group)
       continue
     try:
-      response = bytes(transport.raw_isotp(client, request))
-    except MessageTimeoutError:
-      groups.append({"subfunction": request[1], "state": "no_response", "behavior_codes": []})
+      codes = recorder.parse_p5_rob_behavior_codes(response, inventory_check)
+    except recorder.RecorderError as e:
+      group.update(state="parse_error", error=str(e))
+      groups.append(group)
       continue
-    except Exception as e:
-      groups.append({"subfunction": request[1], "state": "error", "behavior_codes": [], "error": str(e)})
-      continue
-    if len(response) >= 3 and response[0] == 0x7F:
-      groups.append({
-        "subfunction": request[1], "state": "negative_response", "behavior_codes": [],
-        "response_hex": response.hex(), "nrc": response[2],
-      })
-      continue
-    if not response.startswith(check):
-      groups.append({
-        "subfunction": request[1], "state": "parse_error", "behavior_codes": [],
-        "response_hex": response.hex(), "error": f"expected response prefix {check.hex()}",
-      })
-      continue
-    payload = response[len(check):]
-    if len(payload) % 2:
-      groups.append({
-        "subfunction": request[1], "state": "parse_error", "behavior_codes": [],
-        "response_hex": response.hex(), "error": f"odd behavior-code payload length {len(payload)}",
-      })
-      continue
-    codes = [int.from_bytes(payload[index:index + 2], "big") for index in range(0, len(payload), 2)]
+
+    group["behavior_codes"] = codes
     all_codes.extend(codes)
-    groups.append({
-      "subfunction": request[1], "state": "positive", "behavior_codes": codes,
-      "response_hex": response.hex(),
-    })
+    for behavior in codes:
+      frame_request = bytearray(frames_base)
+      frame_request[2:4] = int(behavior).to_bytes(2, "big")
+      frame_state, frame_response, frame_error = _raw_request(client, bytes(frame_request))
+      behavior_row: dict[str, Any] = {
+        "behavior_code": int(behavior), "state": frame_state, "frames": [],
+      }
+      if frame_response is not None:
+        behavior_row["frame_response_hex"] = frame_response.hex()
+      if frame_error is not None:
+        behavior_row["error"] = frame_error
+      if frame_state != "positive" or frame_response is None:
+        group["behaviors"].append(behavior_row)
+        continue
+      try:
+        parsed_frames = recorder.parse_p5_rob_frames(frame_response, frames_check)
+      except recorder.RecorderError as e:
+        behavior_row.update(state="parse_error", error=str(e))
+        group["behaviors"].append(behavior_row)
+        continue
+      behavior_row["behavior_echo"] = parsed_frames["behavior_echo"]
+      frame_ids = list(parsed_frames["frames"])
+      frame_count += len(frame_ids)
+      for frame_id in frame_ids:
+        record_request = bytearray(record_base)
+        record_request[2:4] = int(behavior).to_bytes(2, "big")
+        record_request[4:6] = int(frame_id).to_bytes(2, "big")
+        rec_state, rec_response, rec_error = _raw_request(client, bytes(record_request))
+        frame_row: dict[str, Any] = {"frame_id": int(frame_id), "state": rec_state}
+        if rec_response is not None:
+          frame_row["response_hex"] = rec_response.hex()
+        if rec_error is not None:
+          frame_row["error"] = rec_error
+        if rec_state == "positive" and rec_response is not None:
+          try:
+            parsed_record = recorder.parse_p5_rob_record(rec_response, record_check)
+          except recorder.RecorderError as e:
+            frame_row.update(state="parse_error", error=str(e))
+          else:
+            blocks = [
+              {"did": int(block["data_id"]), "length": int(block["length"]), "data_hex": bytes(block["data"]).hex()}
+              for block in parsed_record["blocks"]
+            ]
+            frame_row["record"] = {
+              "behavior_echo": parsed_record["behavior_echo"],
+              "frame_echo": parsed_record["frame_echo"],
+              "declared_block_count": parsed_record["declared_block_count"],
+              "block_count": parsed_record["block_count"],
+              "blocks": blocks,
+            }
+            record_count += 1
+            did_block_count += len(blocks)
+        behavior_row["frames"].append(frame_row)
+      group["behaviors"].append(behavior_row)
+    groups.append(group)
+
   return {
     "state": "available",
     "groups": groups,
     "behavior_code_count": len(all_codes),
     "unique_behavior_code_count": len(set(all_codes)),
-    "record_bodies": "not_retrieved",
+    "frame_count": frame_count,
+    "record_count": record_count,
+    "did_block_count": did_block_count,
+    "signal_decode": "raw_only",
   }
 
 
@@ -239,7 +354,7 @@ def _extended_details(
 ) -> tuple[dict[str, Any] | None, dict[str, Any], dict[str, Any]]:
   identity_plan = _generic_cid_plan(profile, ecu) if include_identities else None
   ffd_plan = _p5_snapshot_plan(profile, ecu)
-  rob_plan = _rob_inventory_plan(profile, ecu)
+  rob_plan = _p5_rob_plan(profile, ecu)
   dtc_rows = list(dtc_result.get("records") or []) if dtc_result.get("state") == "positive" else []
   identity = None
   if ffd_plan is None:
@@ -252,6 +367,7 @@ def _extended_details(
     freeze_frames = None
   rob = None if rob_plan is not None else {
     "state": "not_available", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0,
+    "frame_count": 0, "record_count": 0, "did_block_count": 0,
   }
 
   needs_identity = identity_plan is not None
@@ -271,7 +387,7 @@ def _extended_details(
           rob_plan if needs_rob else None,
         ) if plan is not None
       ]
-      requests = [request for plan in plans for request in plan.get("requests", []) if request.get("resolved")]
+      requests = [request for plan in plans for request in _command_requests(plan)]
       if any(request.get("session_requirement") == SESSION_REQUIREMENT_EXTENDED for request in requests):
         session.enter_extended()
       client = session.client()
@@ -280,7 +396,7 @@ def _extended_details(
       if needs_ffd:
         freeze_frames = _freeze_frames_from_client(ffd_plan, client, dtc_rows)
       if needs_rob:
-        rob = _rob_inventory_from_client(rob_plan, client)
+        rob = _p5_rob_from_client(rob_plan, client)
   except Exception as e:
     message = str(e)
     if needs_identity and identity is None:
@@ -289,7 +405,10 @@ def _extended_details(
     if needs_ffd and freeze_frames is None:
       freeze_frames = {"state": "error", "dtcs": [], "positive_dtc_count": 0, "record_count": 0, "error": message}
     if needs_rob and rob is None:
-      rob = {"state": "error", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0, "error": message}
+      rob = {
+        "state": "error", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0,
+        "frame_count": 0, "record_count": 0, "did_block_count": 0, "error": message,
+      }
   assert freeze_frames is not None
   assert rob is not None
   if session.cleanup_errors:
@@ -342,6 +461,9 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
   freeze_frame_available_ecus = 0
   rob_available_ecus = 0
   rob_behavior_codes = 0
+  rob_frames = 0
+  rob_records = 0
+  rob_did_blocks = 0
 
   for ecu in profile.ecus:
     mount = mount_lookup.get(ecu.endpoint)
@@ -349,7 +471,10 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
     dtc_result = {"state": "not_queried", "records": [], "fault_count": 0}
     identity = None
     freeze_frames = {"state": "not_queried", "dtcs": [], "positive_dtc_count": 0, "record_count": 0}
-    rob = {"state": "not_queried", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0}
+    rob = {
+      "state": "not_queried", "groups": [], "behavior_code_count": 0, "unique_behavior_code_count": 0,
+      "frame_count": 0, "record_count": 0, "did_block_count": 0,
+    }
     if responding:
       dtc_result = _dtcs(profile, ecu, client_factory)
       dtc_positive += int(dtc_result["state"] == "positive")
@@ -362,6 +487,9 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
       freeze_frame_records += int(freeze_frames.get("record_count", 0))
       rob_available_ecus += int(rob.get("state") == "available")
       rob_behavior_codes += int(rob.get("behavior_code_count", 0))
+      rob_frames += int(rob.get("frame_count", 0))
+      rob_records += int(rob.get("record_count", 0))
+      rob_did_blocks += int(rob.get("did_block_count", 0))
 
     ecus.append({
       "key": ecu.key,
@@ -410,6 +538,9 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
       "freeze_frame_records": freeze_frame_records,
       "rob_available_ecus": rob_available_ecus,
       "rob_behavior_codes": rob_behavior_codes,
+      "rob_frames": rob_frames,
+      "rob_records": rob_records,
+      "rob_did_blocks": rob_did_blocks,
       "fault_status_records": fault_count,
     },
     "coverage": {
@@ -422,8 +553,8 @@ def build(profile: registry.Profile, client_factory, transport_state: dict[str, 
       ),
       "info_code": "not_implemented",
       "operation_history": (
-        "current-P5 RoB behavior-code inventory via exact exported role-0xA0 AB01/AB11 contracts; "
-        "per-behavior record bodies not yet retrieved"
+        "raw current-P5 RoB behavior/frame/record transport via exact exported role-0xA0 F3/F4/F5 contracts; "
+        "behavior-record signal conversion/presentation not yet implemented"
       ),
       "monitor_data": "not_implemented",
       "timestamp_data": "not_implemented",
@@ -483,9 +614,31 @@ def _rob_code_set(row: dict[str, Any]) -> set[tuple[int, int]]:
   for group in rob.get("groups", []) if isinstance(rob.get("groups"), list) else []:
     if not isinstance(group, dict) or group.get("state") != "positive":
       continue
-    subfunction = int(group.get("subfunction", -1))
+    subfunction = int(group.get("inventory_subfunction", group.get("subfunction", -1)))
     for code in group.get("behavior_codes", []) if isinstance(group.get("behavior_codes"), list) else []:
       out.add((subfunction, int(code)))
+  return out
+
+
+def _rob_record_map(row: dict[str, Any]) -> dict[tuple[int, int, int, int], str]:
+  out: dict[tuple[int, int, int, int], str] = {}
+  rob = row.get("rob") if isinstance(row.get("rob"), dict) else {}
+  for group in rob.get("groups", []) if isinstance(rob.get("groups"), list) else []:
+    if not isinstance(group, dict) or group.get("state") != "positive":
+      continue
+    subfunction = int(group.get("inventory_subfunction", group.get("subfunction", -1)))
+    for behavior in group.get("behaviors", []) if isinstance(group.get("behaviors"), list) else []:
+      if not isinstance(behavior, dict):
+        continue
+      code = int(behavior.get("behavior_code", -1))
+      for frame in behavior.get("frames", []) if isinstance(behavior.get("frames"), list) else []:
+        if not isinstance(frame, dict) or frame.get("state") != "positive":
+          continue
+        frame_id = int(frame.get("frame_id", -1))
+        record = frame.get("record") if isinstance(frame.get("record"), dict) else {}
+        for block in record.get("blocks", []) if isinstance(record.get("blocks"), list) else []:
+          if isinstance(block, dict) and block.get("did") is not None and block.get("data_hex") is not None:
+            out[(subfunction, code, frame_id, int(block["did"]))] = str(block["data_hex"])
   return out
 
 
@@ -550,8 +703,26 @@ def compare(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     new_rob = _rob_code_set(new)
     rob_added = [{"subfunction": key[0], "behavior_code": key[1]} for key in sorted(new_rob - old_rob)]
     rob_removed = [{"subfunction": key[0], "behavior_code": key[1]} for key in sorted(old_rob - new_rob)]
-    if rob_added or rob_removed:
-      entry["rob"] = {"added": rob_added, "removed": rob_removed}
+    old_rob_records = _rob_record_map(old)
+    new_rob_records = _rob_record_map(new)
+    rob_record_added = [
+      {"subfunction": key[0], "behavior_code": key[1], "frame_id": key[2], "did": key[3], "data_hex": new_rob_records[key]}
+      for key in sorted(new_rob_records.keys() - old_rob_records.keys())
+    ]
+    rob_record_removed = [
+      {"subfunction": key[0], "behavior_code": key[1], "frame_id": key[2], "did": key[3], "data_hex": old_rob_records[key]}
+      for key in sorted(old_rob_records.keys() - new_rob_records.keys())
+    ]
+    rob_record_changed = [
+      {"subfunction": key[0], "behavior_code": key[1], "frame_id": key[2], "did": key[3],
+       "before": old_rob_records[key], "after": new_rob_records[key]}
+      for key in sorted(old_rob_records.keys() & new_rob_records.keys()) if old_rob_records[key] != new_rob_records[key]
+    ]
+    if rob_added or rob_removed or rob_record_added or rob_record_removed or rob_record_changed:
+      entry["rob"] = {
+        "added": rob_added, "removed": rob_removed,
+        "records": {"added": rob_record_added, "removed": rob_record_removed, "changed": rob_record_changed},
+      }
 
     old_ident = old.get("identity") if isinstance(old.get("identity"), dict) else None
     new_ident = new.get("identity") if isinstance(new.get("identity"), dict) else None
@@ -630,6 +801,19 @@ def render_diff(document: dict[str, Any]) -> str:
       lines.append(f"  + RoB sub=0x{item['subfunction']:02X} code=0x{item['behavior_code']:04X}")
     for item in rob.get("removed", []):
       lines.append(f"  - RoB sub=0x{item['subfunction']:02X} code=0x{item['behavior_code']:04X}")
+    rob_records = rob.get("records") or {}
+    for item in rob_records.get("added", []):
+      lines.append(
+        f"  + RoB data sub=0x{item['subfunction']:02X} code=0x{item['behavior_code']:04X} "
+        f"frame=0x{item['frame_id']:04X} DID=0x{item['did']:04X} {item['data_hex']}")
+    for item in rob_records.get("removed", []):
+      lines.append(
+        f"  - RoB data sub=0x{item['subfunction']:02X} code=0x{item['behavior_code']:04X} "
+        f"frame=0x{item['frame_id']:04X} DID=0x{item['did']:04X} {item['data_hex']}")
+    for item in rob_records.get("changed", []):
+      lines.append(
+        f"  ~ RoB data sub=0x{item['subfunction']:02X} code=0x{item['behavior_code']:04X} "
+        f"frame=0x{item['frame_id']:04X} DID=0x{item['did']:04X} {item['before']} -> {item['after']}")
   return "\n".join(lines)
 
 
@@ -641,7 +825,7 @@ def render(document: dict[str, Any]) -> str:
     (
       f"Installed candidates: {summary['install_candidates']}  responding: {summary['mount_responding']}  "
       f"DTC responders: {summary['dtc_positive_ecus']}  faults: {summary['fault_status_records']}  "
-      f"FFD records: {summary.get('freeze_frame_records', 0)}  RoB codes: {summary.get('rob_behavior_codes', 0)}"
+      f"FFD records: {summary.get('freeze_frame_records', 0)}  RoB records: {summary.get('rob_records', 0)}"
     ),
     "",
   ]

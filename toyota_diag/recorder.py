@@ -123,25 +123,92 @@ def parse_operation_records(response: bytes, behavior: int) -> list[int]:
   return sorted(set(_be16_items(response, 4, "Operation FFD record enumeration")))
 
 
-def _parse_operation_blocks(payload: bytes, count: int | None) -> list[dict[str, Any]]:
+def _parse_did_blocks(payload: bytes, count: int | None, *, what: str,
+                      extended_length_range: bool = False) -> list[dict[str, Any]]:
   blocks = []
   offset = 0
   while offset < len(payload) and (count is None or len(blocks) < count):
     if len(payload) - offset < 3:
-      raise RecorderError(f"Operation FFD record: truncated block header at byte {offset}")
+      raise RecorderError(f"{what}: truncated block header at byte {offset}")
     data_id = int.from_bytes(payload[offset:offset + 2], "big")
-    length = payload[offset + 2]
-    data_start = offset + 3
-    data_end = data_start + length
+    offset += 2
+    if extended_length_range and 0x6000 <= data_id <= 0x6FFF:
+      if len(payload) - offset < 4:
+        raise RecorderError(f"{what}: truncated BE32 length for DID 0x{data_id:04X}")
+      length = int.from_bytes(payload[offset:offset + 4], "big")
+      offset += 4
+    else:
+      length = payload[offset]
+      offset += 1
+    data_end = offset + length
     if data_end > len(payload):
-      raise RecorderError(f"Operation FFD record: DID 0x{data_id:04X} length {length} exceeds response")
-    blocks.append({"data_id": data_id, "length": length, "data": payload[data_start:data_end]})
+      raise RecorderError(f"{what}: DID 0x{data_id:04X} length {length} exceeds response")
+    blocks.append({"data_id": data_id, "length": length, "data": payload[offset:data_end]})
     offset = data_end
   if count is not None and len(blocks) != count:
-    raise RecorderError(f"Operation FFD record: expected {count} blocks, parsed {len(blocks)}")
+    raise RecorderError(f"{what}: expected {count} blocks, parsed {len(blocks)}")
   if offset != len(payload):
-    raise RecorderError(f"Operation FFD record: {len(payload) - offset} trailing byte(s)")
+    raise RecorderError(f"{what}: {len(payload) - offset} trailing byte(s)")
   return blocks
+
+
+def _parse_operation_blocks(payload: bytes, count: int | None) -> list[dict[str, Any]]:
+  return _parse_did_blocks(payload, count, what="Operation FFD record")
+
+
+def parse_p5_rob_behavior_codes(response: bytes, positive_prefix: bytes) -> list[int]:
+  """Parse GetRoBP5 selector-F3 behavior-code inventory."""
+  _expect_prefix(response, positive_prefix, "P5 RoB behavior enumeration")
+  if len(positive_prefix) != 2:
+    raise RecorderError("P5 RoB behavior enumeration: positive prefix must be two bytes")
+  return _be16_items(response, 2, "P5 RoB behavior enumeration")
+
+
+def parse_p5_rob_frames(response: bytes, positive_prefix: bytes) -> dict[str, Any]:
+  """Parse GetRoBP5 selector-F4 frame IDs without imposing an OEM-absent echo check."""
+  _expect_prefix(response, positive_prefix, "P5 RoB frame enumeration")
+  if len(positive_prefix) != 2 or len(response) < 4:
+    raise RecorderError("P5 RoB frame enumeration: truncated response header")
+  return {
+    "behavior_echo": int.from_bytes(response[2:4], "big"),
+    "frames": sorted(set(_be16_items(response, 4, "P5 RoB frame enumeration"))),
+  }
+
+
+def parse_p5_rob_record(response: bytes, positive_prefix: bytes) -> dict[str, Any]:
+  """Parse GetRoBP5 selector-F5 raw behavior record using current GTS+ rules."""
+  _expect_prefix(response, positive_prefix, "P5 RoB record")
+  if len(positive_prefix) != 2 or len(response) < 6:
+    raise RecorderError("P5 RoB record: truncated response header")
+  behavior_echo = int.from_bytes(response[2:4], "big")
+  frame_echo = int.from_bytes(response[4:6], "big")
+  if len(response) == 6:
+    return {
+      "behavior_echo": behavior_echo, "frame_echo": frame_echo,
+      "declared_block_count": None, "block_count": 0, "blocks": [],
+    }
+  declared_count = response[6]
+  payload = response[7:]
+  # Current GetRoBP5 uses FUN_10002A60 when the count byte is zero: scan valid
+  # DID blocks from byte 7 to the end, then parse exactly that derived count.
+  blocks = _parse_did_blocks(
+    payload, None if declared_count == 0 else declared_count,
+    what="P5 RoB record", extended_length_range=True,
+  )
+  seen: set[int] = set()
+  deduped = []
+  for block in blocks:
+    if block["data_id"] in seen:
+      continue
+    seen.add(block["data_id"])
+    deduped.append(block)
+  return {
+    "behavior_echo": behavior_echo,
+    "frame_echo": frame_echo,
+    "declared_block_count": declared_count,
+    "block_count": len(blocks),
+    "blocks": deduped,
+  }
 
 
 def parse_operation_record(response: bytes, behavior: int, record: int) -> dict[str, Any]:
@@ -197,31 +264,10 @@ def parse_image_record(response: bytes, rob: int, frame: int) -> dict[str, Any]:
       f"Image FFD record: echo mismatch, expected 0x{rob:04X}/0x{frame:08X}, "
       + f"got 0x{got_rob:04X}/0x{got_frame:08X}")
   declared_count = response[8]
-  payload = response[9:]
-  blocks = []
-  offset = 0
-  while offset < len(payload) and (declared_count == 0 or len(blocks) < declared_count):
-    if len(payload) - offset < 3:
-      raise RecorderError(f"Image FFD record: truncated block header at byte {offset + 9}")
-    data_id = int.from_bytes(payload[offset:offset + 2], "big")
-    offset += 2
-    if 0x6000 <= data_id <= 0x6FFF:
-      if len(payload) - offset < 4:
-        raise RecorderError(f"Image FFD record: truncated BE32 length for DID 0x{data_id:04X}")
-      length = int.from_bytes(payload[offset:offset + 4], "big")
-      offset += 4
-    else:
-      length = payload[offset]
-      offset += 1
-    if len(payload) - offset < length:
-      raise RecorderError(f"Image FFD record: DID 0x{data_id:04X} length {length} exceeds response")
-    data = payload[offset:offset + length]
-    offset += length
-    blocks.append({"data_id": data_id, "length": length, "data": data})
-  if declared_count and len(blocks) != declared_count:
-    raise RecorderError(f"Image FFD record: expected {declared_count} blocks, parsed {len(blocks)}")
-  if offset != len(payload):
-    raise RecorderError(f"Image FFD record: {len(payload) - offset} trailing byte(s)")
+  blocks = _parse_did_blocks(
+    response[9:], None if declared_count == 0 else declared_count,
+    what="Image FFD record", extended_length_range=True,
+  )
   return {"rob": rob, "frame": frame, "block_count": declared_count or len(blocks), "blocks": blocks}
 
 
