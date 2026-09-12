@@ -324,6 +324,13 @@ class TestPlanResolution(unittest.TestCase):
     mode4_bit = {"encoding_mode": 4, "bit_start": 8, "bit_end": 8}
     self.assertEqual(pack_direct_raw_value(mode4_bit, 2, 1), bytes.fromhex("0080"))
 
+    mode6 = {"encoding_mode": 6, "bit_start": 12, "bit_end": 15}
+    self.assertEqual(pack_direct_raw_value(mode6, 3, 0xA), bytes.fromhex("000a00"))
+    mode6_mask = {
+      **mode6, "control_enable_mask": {"start": "none", "stop": "none"},
+    }
+    self.assertEqual(direct_control_enable_masks(mode6_mask, 3), (b"", b""))
+
     with self.assertRaisesRegex(ExecutorError, "does not fit recovered 1-bit field"):
       pack_direct_raw_value(mode1_bit, 2, 2)
     with self.assertRaisesRegex(ExecutorError, "no recovered scalar packer"):

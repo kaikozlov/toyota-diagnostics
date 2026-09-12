@@ -823,6 +823,42 @@ def cmd_active_test_group_stop(args, profile: Profile) -> int:
   return 3 if _result_document(result, cleanup_errors)["cleanup_errors"] else 0
 
 
+def _enforce_active_test_support_gate(
+    profile: Profile,
+    ecu,
+    row: dict[str, Any],
+    session: DiagnosticSession,
+) -> None:
+  gate = row.get("support_gate")
+  if gate is None:
+    return
+  if not isinstance(gate, dict):
+    raise executor.ExecutorError("malformed Active-Test support gate metadata")
+  if gate.get("family") != "p6" or gate.get("mode") != "p6-standard":
+    raise executor.ExecutorError(f"unsupported Active-Test support gate {gate!r}")
+  try:
+    identifier = registry.parse_int(gate["identifier"], "Active-Test support identifier")
+  except (KeyError, registry.RegistryError) as e:
+    raise executor.ExecutorError(f"malformed Active-Test support identifier: {e}") from e
+  if row.get("session_requirement") == executor.SESSION_REQUIREMENT_EXTENDED:
+    session.enter_extended()
+  client = session.client()
+  kind = gate.get("kind")
+  try:
+    if kind == "did":
+      supported = resolver.did_support_resolver(profile, ecu.category_id, client).supports(identifier)
+      label = f"DID 0x{identifier:04X}"
+    elif kind == "rid":
+      supported = resolver.rid_support_resolver(profile, ecu.category_id, client).supports(identifier)
+      label = f"RID 0x{identifier:04X}"
+    else:
+      raise executor.ExecutorError(f"unsupported P6 Active-Test support-gate kind {kind!r}")
+  except resolver.ResolverError as e:
+    raise executor.ExecutorError(f"P6 Active-Test support check failed: {e}") from e
+  if not supported:
+    raise executor.ExecutorError(f"P6 Active-Test support inventory does not advertise {label}")
+
+
 def cmd_active_test_run(args, profile: Profile) -> int:
   ecu, row, plan = _active_test_lookup(profile, args)
   if not args.execute:
@@ -879,6 +915,7 @@ def cmd_active_test_run(args, profile: Profile) -> int:
   session = DiagnosticSession(profile, ecu, panda=panda, operation_row=row)
   try:
     with session:
+      _enforce_active_test_support_gate(profile, ecu, row, session)
       if isinstance(plan, executor.DirectTestPlan) and direct_materializable:
         plan = executor.materialize_direct_runtime_length(session, row, plan)
       post_refusals = executor.runtime_refusals(profile, plan)
@@ -936,6 +973,7 @@ def cmd_active_test_stop(args, profile: Profile) -> int:
   session = DiagnosticSession(profile, ecu, panda=panda, operation_row=row)
   try:
     with session:
+      _enforce_active_test_support_gate(profile, ecu, row, session)
       if isinstance(plan, executor.DirectTestPlan) and materializable:
         plan = executor.materialize_direct_runtime_length(session, row, plan)
       post_refusals = executor.runtime_refusals(profile, plan)

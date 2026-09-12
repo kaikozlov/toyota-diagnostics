@@ -112,8 +112,8 @@ The biggest unlocks are:
 - **done for ordinary P5 direct tests:** materialize `DataIdLengthList` N from Toyota's exact selector-`0xCA` `22 <DID>` support probe after explicit execution acknowledgement, including mode-1/no-initial-read controls, while preserving the static plan grade and minimum as validation;
 - **done:** generate the default N-byte return-control mask from the recovered direct-test bit range using MSB0 numbering;
 - **done for current ordinary-P5 routines:** static routine-command variables are fixed request bytes (404 NA routines are statically executable), and all 166 remaining NA masked routines are host-materializable from the exported Toyota value/button masks using explicit positional `--value` / `--button` bytes;
-- finish multi-control value-write execution after the already-recovered initialization/group decomposition;
-- implement P6 routine/direct execution semantics and support checks;
+- **done for current ordinary-P5 type-33 groups:** four Engine same-DID groups execute through the recovered OR composer; the one mixed-DID group is blocked because current GTS rejects it;
+- broaden P6 presentation/monitor/FFD/RoB semantics beyond the now-landed direct/routine Active-Test executor;
 - finish role-specific stop/status/presentation paths where they materially affect execution.
 
 ### 7. Customize
@@ -195,7 +195,7 @@ GTS+ also relies on Toyota-hosted services for operations such as reprogramming 
 
 1. **Finish transport breadth:** the Panda/J2534 raw-CAN abstraction is landed; next add native J2534 ISO15765 as needed, then CAN-FD/DoIP and older J2534 protocols.
 2. **Health Check breadth:** all-system mount/DTC/identity snapshots, current-P5 per-DTC FFD retrieval + OEM signal decoding, current-P5 RoB behavior/frame/record retrieval + OEM signal decoding, durable JSON, and refresh/diff are landed; next Info Code/VCH and remaining stored-data families.
-3. **Active Test completion:** ordinary P5 direct runtime length, scalar packing for current modes 0/1/3/4, engineering/OEM-choice input, mode-specific control masks, shared-DID type-67 geometry, static/masked routines, and executable type-33 group composition are landed; next category-485 template boundary and P6 execution.
+3. **Active Test completion:** ordinary P5 direct runtime length, scalar packing, engineering/OEM-choice input, mode-specific masks, shared-DID type-67 geometry, static/masked routines, and executable type-33 group composition are landed. Standard P6 direct/routine execution is also landed with exact A100/A1nn DID and D100/D1nn RID admission, common `22 <DID>` N materialization, and P6 mode 6. Remaining Active-Test gaps are the category-485 missing-template boundary and unrecovered partner-generation executors.
 4. **Customize.** High user value and relatively bounded compared with reflash.
 5. **Utilities/registration/learning.** Add concrete operations family-by-family from exact recovered plugin semantics.
 6. **RoB/VCH/generic FFD/stored-data parity.** Reuse the Health Check snapshot model.

@@ -83,6 +83,13 @@ def render_plan(profile: Profile, ecu: EcuSpec, test: dict[str, Any]) -> str:
   ]
   if test.get("session_requirement"):
     lines.append(f"session: {test['session_requirement']}")
+  support_gate = test.get("support_gate")
+  if isinstance(support_gate, dict):
+    family = support_gate.get("family") or "?"
+    kind = support_gate.get("kind") or "?"
+    identifier = support_gate.get("identifier")
+    ident_text = f"0x{int(identifier):04X}" if isinstance(identifier, int) else str(identifier)
+    lines.append(f"support gate: {family} {kind} {ident_text} via {support_gate.get('inventory') or '?'}")
   if execution == "unresolved_static_plan":
     lines.append(f"reason: {test.get('reason') or test.get('error') or 'static plan unresolved'}")
     return "\n".join(lines)
@@ -125,8 +132,12 @@ def render_plan(profile: Profile, ecu: EcuSpec, test: dict[str, Any]) -> str:
   if not runtime_refusals:
     lines.append("runtime: executable; transmission still requires explicit --execute acknowledgement")
   elif executor.can_materialize_direct_runtime_length(test, plan):
-    lines.append(
-      "runtime: live-materializable; with --execute, Toyota's exact selector-0xCA 22 <DID> support probe supplies N before mutation")
+    if isinstance(support_gate, dict) and support_gate.get("family") == "p6":
+      lines.append(
+        "runtime: live-materializable; --execute first validates Toyota's P6 advertised DID support, then selector-0xCA 22 <DID> supplies N before mutation")
+    else:
+      lines.append(
+        "runtime: live-materializable; with --execute, Toyota's exact selector-0xCA 22 <DID> support probe supplies N before mutation")
   elif executor.can_materialize_routine_runtime(test, plan):
     value_mask = (test.get("output_mask_value") or {}).get("bytes") or ""
     button_mask = (test.get("output_mask_button") or {}).get("bytes") or ""

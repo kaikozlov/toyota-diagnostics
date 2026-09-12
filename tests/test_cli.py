@@ -940,6 +940,74 @@ class TestLiveCli(unittest.TestCase):
     self.assertEqual([row["did"] for row in document["results"]], [0x1000, 0x1001, 0x1003])
     self.assertIn(((0x750, 0x2A), "read_did", 0x0101), scripted.calls)
 
+  def test_p6_active_test_mode6_enforces_did_support_then_executes(self):
+    scripted = support.ScriptedUds()
+    endpoint = 0x18DA00F1
+    root = bytearray(32)
+    root[0x28 // 8] |= 0x80 >> (0x28 % 8)  # advertise selector A128
+    selector = bytearray(32)
+    selector[0] = 0x40  # DID 0x2801
+    scripted.did[endpoint] = {
+      0xA100: bytes(root), 0xA128: bytes(selector), 0x2801: b"\x00\x00",
+    }
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12165", "active-test", "run", "engine_cm", "1",
+        "--execute", "--choice", "ON", "--hold", "0.001",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertIn("executed: yes", output)
+    self.assertIn("runtime length: 2 byte(s)", output)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("read_did", 0xA100), ("read_did", 0xA128),
+      ("read_did", 0x2801),
+      ("io_control", 0x2801, 3, b"\x00\x01", b""),
+      ("io_control", 0x2801, 0, b"", b""),
+      ("session", 1),
+    ])
+
+  def test_p6_active_test_refuses_unadvertised_did_before_io_control(self):
+    scripted = support.ScriptedUds()
+    endpoint = 0x18DA00F1
+    scripted.did[endpoint] = {0xA100: bytes(32)}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      with self.assertRaisesRegex(SystemExit, "does not advertise DID 0x2801"):
+        run_cli([
+          "--vehicle", "12165", "active-test", "run", "engine_cm", "1",
+          "--execute", "--choice", "ON", "--hold", "0.001",
+        ], use_default_registry=True)
+    self.assertNotIn((endpoint, "read_did", 0x2801), scripted.calls)
+    self.assertFalse(any(call[1] == "io_control" for call in scripted.calls))
+
+  def test_p6_masked_routine_enforces_rid_support_then_executes(self):
+    scripted = support.ScriptedUds()
+    endpoint = 0x18DA00F1
+    root = bytearray(32)
+    root[0x11 // 8] |= 0x80 >> (0x11 % 8)  # advertise D111 selector
+    selector = bytearray(32)
+    selector[0] |= 0x80 >> 5  # RID 0x1105
+    scripted.routine[(endpoint, 1, 0xD100)] = bytes(root)
+    scripted.routine[(endpoint, 1, 0xD111)] = bytes(selector)
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12165", "active-test", "run", "engine_cm", "40000",
+        "--execute", "--button", "02", "--hold", "0.001", "--poll-interval", "1",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("routine", 1, 0xD100, b""), ("routine", 1, 0xD111, b""),
+      ("routine", 1, 0x1105, b"\x02"),
+      ("routine", 2, 0x1105, b""),
+      ("session", 1),
+    ])
+
   def test_p6_rid_support_uses_physical_29bit_route(self):
     import json
     scripted = support.ScriptedUds()

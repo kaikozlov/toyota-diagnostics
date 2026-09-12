@@ -701,9 +701,10 @@ def pack_direct_raw_value(row: dict[str, Any], runtime_length: int, raw_value: i
     payload[start_byte:end_byte + 1] = raw_value.to_bytes(byte_width, "big")
     return bytes(payload)
 
-  if encoding_mode == 1:
+  if encoding_mode in {1, 6}:
     if start_byte != end_byte or width > 8:
-      raise ExecutorError(f"direct encoding mode 1 requires a <=8-bit field within one byte, got {bit_start}..{bit_end}")
+      raise ExecutorError(
+        f"direct encoding mode {encoding_mode} requires a <=8-bit field within one byte, got {bit_start}..{bit_end}")
     shift = 7 - (bit_end & 7)
     payload[end_byte] = (raw_value << shift) & 0xFF
     return bytes(payload)
@@ -737,6 +738,7 @@ def direct_control_enable_masks(row: dict[str, Any], runtime_length: int) -> tup
     1: ("none", "selected_bit_range"),
     3: ("none", "none"),
     4: ("none", "selected_bit_range"),
+    6: ("none", "none"),
   }.get(encoding_mode)
   if expected is None:
     raise ExecutorError(f"direct encoding mode {encoding_mode} has no recovered mask materializer")

@@ -98,7 +98,7 @@ class TestUniversalToyotaDatabase(unittest.TestCase):
     self.assertEqual(self.database.index["schema"], registry.BUNDLE_SCHEMA)
     self.assertEqual(set(self.database.index["regions"]), {"NA", "EU", "JP"})
     self.assertEqual(set(self.database.index["support_contracts"]), {"p5", "p6"})
-    expected = {"NA": (2864, 135, 479), "EU": (6057, 161, 554), "JP": (1868, 143, 589)}
+    expected = {"NA": (2864, 203, 479), "EU": (6057, 232, 554), "JP": (1868, 247, 589)}
     for region, (vehicle_count, catalog_count, route_count) in expected.items():
       counts = self.database.region_index(region)["counts"]
       self.assertEqual(counts["vehicle_count"], vehicle_count)
@@ -111,8 +111,11 @@ class TestUniversalToyotaDatabase(unittest.TestCase):
       })
       self.assertEqual(counts["route_count"], route_count)
       self.assertEqual(counts["route_count"], len(self.database.region_index(region)["routes"]))
+      p6 = self.database.region_index(region)["categories"]["6000"]
+      self.assertTrue(p6["catalog_available"])
+      self.assertEqual(p6["catalog_member"], f"catalogs/{region}/6000.json")
     offline = self.database.profile("NA")
-    self.assertEqual(len(offline.ecus), 135)
+    self.assertEqual(len(offline.ecus), 203)
     self.assertFalse(offline.lookup_ecu("frc").route_resolved)
     self.assertIsNone(offline.vehicle_resolution)
 
