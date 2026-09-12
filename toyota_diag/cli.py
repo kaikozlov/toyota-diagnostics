@@ -680,18 +680,37 @@ def cmd_active_test_run(args, profile: Profile) -> int:
     raise SystemExit("Active Test refused before transport: " + "; ".join(refusals))
   value_payload = _optional_bytes(args.value, "--value")
   button_payload = _optional_bytes(args.button, "--button")
+  raw_value = _cli_int(args.raw_value, "--raw-value") if args.raw_value is not None else None
+  engineering_value = args.engineering_value
+  choice = args.choice
+  direct_raw_value: int | None = None
   try:
     if isinstance(plan, executor.RoutineTestPlan):
+      if raw_value is not None or engineering_value is not None or choice is not None:
+        raise executor.ExecutorError(
+          "routine Active Tests do not take --raw-value/--engineering-value/--choice; use --value/--button")
       if routine_materializable:
         plan = executor.materialize_routine_runtime(
           row, plan, value_payload=value_payload, button_payload=button_payload)
       elif value_payload is not None or button_payload is not None:
         raise executor.ExecutorError("fixed routine does not accept --value or --button")
     elif isinstance(plan, executor.DirectTestPlan):
-      if button_payload is not None:
-        raise executor.ExecutorError("direct Active Tests do not take --button")
-      if value_payload is None:
-        raise executor.ExecutorError("direct Active Test execution requires explicit --value payload bytes")
+      if value_payload is not None or button_payload is not None:
+        raise executor.ExecutorError(
+          "direct Active Tests take --raw-value/--engineering-value/--choice, not --value/--button")
+      supplied = sum(value is not None for value in (raw_value, engineering_value, choice))
+      if supplied != 1:
+        raise executor.ExecutorError(
+          "direct Active Test execution requires exactly one of --raw-value, --engineering-value, or --choice")
+      if raw_value is not None:
+        direct_raw_value = raw_value
+      elif engineering_value is not None:
+        direct_raw_value = executor.direct_engineering_to_raw(row, engineering_value)
+      else:
+        direct_raw_value = executor.direct_choice_to_raw(row, str(choice))
+      # Width/range validation is vehicle-independent and must fail before transport.
+      static_minimum = registry.parse_int(row.get("runtime_length_minimum") or 1, "runtime_length_minimum")
+      executor.pack_direct_raw_value(row, static_minimum, direct_raw_value)
   except executor.ExecutorError as e:
     raise SystemExit(f"Active Test refused before transport: {e}") from e
 
@@ -712,9 +731,10 @@ def cmd_active_test_run(args, profile: Profile) -> int:
       elif isinstance(plan, executor.DirectTestPlan):
         if plan.runtime_length is None:
           raise executor.PlanNotExecutable(plan)
+        value_payload = executor.pack_direct_raw_value(row, plan.runtime_length, int(direct_raw_value))
         start_mask, stop_mask = executor.direct_control_enable_masks(row, plan.runtime_length)
         result = executor.run_direct_test(
-          session, plan, hold_s=args.hold, value_payload=value_payload or b"",
+          session, plan, hold_s=args.hold, value_payload=value_payload,
           start_control_enable_mask=start_mask, stop_control_enable_mask=stop_mask, execute=True,
         )
       else:
@@ -2118,8 +2138,11 @@ def build_parser() -> argparse.ArgumentParser:
   p.add_argument("--kind", choices=("direct", "routine"))
   p.add_argument("--hold", type=float, default=1.0, help="seconds to hold the operation before stop (default: 1.0)")
   p.add_argument("--poll-interval", type=float, default=0.5, help="routine status-poll interval in seconds")
-  p.add_argument("--value", help="explicit positional value bytes as hex (direct payload or masked routine value channel)")
-  p.add_argument("--button", help="explicit positional routine button bytes as hex")
+  p.add_argument("--raw-value", help="direct-test raw scalar integer (decimal or 0x-prefixed); host packs Toyota DID bytes")
+  p.add_argument("--engineering-value", help="direct-test engineering value in the exported OEM unit/precision")
+  p.add_argument("--choice", help="direct-test OEM display choice (for example ON or #3)")
+  p.add_argument("--value", help="explicit positional masked-routine value bytes as hex")
+  p.add_argument("--button", help="explicit positional masked-routine button bytes as hex")
   p.add_argument("--execute", action="store_true", help="acknowledge vehicle mutation; omitted means dry-run only")
   p.add_argument("--json", action="store_true")
   p.set_defaults(func=cmd_active_test_run)

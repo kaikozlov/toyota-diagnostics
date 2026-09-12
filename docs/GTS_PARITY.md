@@ -195,7 +195,7 @@ GTS+ also relies on Toyota-hosted services for operations such as reprogramming 
 
 1. **Finish transport breadth:** the Panda/J2534 raw-CAN abstraction is landed; next add native J2534 ISO15765 as needed, then CAN-FD/DoIP and older J2534 protocols.
 2. **Health Check breadth:** all-system mount/DTC/identity snapshots, current-P5 per-DTC FFD retrieval + OEM signal decoding, current-P5 RoB behavior/frame/record retrieval + OEM signal decoding, durable JSON, and refresh/diff are landed; next Info Code/VCH and remaining stored-data families.
-3. **Active Test completion:** ordinary P5 direct runtime length, mode-specific control masks, shared-DID type-67 geometry, static routines, and masked routines are landed; next host-side scalar direct-value packing, category-485 alternate template recovery, richer type-33 group presentation, and P6 execution.
+3. **Active Test completion:** ordinary P5 direct runtime length, scalar packing for current modes 0/1/3/4, engineering/OEM-choice input, mode-specific control masks, shared-DID type-67 geometry, static routines, and masked routines are landed; next category-485 alternate template recovery, richer type-33 group presentation, and P6 execution.
 4. **Customize.** High user value and relatively bounded compared with reflash.
 5. **Utilities/registration/learning.** Add concrete operations family-by-family from exact recovered plugin semantics.
 6. **RoB/VCH/generic FFD/stored-data parity.** Reuse the Health Check snapshot model.

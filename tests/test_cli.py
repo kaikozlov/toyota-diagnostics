@@ -453,6 +453,56 @@ class TestLiveCli(unittest.TestCase):
       ("session", 1),
     ])
 
+  def test_universal_direct_active_test_accepts_engineering_value(self):
+    scripted = support.ScriptedUds()
+    scripted.did[0x700] = {0x2803: b"\x00"}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12704", "active-test", "run", "engine", "4",
+        "--execute", "--engineering-value", "0", "--hold", "0.001",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("read_did", 0x2803),
+      ("io_control", 0x2803, 3, b"\x80", b"\x80"),
+      ("io_control", 0x2803, 0, b"", b"\x80"),
+      ("session", 1),
+    ])
+
+  def test_universal_direct_active_test_accepts_oem_choice(self):
+    scripted = support.ScriptedUds()
+    scripted.did[0x7D2] = {0x2801: b"\x00\x00"}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12704", "active-test", "run", "hybrid", "1",
+        "--execute", "--choice", "ON", "--hold", "0.001",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("read_did", 0x2801),
+      ("io_control", 0x2801, 3, b"\x00\x01", b""),
+      ("io_control", 0x2801, 0, b"", b"\x00\x01"),
+      ("session", 1),
+    ])
+
+  def test_direct_active_test_requires_one_scalar_input_before_transport(self):
+    with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+      with self.assertRaisesRegex(SystemExit, "exactly one of --raw-value, --engineering-value, or --choice"):
+        run_cli([
+          "--vehicle", "12704", "active-test", "run", "hybrid", "1", "--execute",
+        ], use_default_registry=True)
+      with self.assertRaisesRegex(SystemExit, "exactly one of --raw-value, --engineering-value, or --choice"):
+        run_cli([
+          "--vehicle", "12704", "active-test", "run", "hybrid", "1", "--execute",
+          "--raw-value", "1", "--choice", "ON",
+        ], use_default_registry=True)
+
   def test_universal_direct_active_test_materializes_live_length_and_default_mask(self):
     scripted = support.ScriptedUds()
     scripted.did[0x7D2] = {0x2801: b"\x00\x01"}
@@ -460,7 +510,7 @@ class TestLiveCli(unittest.TestCase):
     with self.patch_live(panda, scripted):
       rc, output = run_cli([
         "--vehicle", "12704", "active-test", "run", "hybrid", "0x1",
-        "--execute", "--value", "0001", "--hold", "0.001",
+        "--execute", "--raw-value", "1", "--hold", "0.001",
       ], use_default_registry=True)
     self.assertEqual(rc, 0, output)
     self.assertIn("runtime length: 2 byte(s)", output)
@@ -481,7 +531,7 @@ class TestLiveCli(unittest.TestCase):
     with self.patch_live(panda, scripted):
       rc, output = run_cli([
         "--vehicle", "12704", "active-test", "run", "engine", "0x2134",
-        "--execute", "--value", "01", "--hold", "0.001",
+        "--execute", "--raw-value", "1", "--hold", "0.001",
       ], use_default_registry=True)
     self.assertEqual(rc, 0, output)
     self.assertIn("runtime length: 1 byte(s)", output)
@@ -501,7 +551,7 @@ class TestLiveCli(unittest.TestCase):
     with self.patch_live(panda, scripted):
       rc, output = run_cli([
         "--vehicle", "12704", "active-test", "run", "engine", "77",
-        "--execute", "--value", "0100", "--hold", "0.001",
+        "--execute", "--raw-value", "1", "--hold", "0.001",
       ], use_default_registry=True)
     self.assertEqual(rc, 0, output)
     self.assertIn("runtime length: 2 byte(s)", output)
@@ -518,13 +568,21 @@ class TestLiveCli(unittest.TestCase):
     with self.assertRaises(SystemExit):
       run_cli([
         "--vehicle", "12704", "active-test", "run", "hybrid", "1",
-        "--value", "0001", "--mask", "0001",
+        "--raw-value", "1", "--mask", "0001",
       ], use_default_registry=True)
+
+  def test_direct_active_test_rejects_byte_payload_api_before_transport(self):
+    with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+      with self.assertRaisesRegex(SystemExit, "take --raw-value"):
+        run_cli([
+          "--vehicle", "12704", "active-test", "run", "hybrid", "1",
+          "--execute", "--value", "0001",
+        ], use_default_registry=True)
 
   def test_universal_direct_active_test_dry_run_never_materializes_length(self):
     with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
       rc, output = run_cli([
-        "--vehicle", "12704", "active-test", "run", "hybrid", "0x1", "--value", "0001",
+        "--vehicle", "12704", "active-test", "run", "hybrid", "0x1", "--raw-value", "1",
       ], use_default_registry=True)
     self.assertEqual(rc, 0, output)
     self.assertIn("live-materializable", output)

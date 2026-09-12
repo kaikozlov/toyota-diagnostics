@@ -5,7 +5,8 @@ from opendbc.car.uds import MessageTimeoutError, NegativeResponseError
 from toyota_diag import registry
 from toyota_diag.executor import (DirectTestPlan, ExecutorError, PlanNotExecutable, RoutineTestPlan,
                                         can_materialize_direct_runtime_length, can_materialize_routine_runtime,
-                                        direct_control_enable_mask, direct_control_enable_masks, materialize_direct_runtime_length,
+                                        direct_choice_to_raw, direct_control_enable_mask, direct_control_enable_masks,
+                                        direct_engineering_to_raw, pack_direct_raw_value, materialize_direct_runtime_length,
                                         materialize_routine_runtime, resolve_plan, run_direct_test, run_routine_test,
                                         runtime_refusals)
 from toyota_diag.session import DiagnosticSession
@@ -233,6 +234,53 @@ class TestPlanResolution(unittest.TestCase):
       materialize_routine_runtime(row, plan, value_payload=b"\x01\x02")
     with self.assertRaisesRegex(ExecutorError, "does not accept --button"):
       materialize_routine_runtime(row, plan, value_payload=b"\x01", button_payload=b"\x00")
+
+  def test_direct_engineering_inverse_and_oem_choices_match_current_setvalue(self):
+    profile = registry.load_database().profile("NA", 12704, bus=0)
+
+    vvt = profile.lookup_active_test("engine", "4")
+    self.assertEqual(direct_engineering_to_raw(vvt, "0"), 0x80)
+    self.assertEqual(pack_direct_raw_value(vvt, 1, direct_engineering_to_raw(vvt, "0")), b"\x80")
+
+    pressure = profile.lookup_active_test("engine", "6")
+    self.assertEqual(pressure["signal_info"]["physical"]["decimal_point_count"], 1)
+    self.assertEqual(direct_engineering_to_raw(pressure, "0.0"), 0x80)
+    self.assertEqual(direct_engineering_to_raw(pressure, "0.5"), 130)  # trunc((5+250)*64/125)
+    with self.assertRaisesRegex(ExecutorError, "exceeds recovered 1-decimal precision"):
+      direct_engineering_to_raw(pressure, "0.55")
+
+    pump = profile.lookup_active_test("hybrid", "1")
+    self.assertEqual(direct_choice_to_raw(pump, "ON"), 1)
+    self.assertEqual(direct_choice_to_raw(pump, "on"), 1)
+    with self.assertRaisesRegex(ExecutorError, "unknown direct Active Test choice"):
+      direct_choice_to_raw(pump, "OFF")
+
+    cylinder = profile.lookup_active_test("engine", "77")
+    self.assertEqual(direct_choice_to_raw(cylinder, "#3"), 4)
+
+  def test_direct_raw_scalar_packer_matches_current_modes(self):
+    mode0 = {"encoding_mode": 0, "bit_start": 8, "bit_end": 15}
+    self.assertEqual(pack_direct_raw_value(mode0, 3, 0x5A), bytes.fromhex("005a00"))
+    mode0_16 = {"encoding_mode": 0, "bit_start": 0, "bit_end": 15}
+    self.assertEqual(pack_direct_raw_value(mode0_16, 3, 0x1234), bytes.fromhex("123400"))
+
+    mode1 = {"encoding_mode": 1, "bit_start": 14, "bit_end": 15}
+    self.assertEqual(pack_direct_raw_value(mode1, 3, 3), bytes.fromhex("000300"))
+    mode1_bit = {"encoding_mode": 1, "bit_start": 15, "bit_end": 15}
+    self.assertEqual(pack_direct_raw_value(mode1_bit, 2, 1), bytes.fromhex("0001"))
+
+    mode3 = {"encoding_mode": 3, "bit_start": 8, "bit_end": 31}
+    self.assertEqual(pack_direct_raw_value(mode3, 5, 0x123456), bytes.fromhex("0012345600"))
+
+    mode4 = {"encoding_mode": 4, "bit_start": 7, "bit_end": 8}
+    self.assertEqual(pack_direct_raw_value(mode4, 2, 3), bytes.fromhex("0180"))
+    mode4_bit = {"encoding_mode": 4, "bit_start": 8, "bit_end": 8}
+    self.assertEqual(pack_direct_raw_value(mode4_bit, 2, 1), bytes.fromhex("0080"))
+
+    with self.assertRaisesRegex(ExecutorError, "does not fit recovered 1-bit field"):
+      pack_direct_raw_value(mode1_bit, 2, 2)
+    with self.assertRaisesRegex(ExecutorError, "no recovered scalar packer"):
+      pack_direct_raw_value({"encoding_mode": 5, "bit_start": 0, "bit_end": 0}, 1, 0)
 
   def test_direct_control_enable_masks_follow_current_encoding_mode(self):
     mode1 = {

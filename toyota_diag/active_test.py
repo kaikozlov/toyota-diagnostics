@@ -102,12 +102,23 @@ def render_plan(profile: Profile, ecu: EcuSpec, test: dict[str, Any]) -> str:
     lines.extend([
       f"DID: 0x{int(test['did']):04X}",
       f"bits: {test.get('bit_start')}..{test.get('bit_end')}",
-      f"start prefix: {test.get('start_prefix')} || N-byte value payload || recovered start mask",
+      f"start prefix: {test.get('start_prefix')} || host-packed N-byte raw scalar || recovered start mask",
       f"stop prefix:  {test.get('stop_prefix')} || recovered mode-specific control-enable mask",
       f"positive SID: 0x{int(test['positive_response']):02X}",
       f"runtime N minimum from bit geometry: {test.get('runtime_length_minimum')}",
       f"mask strategy: {test.get('control_enable_mask') or '(legacy metadata; unavailable)'}",
     ])
+    signal_info = test.get("signal_info")
+    if isinstance(signal_info, dict):
+      physical = signal_info.get("physical") or {}
+      unit = physical.get("unit") or ""
+      lines.append(
+        f"engineering: Mul={physical.get('mul')} Div={physical.get('div')} Offset={physical.get('offset')} "
+        f"decimals={physical.get('decimal_point_count')} unit={unit or '-'}")
+      choices = signal_info.get("choices") or []
+      if choices:
+        lines.append("choices: " + ", ".join(
+          f"{entry.get('text')}={entry.get('value')}" for entry in choices if isinstance(entry, dict)))
     examples = test.get("minimum_examples")
     if examples:
       lines.append(f"minimum examples only: {examples.get('raw_0')} / {examples.get('raw_1')} / {examples.get('return_control')}")

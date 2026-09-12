@@ -21,6 +21,7 @@ result is returned.
 from __future__ import annotations
 
 import time
+from decimal import Decimal, InvalidOperation
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -428,6 +429,132 @@ def _direct_type67_mask(row: dict[str, Any], runtime_length: int) -> bytes:
   for bit in enabled_bits:
     mask[bit // 8] |= 1 << (7 - (bit & 7))
   return bytes(mask)
+
+
+def _trunc_div_toward_zero(numerator: int, denominator: int) -> int:
+  if denominator == 0:
+    raise ExecutorError("Toyota physical conversion divisor is zero")
+  quotient = abs(numerator) // abs(denominator)
+  return -quotient if (numerator < 0) != (denominator < 0) else quotient
+
+
+def _direct_physical(row: dict[str, Any]) -> dict[str, Any]:
+  info = row.get("signal_info")
+  physical = info.get("physical") if isinstance(info, dict) else None
+  if not isinstance(physical, dict):
+    raise ExecutorError("direct Active Test has no exported role-0x70 engineering metadata")
+  return physical
+
+
+def _direct_engineering_integer_to_raw(row: dict[str, Any], engineering_integer: int) -> int:
+  physical = _direct_physical(row)
+  try:
+    mul = registry.parse_int(physical["mul"], "direct physical mul")
+    div = registry.parse_int(physical["div"], "direct physical div")
+    offset = registry.parse_int(physical["offset"], "direct physical offset")
+  except (KeyError, registry.RegistryError) as e:
+    raise ExecutorError(f"direct Active Test has malformed engineering metadata: {e}") from e
+  if mul == 0:
+    raise ExecutorError("direct Active Test physical Mul is zero")
+  return _trunc_div_toward_zero((engineering_integer - offset) * div, mul) & 0xFF
+
+
+def direct_engineering_to_raw(row: dict[str, Any], engineering_value: str) -> int:
+  """Apply current CStartActTstSnd::SetValue inverse conversion to one display value."""
+  physical = _direct_physical(row)
+  try:
+    decimal_point_count = registry.parse_int(
+      physical["decimal_point_count"], "direct physical decimal_point_count")
+  except (KeyError, registry.RegistryError) as e:
+    raise ExecutorError(f"direct Active Test has malformed decimal metadata: {e}") from e
+  if decimal_point_count < 0:
+    raise ExecutorError(f"invalid direct decimal_point_count {decimal_point_count}")
+  try:
+    value = Decimal(str(engineering_value))
+  except InvalidOperation as e:
+    raise ExecutorError(f"invalid engineering value {engineering_value!r}") from e
+  if not value.is_finite():
+    raise ExecutorError(f"engineering value must be finite, got {engineering_value!r}")
+  scaled = value * (Decimal(10) ** decimal_point_count)
+  integral = scaled.to_integral_value()
+  if scaled != integral:
+    raise ExecutorError(
+      f"engineering value {engineering_value!r} exceeds recovered {decimal_point_count}-decimal precision")
+  return _direct_engineering_integer_to_raw(row, int(integral))
+
+
+def direct_choice_to_raw(row: dict[str, Any], choice: str) -> int:
+  """Resolve one exact OEM role-0x70 display choice and apply SetValue conversion."""
+  info = row.get("signal_info")
+  choices = info.get("choices") if isinstance(info, dict) else None
+  if not isinstance(choices, list):
+    raise ExecutorError("direct Active Test has no exported OEM choices")
+  needle = choice.casefold()
+  matches = [entry for entry in choices if isinstance(entry, dict) and str(entry.get("text") or "").casefold() == needle]
+  if len(matches) != 1:
+    options = ", ".join(str(entry.get("text")) for entry in choices if isinstance(entry, dict) and entry.get("text"))
+    if not matches:
+      raise ExecutorError(f"unknown direct Active Test choice {choice!r}; available: {options or '(none)'}")
+    raise ExecutorError(f"ambiguous direct Active Test choice {choice!r}")
+  try:
+    engineering_integer = registry.parse_int(matches[0]["value"], "direct choice value")
+  except (KeyError, registry.RegistryError) as e:
+    raise ExecutorError(f"malformed direct choice metadata: {e}") from e
+  return _direct_engineering_integer_to_raw(row, engineering_integer)
+
+
+def pack_direct_raw_value(row: dict[str, Any], runtime_length: int, raw_value: int) -> bytes:
+  """Pack one raw scalar exactly like current GTS+ P5 direct Active-Test modes 0/1/3/4."""
+  if runtime_length <= 0:
+    raise ExecutorError("runtime_length must be positive")
+  try:
+    encoding_mode = registry.parse_int(row["encoding_mode"], "direct encoding_mode")
+    bit_start = registry.parse_int(row["bit_start"], "direct bit_start")
+    bit_end = registry.parse_int(row["bit_end"], "direct bit_end")
+  except (KeyError, registry.RegistryError) as e:
+    raise ExecutorError(f"direct Active Test has incomplete scalar packing metadata: {e}") from e
+  if bit_start < 0 or bit_end < bit_start or bit_end >= runtime_length * 8:
+    raise ExecutorError(
+      f"direct value bits {bit_start}..{bit_end} do not fit runtime length {runtime_length}")
+  width = bit_end - bit_start + 1
+  if raw_value < 0 or raw_value >= (1 << width):
+    raise ExecutorError(
+      f"raw direct value {raw_value} does not fit recovered {width}-bit field {bit_start}..{bit_end}")
+
+  payload = bytearray(runtime_length)
+  start_byte = bit_start >> 3
+  end_byte = bit_end >> 3
+
+  if encoding_mode in {0, 3}:
+    if (bit_start & 7) != 0 or (bit_end & 7) != 7:
+      raise ExecutorError(
+        f"direct encoding mode {encoding_mode} requires byte-aligned field, got {bit_start}..{bit_end}")
+    byte_width = end_byte - start_byte + 1
+    if not 1 <= byte_width <= 4:
+      raise ExecutorError(f"direct encoding mode {encoding_mode} field width {byte_width} byte(s) is unsupported")
+    payload[start_byte:end_byte + 1] = raw_value.to_bytes(byte_width, "big")
+    return bytes(payload)
+
+  if encoding_mode == 1:
+    if start_byte != end_byte or width > 8:
+      raise ExecutorError(f"direct encoding mode 1 requires a <=8-bit field within one byte, got {bit_start}..{bit_end}")
+    shift = 7 - (bit_end & 7)
+    payload[end_byte] = (raw_value << shift) & 0xFF
+    return bytes(payload)
+
+  if encoding_mode == 4:
+    byte_width = end_byte - start_byte + 1
+    if not 1 <= byte_width <= 4:
+      raise ExecutorError(f"direct encoding mode 4 field width {byte_width} byte(s) is unsupported")
+    shift = 7 - (bit_end & 7)
+    shifted = raw_value << shift
+    if shifted >= (1 << (byte_width * 8)):
+      raise ExecutorError(
+        f"shifted direct value 0x{shifted:X} does not fit selected {byte_width}-byte span")
+    payload[start_byte:end_byte + 1] = shifted.to_bytes(byte_width, "big")
+    return bytes(payload)
+
+  raise ExecutorError(f"direct encoding mode {encoding_mode} has no recovered scalar packer")
 
 
 def direct_control_enable_masks(row: dict[str, Any], runtime_length: int) -> tuple[bytes, bytes]:
