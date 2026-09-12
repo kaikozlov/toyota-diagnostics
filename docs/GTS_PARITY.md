@@ -90,20 +90,20 @@ Missing work includes:
 
 Still needed for GTS+ Health Check parity:
 
-- generic per-DTC freeze-frame retrieval and decoding;
+- signal-level decoding/presentation of the now-retrieved ordinary-P5 per-DTC freeze-frame DID blocks;
 - Info Code / Operation History / VCH / RoB collection;
 - monitor-data and optional timestamp-data capture;
 - richer report presentation. Saved-snapshot refresh/diff is implemented with `--compare`.
 
 ### 5. DTC and generic freeze-frame families
 
-Current DTC reading is the ordinary UDS `ReadDTCInformation` path plus catalog decoding, with recovered clear behavior. GTS+ has many generation/category-specific DTC and FFD plugins.
+Current DTC reading is the ordinary UDS `ReadDTCInformation` path plus catalog decoding, with recovered clear behavior. For ordinary current-P5 categories, the generated bundle exports `p5_dtc_snapshot` only when Toyota's actual role-`0xB5` fallback selects `GetEachFrzFrmDatP5_DT.dll` **and** that category has exact selector `0xCF = 19 04 00 00 00 FF -> 59 04`. Health Check substitutes each returned 24-bit DTC, requests all snapshot records (`0xFF`), and preserves Toyota's raw `record | identifier_count | DID | length | data` structure. On the selected Camry profile that contract is proven for 32 of 34 logical ECUs; categories without the exact frame remain `not_available` rather than receiving a generic UDS guess.
 
-Missing families include:
+Missing families/semantics include:
 
-- generic per-DTC freeze-frame retrieval/decoding;
+- freeze-frame-specific signal conversion/presentation for the raw P5 DID blocks;
 - historical/pending/time-series DTC variants;
-- nonstandard DTC formats and older protocol families;
+- alternate P5 FFD branches, nonstandard DTC formats, and older protocol families;
 - P4/P5/P6 generic Image FFD surfaces outside the already-recovered TSS3 path.
 
 ### 6. Active Test execution
@@ -195,7 +195,7 @@ GTS+ also relies on Toyota-hosted services for operations such as reprogramming 
 ## Recommended implementation order
 
 1. **Finish transport breadth:** the Panda/J2534 raw-CAN abstraction is landed; next add native J2534 ISO15765 as needed, then CAN-FD/DoIP and older J2534 protocols.
-2. **Health Check breadth:** all-system mount/DTC/identity snapshots, durable JSON, and refresh/diff are landed; next generic FFD and Info Code/Operation History/VCH/RoB.
+2. **Health Check breadth:** all-system mount/DTC/identity snapshots, raw ordinary-P5 per-DTC FFD retrieval, durable JSON, and refresh/diff are landed; next FFD semantic decoding and Info Code/Operation History/VCH/RoB.
 3. **Active Test completion:** ordinary P5 direct runtime length is landed; next parameterized routines, multi-control writes, and P6 execution.
 4. **Customize.** High user value and relatively bounded compared with reflash.
 5. **Utilities/registration/learning.** Add concrete operations family-by-family from exact recovered plugin semantics.

@@ -52,9 +52,11 @@ class _ScriptedClient:
     self.sub_addr = sub_addr
     self.endpoint = (address, sub_addr) if sub_addr is not None else address
 
-  def read_dtc_information(self, report_type, status_mask, *args, **kwargs):
+  def read_dtc_information(self, report_type, status_mask=0xFF, *args, **kwargs):
+    dtc_mask_record = kwargs.get("dtc_mask_record")
     self.owner.calls.append((self.endpoint, "read_dtc", report_type, status_mask))
-    return self.owner.result(self.owner.dtc.get(self.endpoint), MessageTimeoutError())
+    scripted = self.owner.dtc_report.get((self.endpoint, int(report_type), dtc_mask_record))
+    return self.owner.result(scripted if scripted is not None else self.owner.dtc.get(self.endpoint), MessageTimeoutError())
 
   def clear_diagnostic_information(self, group):
     self.owner.calls.append((self.endpoint, "clear", group))
@@ -91,6 +93,7 @@ class ScriptedUds:
   def __init__(self):
     self.calls = []
     self.dtc = {}
+    self.dtc_report = {}
     self.clear = {}
     self.did = {}
     self.session = {}

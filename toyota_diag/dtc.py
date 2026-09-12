@@ -39,6 +39,105 @@ def parse_dtc_response(data: bytes) -> list[tuple[str, int]]:
   return [(get_dtc_num_as_str(payload[i:i + 3]), payload[i + 3]) for i in range(0, len(payload), 4)]
 
 
+def dtc_str_to_num(code: str) -> int:
+  """Inverse of opendbc's ISO 15031-6 DTC string formatter."""
+  value = code.strip().upper()
+  if len(value) != 7 or value[0] not in "PCBU":
+    raise ValueError(f"invalid 3-byte DTC code {code!r}")
+  try:
+    tail = bytes.fromhex(value[1:])
+  except ValueError as e:
+    raise ValueError(f"invalid 3-byte DTC code {code!r}") from e
+  if len(tail) != 3 or tail[0] & 0xC0:
+    raise ValueError(f"invalid ISO 15031-6 DTC code {code!r}")
+  prefix = {"P": 0, "C": 1, "B": 2, "U": 3}[value[0]]
+  raw = bytes([(prefix << 6) | tail[0]]) + tail[1:]
+  return int.from_bytes(raw, "big")
+
+
+def _ffd_type(snapshot_record: int) -> int:
+  """Current CGetFrzFrmDatP5Base::GetFFDType(record, 0) mapping."""
+  if snapshot_record in (1, 2):
+    return snapshot_record
+  if 0x10 <= snapshot_record < 0x30:
+    return 0x10
+  if 0x30 <= snapshot_record < 0x50:
+    return 0x30
+  if 0x50 <= snapshot_record < 0x70:
+    return 0x50
+  return 0
+
+
+def parse_p5_dtc_snapshot_response(data: bytes, expected_dtc: int | str) -> dict[str, object]:
+  """Parse current ordinary-P5 selector-0xCF response data after `59 04`.
+
+  opendbc strips the positive SID/subfunction before returning `data`, leaving
+  `DTC[3] | status | snapshot records...`. Current GTS+ then parses each record
+  as `record:u8 | identifier_count:u8 | (DID:be16 | length:u8 | data)*`.
+  """
+  dtc_num = dtc_str_to_num(expected_dtc) if isinstance(expected_dtc, str) else int(expected_dtc)
+  if not 0 <= dtc_num <= 0xFFFFFF:
+    raise ValueError(f"DTC does not fit 24 bits: {dtc_num:#x}")
+  if len(data) < 4:
+    raise ValueError(f"malformed P5 DTC snapshot response length {len(data)}")
+  got = int.from_bytes(data[:3], "big")
+  if got != dtc_num:
+    raise ValueError(f"P5 DTC snapshot echo mismatch: expected {dtc_num:06X}, got {got:06X}")
+  status = data[3]
+  offset = 4
+  records: list[dict[str, object]] = []
+  while offset < len(data):
+    if len(data) - offset < 2:
+      raise ValueError(f"truncated P5 DTC snapshot record header at offset {offset}")
+    record_number = data[offset]
+    identifier_count = data[offset + 1]
+    offset += 2
+    ffd_type = _ffd_type(record_number)
+    if record_number == 0 or ffd_type == 0:
+      # GTS GetFFDType(record, 0) rejects these as non-FFD terminators/types.
+      break
+    identifiers = []
+    for _ in range(identifier_count):
+      if len(data) - offset < 3:
+        raise ValueError(f"truncated P5 DTC snapshot DID header at offset {offset}")
+      did = int.from_bytes(data[offset:offset + 2], "big")
+      length = data[offset + 2]
+      offset += 3
+      if len(data) - offset < length:
+        raise ValueError(f"P5 DTC snapshot DID 0x{did:04X} length {length} exceeds response")
+      payload = data[offset:offset + length]
+      offset += length
+      identifiers.append({"did": did, "length": length, "data_hex": payload.hex()})
+    records.append({
+      "record_number": record_number,
+      "ffd_type": ffd_type,
+      "identifier_count": identifier_count,
+      "identifiers": identifiers,
+    })
+  if offset != len(data):
+    # A rejected/zero record is a valid GTS terminator only when it consumes the
+    # remainder. Trailing bytes would otherwise be silently misparsed.
+    trailing = data[offset:]
+    if any(trailing):
+      raise ValueError(f"P5 DTC snapshot response has {len(trailing)} unparsed trailing byte(s)")
+  return {
+    "dtc": get_dtc_num_as_str(dtc_num.to_bytes(3, "big")),
+    "dtc_raw": dtc_num,
+    "status": status,
+    "records": records,
+  }
+
+
+def read_p5_dtc_snapshots(client: UdsClient, dtc_code: str) -> dict[str, object]:
+  dtc_num = dtc_str_to_num(dtc_code)
+  data = client.read_dtc_information(
+    DTC_REPORT_TYPE.DTC_SNAPSHOT_RECORD_BY_DTC_NUMBER,
+    dtc_mask_record=dtc_num,
+    dtc_snapshot_record_num=0xFF,
+  )
+  return parse_p5_dtc_snapshot_response(data, dtc_num)
+
+
 DtcTarget = EcuSpec | tuple[int, str] | int
 
 

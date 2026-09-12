@@ -567,6 +567,54 @@ class TestLiveCli(unittest.TestCase):
     self.assertEqual(alias_document["summary"]["install_candidates"], 34)
     self.assertEqual(alias_document["coverage"]["identity"], "disabled by caller")
 
+  def test_health_check_collects_exported_raw_p5_freeze_frames(self):
+    import json
+
+    scripted = support.ScriptedUds()
+    code = "U013187"
+    raw_dtc = bytes.fromhex("c13187")
+    scripted.dtc[0x7A1] = support.dtc_payload((raw_dtc, 0x08))
+    scripted.dtc_report[(
+      0x7A1, int(dtc.DTC_REPORT_TYPE.DTC_SNAPSHOT_RECORD_BY_DTC_NUMBER), dtc.dtc_str_to_num(code),
+    )] = bytes.fromhex("c13187080101123402aabb")
+    panda = support.FakePanda()
+    state = {"backend": "panda", "mode": "managed-sendcan", "ready": True, "detail": "ready"}
+
+    def mounted(profile, client_factory):
+      del client_factory
+      rows = []
+      for candidate in profile.mount_candidates():
+        row = dict(candidate)
+        responding = int(row["category_id"]) == 405
+        row.update(
+          live_state="responding" if responding else "no_response",
+          transport_responded=responding, probe_available=True, support_mode="p5-standard",
+          support_root=True if responding else None, supported_group_count=1 if responding else None,
+          support_error=None,
+        )
+        rows.append(row)
+      return rows
+
+    with self.patch_live(panda, scripted), \
+         mock.patch("toyota_diag.transport.status", return_value=state), \
+         mock.patch("toyota_diag.snapshot.resolver.probe_mount_candidates", side_effect=mounted):
+      rc, output = run_cli([
+        "--vehicle", "12704", "health-check", "--json", "--no-identities",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 1, output)  # active DTC status is intentionally preserved as a failing Health Check
+    document = json.loads(output)
+    eps = next(row for row in document["ecus"] if row["key"] == "eps")
+    self.assertEqual(eps["freeze_frames"]["state"], "available")
+    self.assertEqual(eps["freeze_frames"]["positive_dtc_count"], 1)
+    ffd = eps["freeze_frames"]["dtcs"][0]
+    self.assertEqual((ffd["dtc"], ffd["state"], ffd["status"]), (code, "positive", 0x08))
+    self.assertEqual(ffd["records"][0]["identifiers"], [
+      {"did": 0x1234, "length": 2, "data_hex": "aabb"},
+    ])
+    self.assertEqual(document["summary"]["freeze_frame_records"], 1)
+    self.assertEqual(document["summary"]["freeze_frame_positive_dtcs"], 1)
+    self.assertIn("raw ordinary-P5", document["coverage"]["generic_ffd"])
+
   def test_health_check_invalid_compare_refuses_before_transport(self):
     import tempfile
     from pathlib import Path
