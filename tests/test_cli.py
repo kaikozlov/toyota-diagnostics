@@ -417,6 +417,36 @@ class TestLiveCli(unittest.TestCase):
       with self.assertRaisesRegex(SystemExit, "placeholder 0xFFFF"):
         run_cli(["active-test", "run", "brake", "42001", "--execute"])
 
+  def test_universal_direct_active_test_materializes_live_length_and_default_mask(self):
+    scripted = support.ScriptedUds()
+    scripted.did[0x7D2] = {0x2801: b"\x00\x01"}
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12704", "active-test", "run", "hybrid", "0x1",
+        "--execute", "--value", "0001", "--hold", "0.001",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertIn("runtime length: 2 byte(s)", output)
+    self.assertIn("executed: yes", output)
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("read_did", 0xF186),
+      ("session", 1), ("session", 3),
+      ("read_did", 0x2801),
+      ("io_control", 0x2801, 3, b"\x00\x01", b""),
+      ("io_control", 0x2801, 0, b"", b"\x00\x01"),
+      ("session", 1),
+    ])
+
+  def test_universal_direct_active_test_dry_run_never_materializes_length(self):
+    with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+      rc, output = run_cli([
+        "--vehicle", "12704", "active-test", "run", "hybrid", "0x1", "--value", "0001",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertIn("live-materializable", output)
+    self.assertIn("DRY RUN", output)
+
   def test_active_test_run_and_stop_use_recovered_lifecycle_without_identity_gate(self):
     scripted = support.ScriptedUds()
     # F186 intentionally absent: the recovered SendProc falls through to D1→D2.

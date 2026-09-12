@@ -1,13 +1,14 @@
 """Generic operation executors for recovered direct (0x2F) and routine (0x31) Active Tests.
 
-Execution is driven exclusively by registry rows the v4 grader marks as
-`execution == "executable"` plus every field the wire plan needs: a fully
-materialized fixed routine, or a direct test whose exact runtime length is
-recovered. The bundled v3 registry marks every Active Test `plan_only` or
-`unresolved_static_plan`, so nothing in it resolves to an executable plan —
-`resolve_plan` reports why and the run backends refuse to transmit. No runtime
-length, control mask, option record, or session requirement is ever inferred from
-partial data, and `plan_only`/unresolved rows stay non-executable.
+Static execution remains fail-closed: fixed routines require fully materialized
+request geometry, while direct tests require an exact payload width. Current P5
+mode-0 direct tests may materialize that one missing runtime fact after explicit
+execution acknowledgement by issuing Toyota's recovered selector-0xCA initial
+read (`22 <DID>`). GTS+ stores `received_length - 3` in `DataIdLengthList`; the
+shared UDS client returns the already-stripped value bytes, so their length is the
+same exact N. Mode-1/ambiguous rows and every other unresolved input remain
+non-executable. No option record, session requirement, or request geometry is
+guessed from partial data.
 
 Run backends are explicit-by-default: `execute=False` (the default) performs a
 plan-only echo with no transmission. When execution is acknowledged, the backend
@@ -171,6 +172,105 @@ def resolve_plan(ecu: EcuSpec, row: dict[str, Any]) -> TestPlan:
     return _resolve_routine(ecu, test_id, name, row)
   return TestPlan(ecu=ecu, test_id=test_id, name=name, kind=kind or "",
                   refusals=(f"kind is {kind!r}, expected 'direct' or 'routine'",))
+
+
+def can_materialize_direct_runtime_length(row: dict[str, Any], plan: TestPlan) -> bool:
+  """Return whether Toyota's recovered mode-0 initial read can supply direct-test N.
+
+  Current P5 builds `CCmdDataIdLengthList` entries from the positive response
+  length of selector 0xCA (`22 <DID>`): N is the received UDS length minus the
+  three-byte `62 <DID>` prefix. `UdsClient.read_data_by_identifier()` already
+  strips that prefix, so the returned value length is the same N.
+
+  This predicate is pure/zero-transmit. It deliberately accepts only the exact
+  mode-0 request for the same control DID; mode-1 and ambiguous rows remain
+  fail-closed.
+  """
+  if not isinstance(plan, DirectTestPlan) or plan.runtime_length is not None:
+    return False
+  if row.get("kind") != "direct" or row.get("execution") not in {"plan_only", "executable"}:
+    return False
+  initial = row.get("initial_read")
+  if not isinstance(initial, dict):
+    return False
+  try:
+    if registry.parse_int(initial.get("mode"), "initial_read.mode") != 0:
+      return False
+    request = registry.parse_bytes(initial.get("request"), "initial_read.request")
+    check = registry.parse_bytes(initial.get("check"), "initial_read.check")
+  except registry.RegistryError:
+    return False
+  return request == bytes([0x22]) + plan.did.to_bytes(2, "big") and bool(check) and check[0] == 0x62
+
+
+def materialize_direct_runtime_length(session: DiagnosticSession, row: dict[str, Any],
+                                      plan: DirectTestPlan) -> DirectTestPlan:
+  """Materialize Toyota's live direct-test payload length from its exact initial read.
+
+  The caller must have explicit mutation acknowledgement before invoking this: the
+  function performs the recovered read-only initial transaction and may enter the
+  row's recovered diagnostic session. No guessed length is ever substituted.
+  """
+  if not can_materialize_direct_runtime_length(row, plan):
+    raise PlanNotExecutable(plan)
+
+  # Prove that N is the only missing piece before touching the vehicle. A
+  # temporary positive length is used only for local shape validation; it is
+  # never transmitted and never returned.
+  minimum_raw = row.get("runtime_length_minimum")
+  try:
+    minimum = registry.parse_int(minimum_raw, "runtime_length_minimum") if minimum_raw is not None else 1
+  except registry.RegistryError as e:
+    raise ExecutorError(f"malformed runtime-length minimum: {e}") from e
+  if minimum <= 0:
+    raise ExecutorError(f"runtime_length_minimum must be positive, got {minimum}")
+  shape_row = dict(row)
+  shape_row["execution"] = EXECUTION_EXECUTABLE
+  shape_row["runtime_length"] = minimum
+  shape_plan = resolve_plan(plan.ecu, shape_row)
+  shape_refusals = runtime_refusals(session.profile, shape_plan)
+  if shape_refusals:
+    raise PlanNotExecutable(plan, shape_refusals)
+
+  if plan.session_requirement == SESSION_REQUIREMENT_EXTENDED:
+    session.enter_extended()
+  data = session.client().read_data_by_identifier(plan.did)
+  length = len(data)
+  if length < minimum:
+    raise ExecutorError(
+      f"Toyota initial read DID 0x{plan.did:04X} returned {length} data byte(s), "
+      f"below the recovered static minimum {minimum}")
+  if length <= 0:
+    raise ExecutorError(f"Toyota initial read DID 0x{plan.did:04X} returned no data bytes")
+
+  live_row = dict(row)
+  live_row["execution"] = EXECUTION_EXECUTABLE
+  live_row["runtime_length"] = length
+  live_plan = resolve_plan(plan.ecu, live_row)
+  refusals = runtime_refusals(session.profile, live_plan)
+  if refusals:
+    raise PlanNotExecutable(live_plan, refusals)
+  if not isinstance(live_plan, DirectTestPlan):
+    raise ExecutorError("runtime materialization did not resolve a direct Active Test plan")
+  return live_plan
+
+
+def direct_control_enable_mask(row: dict[str, Any], runtime_length: int) -> bytes:
+  """Build GTS+'s N-byte direct-test return-control mask from the recovered bit range."""
+  if runtime_length <= 0:
+    raise ExecutorError("runtime_length must be positive")
+  try:
+    bit_start = registry.parse_int(row["bit_start"], "direct bit_start")
+    bit_end = registry.parse_int(row["bit_end"], "direct bit_end")
+  except (KeyError, registry.RegistryError) as e:
+    raise ExecutorError(f"direct Active Test has no resolved control bit range: {e}") from e
+  if bit_start < 0 or bit_end < bit_start or bit_end >= runtime_length * 8:
+    raise ExecutorError(
+      f"direct control bits {bit_start}..{bit_end} do not fit runtime length {runtime_length}")
+  mask = bytearray(runtime_length)
+  for bit in range(bit_start, bit_end + 1):
+    mask[bit // 8] |= 1 << (7 - (bit & 7))
+  return bytes(mask)
 
 
 def runtime_refusals(profile: registry.Profile, plan: TestPlan) -> tuple[str, ...]:

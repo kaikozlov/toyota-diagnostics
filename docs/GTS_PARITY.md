@@ -40,7 +40,7 @@ For NA decoded catalogs, the current Active Test census is:
 - **1,407** `plan_only` rows;
 - **87** `unresolved_static_plan` rows.
 
-`executable` means request geometry is complete; it does not assert live ECU support or bypass required Toyota session/authentication behavior.
+Those are static evidence grades. The runtime now live-materializes exact P5 direct-test payload width for **1,069 of the 1,082 NA plan-only direct rows** whose exported initialization is mode 0 and exactly `22 <same DID>`. GTS+ records `received_length - 3` into `DataIdLengthList`; the standalone `UdsClient` already returns only the DID value bytes, so `len(value)` is the same N. The remaining 13 plan-only direct rows use mode-1/no-read initialization and stay blocked, as do 72 unresolved direct rows. `executable` means static request geometry is complete; it does not assert live ECU support or bypass required Toyota session/authentication behavior.
 
 ## Main parity gaps
 
@@ -113,7 +113,8 @@ This is one of the largest practical gaps.
 
 The biggest unlocks are:
 
-- recover/live-query `DataIdLengthList` so ordinary P5 direct `0x2F` tests can use the exact runtime payload width rather than only a static minimum;
+- **done for mode-0 ordinary P5 direct tests:** materialize `DataIdLengthList` N from Toyota's exact `22 <DID>` initial read after explicit execution acknowledgement, while preserving the static plan grade and minimum as validation;
+- **done:** generate the default N-byte return-control mask from the recovered direct-test bit range using MSB0 numbering;
 - materialize parameterized RoutineControl variable sources;
 - finish multi-control value-write execution after the already-recovered initialization/group decomposition;
 - implement P6 routine/direct execution semantics and support checks;
@@ -196,7 +197,7 @@ GTS+ also relies on Toyota-hosted services for operations such as reprogramming 
 
 1. **Finish transport breadth:** the Panda/J2534 raw-CAN abstraction is landed; next add native J2534 ISO15765 as needed, then CAN-FD/DoIP and older J2534 protocols.
 2. **Health Check foundation:** generic mounted-ECU inventory, DTC + generic FFD + Info Code collection, durable open snapshots.
-3. **Active Test completion:** `DataIdLengthList`, parameterized routines, multi-control writes, P6 execution.
+3. **Active Test completion:** mode-0 P5 runtime length is landed; next parameterized routines, multi-control writes, mode-1 direct initialization, and P6 execution.
 4. **Customize.** High user value and relatively bounded compared with reflash.
 5. **Utilities/registration/learning.** Add concrete operations family-by-family from exact recovered plugin semantics.
 6. **RoB/VCH/generic FFD/stored-data parity.** Reuse the Health Check snapshot model.

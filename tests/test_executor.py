@@ -4,7 +4,9 @@ from opendbc.car.uds import MessageTimeoutError, NegativeResponseError
 
 from toyota_diag import registry
 from toyota_diag.executor import (DirectTestPlan, ExecutorError, PlanNotExecutable, RoutineTestPlan,
-                                        resolve_plan, run_direct_test, run_routine_test, runtime_refusals)
+                                        can_materialize_direct_runtime_length, direct_control_enable_mask,
+                                        materialize_direct_runtime_length, resolve_plan, run_direct_test, run_routine_test,
+                                        runtime_refusals)
 from toyota_diag.session import DiagnosticSession
 from tests import support
 
@@ -118,6 +120,58 @@ class TestPlanResolution(unittest.TestCase):
     opaque_static = resolve_plan(ecu, executable_routine(stop_static="2E021105"))
     self.assertFalse(opaque_static.executable)
     self.assertIn("malformed routine plan", " ".join(opaque_static.refusals))
+
+  def test_mode0_direct_plan_can_materialize_runtime_length_from_initial_read(self):
+    row = executable_direct(
+      execution="plan_only", runtime_length=None, runtime_length_minimum=2,
+      bit_start=15, bit_end=15,
+      initial_read={"mode": 0, "selector": "0xCA", "request": "222801", "check": "62"},
+    )
+    profile = support.load_profile(None, active_tests=[row], session_control=current_p5())
+    ecu = support.synthetic_ecu(profile)
+    plan = resolve_plan(ecu, row)
+    self.assertIsInstance(plan, DirectTestPlan)
+    self.assertTrue(can_materialize_direct_runtime_length(row, plan))
+
+    scripted = support.ScriptedUds()
+    scripted.did[ADDR] = {0x2801: b"\x00\x01"}
+    session = DiagnosticSession(profile, ecu, client_factory=scripted.factory, operation_row=row)
+    with session:
+      live = materialize_direct_runtime_length(session, row, plan)
+      self.assertEqual(live.runtime_length, 2)
+      self.assertEqual(runtime_refusals(profile, live), ())
+      self.assertEqual(direct_control_enable_mask(row, live.runtime_length), b"\x00\x01")
+    self.assertEqual([call[1:] for call in scripted.calls], [
+      ("session", 1), ("session", 3), ("read_did", 0x2801), ("session", 1),
+    ])
+
+  def test_runtime_length_materialization_rejects_mode1_and_short_responses(self):
+    row = executable_direct(
+      execution="plan_only", runtime_length=None, runtime_length_minimum=2,
+      bit_start=15, bit_end=15, initial_read={"mode": 1},
+    )
+    profile = support.load_profile(None, active_tests=[row], session_control=current_p5())
+    ecu = support.synthetic_ecu(profile)
+    plan = resolve_plan(ecu, row)
+    self.assertFalse(can_materialize_direct_runtime_length(row, plan))
+
+    row = {**row, "initial_read": {"mode": 0, "request": "222801", "check": "62"}}
+    profile = support.load_profile(None, active_tests=[row], session_control=current_p5())
+    ecu = support.synthetic_ecu(profile)
+    plan = resolve_plan(ecu, row)
+    scripted = support.ScriptedUds()
+    scripted.did[ADDR] = {0x2801: b"\x01"}
+    session = DiagnosticSession(profile, ecu, client_factory=scripted.factory, operation_row=row)
+    with self.assertRaisesRegex(ExecutorError, "below the recovered static minimum 2"):
+      with session:
+        materialize_direct_runtime_length(session, row, plan)
+
+  def test_direct_control_enable_mask_uses_toyota_msb0_bit_numbering(self):
+    self.assertEqual(direct_control_enable_mask({"bit_start": 15, "bit_end": 15}, 2), b"\x00\x01")
+    self.assertEqual(direct_control_enable_mask({"bit_start": 0, "bit_end": 7}, 2), b"\xff\x00")
+    self.assertEqual(direct_control_enable_mask({"bit_start": 6, "bit_end": 9}, 2), b"\x03\xc0")
+    with self.assertRaisesRegex(ExecutorError, "do not fit"):
+      direct_control_enable_mask({"bit_start": 0, "bit_end": 16}, 2)
 
   def test_executable_rows_resolve_with_decomposed_wire_plans(self):
     ecu = support.synthetic_ecu(support.load_profile(None))

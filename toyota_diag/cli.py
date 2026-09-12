@@ -611,6 +611,7 @@ def _result_document(result: executor.ActiveTestResult, cleanup_errors: tuple[st
     "test_id": result.plan.test_id,
     "name": result.plan.name,
     "kind": result.plan.kind,
+    "runtime_length": result.plan.runtime_length if isinstance(result.plan, executor.DirectTestPlan) else None,
     "executed": result.executed,
     "session_requirement": result.session_requirement,
     "start_response_hex": result.start.hex() if result.start is not None else None,
@@ -639,6 +640,8 @@ def _render_result(result: executor.ActiveTestResult, cleanup_errors: tuple[str,
     f"{result.plan.ecu.key} 0x{result.plan.test_id:04X} {result.plan.name}",
     f"executed: {'yes' if result.executed else 'no'}",
   ]
+  if document["runtime_length"] is not None:
+    lines.append(f"runtime length: {document['runtime_length']} byte(s)")
   if document["start_response_hex"] is not None:
     lines.append(f"start response: {document['start_response_hex']}")
   for status in document["status_responses"]:
@@ -670,18 +673,26 @@ def cmd_active_test_run(args, profile: Profile) -> int:
     raise SystemExit("--hold must be > 0 seconds")
   if args.poll_interval <= 0:
     raise SystemExit("--poll-interval must be > 0 seconds")
+  materializable = executor.can_materialize_direct_runtime_length(row, plan)
   refusals = executor.runtime_refusals(profile, plan)
-  if refusals:
+  if refusals and not materializable:
     raise SystemExit("Active Test refused before transport: " + "; ".join(refusals))
   option_record = _optional_bytes(args.option_record, "--option-record")
-  value_payload = _optional_bytes(args.value, "--value") or b""
-  control_mask = _optional_bytes(args.mask, "--mask") or b""
+  value_payload = _optional_bytes(args.value, "--value")
+  explicit_control_mask = _optional_bytes(args.mask, "--mask")
+  if isinstance(plan, executor.DirectTestPlan) and value_payload is None:
+    raise SystemExit("direct Active Test execution requires explicit --value payload bytes")
 
   live = _live_transport()
   panda = _connect_live(args, profile, live)
   session = DiagnosticSession(profile, ecu, panda=panda, operation_row=row)
   try:
     with session:
+      if isinstance(plan, executor.DirectTestPlan) and materializable:
+        plan = executor.materialize_direct_runtime_length(session, row, plan)
+      post_refusals = executor.runtime_refusals(profile, plan)
+      if post_refusals:
+        raise executor.PlanNotExecutable(plan, post_refusals)
       if isinstance(plan, executor.RoutineTestPlan):
         result = executor.run_routine_test(
           session, plan, hold_s=args.hold, option_record=option_record, execute=True,
@@ -690,8 +701,13 @@ def cmd_active_test_run(args, profile: Profile) -> int:
       elif isinstance(plan, executor.DirectTestPlan):
         if option_record is not None:
           raise executor.ExecutorError("direct Active Tests do not take --option-record; use --value and --mask")
+        control_mask = explicit_control_mask
+        if control_mask is None:
+          if plan.runtime_length is None:
+            raise executor.PlanNotExecutable(plan)
+          control_mask = executor.direct_control_enable_mask(row, plan.runtime_length)
         result = executor.run_direct_test(
-          session, plan, hold_s=args.hold, value_payload=value_payload,
+          session, plan, hold_s=args.hold, value_payload=value_payload or b"",
           control_enable_mask=control_mask, execute=True,
         )
       else:
@@ -724,16 +740,27 @@ def cmd_active_test_stop(args, profile: Profile) -> int:
     print(active_test.render_plan(profile, ecu, row))
     print("\nSTOP PLAN ONLY: no request sent; pass --execute to acknowledge recovery mutation")
     return 0
+  materializable = executor.can_materialize_direct_runtime_length(row, plan)
   refusals = executor.runtime_refusals(profile, plan)
-  if refusals:
+  if refusals and not materializable:
     raise SystemExit("Active Test stop refused before transport: " + "; ".join(refusals))
-  control_mask = _optional_bytes(args.mask, "--mask") or b""
+  explicit_control_mask = _optional_bytes(args.mask, "--mask")
   live = _live_transport()
   panda = _connect_live(args, profile, live)
   session = DiagnosticSession(profile, ecu, panda=panda, operation_row=row)
   try:
     with session:
-      result = executor.stop_test(session, plan, control_enable_mask=control_mask, execute=True)
+      if isinstance(plan, executor.DirectTestPlan) and materializable:
+        plan = executor.materialize_direct_runtime_length(session, row, plan)
+      post_refusals = executor.runtime_refusals(profile, plan)
+      if post_refusals:
+        raise executor.PlanNotExecutable(plan, post_refusals)
+      control_mask = explicit_control_mask
+      if isinstance(plan, executor.DirectTestPlan) and control_mask is None:
+        if plan.runtime_length is None:
+          raise executor.PlanNotExecutable(plan)
+        control_mask = executor.direct_control_enable_mask(row, plan.runtime_length)
+      result = executor.stop_test(session, plan, control_enable_mask=control_mask or b"", execute=True)
   except SystemExit as e:
     _report_exception_cleanup(e, session)
     raise

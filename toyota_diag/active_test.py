@@ -38,6 +38,7 @@ def describe(profile: Profile, ecu: EcuSpec, row: dict[str, Any]) -> dict[str, A
     "registry_execution": str(row.get("execution") or "unresolved"),
     "runtime_execution": grade,
     "runtime_executable": not refusals,
+    "runtime_materializable": executor.can_materialize_direct_runtime_length(row, plan),
     "runtime_refusals": list(refusals),
     "session_requirement": row.get("session_requirement"),
     "wire_plan": dict(row),
@@ -108,6 +109,9 @@ def render_plan(profile: Profile, ecu: EcuSpec, test: dict[str, Any]) -> str:
       lines.append(f"minimum examples only: {examples.get('raw_0')} / {examples.get('raw_1')} / {examples.get('return_control')}")
   if not runtime_refusals:
     lines.append("runtime: executable; transmission still requires explicit --execute acknowledgement")
+  elif executor.can_materialize_direct_runtime_length(test, plan):
+    lines.append(
+      "runtime: live-materializable; with --execute, Toyota's exact mode-0 22 <DID> initial read supplies N before mutation")
   elif execution == "executable":
     lines.append("runtime: blocked despite complete static geometry")
     lines.extend(f"  refusal: {reason}" for reason in runtime_refusals)
