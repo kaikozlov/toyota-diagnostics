@@ -102,10 +102,11 @@ def render_plan(profile: Profile, ecu: EcuSpec, test: dict[str, Any]) -> str:
     lines.extend([
       f"DID: 0x{int(test['did']):04X}",
       f"bits: {test.get('bit_start')}..{test.get('bit_end')}",
-      f"start prefix: {test.get('start_prefix')} || N-byte value payload",
-      f"stop prefix:  {test.get('stop_prefix')} || N-byte control-enable mask",
+      f"start prefix: {test.get('start_prefix')} || N-byte value payload || recovered start mask",
+      f"stop prefix:  {test.get('stop_prefix')} || recovered mode-specific control-enable mask",
       f"positive SID: 0x{int(test['positive_response']):02X}",
       f"runtime N minimum from bit geometry: {test.get('runtime_length_minimum')}",
+      f"mask strategy: {test.get('control_enable_mask') or '(legacy metadata; unavailable)'}",
     ])
     examples = test.get("minimum_examples")
     if examples:

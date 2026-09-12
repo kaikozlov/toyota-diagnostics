@@ -50,6 +50,9 @@ def run_utility(session: DiagnosticSession, plan: TestPlan, *, hold_s: float, ex
     return executor.run_routine_test(session, plan, hold_s=hold_s, option_record=option_record, execute=execute,
                                      poll_interval_s=poll_interval_s, echo=echo)
   if isinstance(plan, DirectTestPlan):
-    return executor.run_direct_test(session, plan, hold_s=hold_s, value_payload=value_payload,
-                                    control_enable_mask=control_enable_mask, execute=execute, echo=echo)
+    return executor.run_direct_test(
+      session, plan, hold_s=hold_s, value_payload=value_payload,
+      start_control_enable_mask=b"", stop_control_enable_mask=control_enable_mask,
+      execute=execute, echo=echo,
+    )
   raise executor.ExecutorError(f"expected a routine or direct utility plan, got kind {plan.kind!r}")

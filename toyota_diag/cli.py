@@ -680,12 +680,8 @@ def cmd_active_test_run(args, profile: Profile) -> int:
     raise SystemExit("Active Test refused before transport: " + "; ".join(refusals))
   value_payload = _optional_bytes(args.value, "--value")
   button_payload = _optional_bytes(args.button, "--button")
-  explicit_control_mask = _optional_bytes(args.mask, "--mask")
-
   try:
     if isinstance(plan, executor.RoutineTestPlan):
-      if explicit_control_mask is not None:
-        raise executor.ExecutorError("routine Active Tests do not take --mask")
       if routine_materializable:
         plan = executor.materialize_routine_runtime(
           row, plan, value_payload=value_payload, button_payload=button_payload)
@@ -714,14 +710,12 @@ def cmd_active_test_run(args, profile: Profile) -> int:
           session, plan, hold_s=args.hold, execute=True, poll_interval_s=args.poll_interval,
         )
       elif isinstance(plan, executor.DirectTestPlan):
-        control_mask = explicit_control_mask
-        if control_mask is None:
-          if plan.runtime_length is None:
-            raise executor.PlanNotExecutable(plan)
-          control_mask = executor.direct_control_enable_mask(row, plan.runtime_length)
+        if plan.runtime_length is None:
+          raise executor.PlanNotExecutable(plan)
+        start_mask, stop_mask = executor.direct_control_enable_masks(row, plan.runtime_length)
         result = executor.run_direct_test(
           session, plan, hold_s=args.hold, value_payload=value_payload or b"",
-          control_enable_mask=control_mask, execute=True,
+          start_control_enable_mask=start_mask, stop_control_enable_mask=stop_mask, execute=True,
         )
       else:
         raise executor.PlanNotExecutable(plan, executor.runtime_refusals(profile, plan))
@@ -757,23 +751,22 @@ def cmd_active_test_stop(args, profile: Profile) -> int:
   refusals = executor.runtime_refusals(profile, plan)
   if refusals and not materializable:
     raise SystemExit("Active Test stop refused before transport: " + "; ".join(refusals))
-  explicit_control_mask = _optional_bytes(args.mask, "--mask")
   live = _live_transport()
   panda = _connect_live(args, profile, live)
   session = DiagnosticSession(profile, ecu, panda=panda, operation_row=row)
   try:
     with session:
-      if isinstance(plan, executor.DirectTestPlan) and direct_materializable:
+      if isinstance(plan, executor.DirectTestPlan) and materializable:
         plan = executor.materialize_direct_runtime_length(session, row, plan)
       post_refusals = executor.runtime_refusals(profile, plan)
       if post_refusals:
         raise executor.PlanNotExecutable(plan, post_refusals)
-      control_mask = explicit_control_mask
-      if isinstance(plan, executor.DirectTestPlan) and control_mask is None:
+      stop_mask = b""
+      if isinstance(plan, executor.DirectTestPlan):
         if plan.runtime_length is None:
           raise executor.PlanNotExecutable(plan)
-        control_mask = executor.direct_control_enable_mask(row, plan.runtime_length)
-      result = executor.stop_test(session, plan, control_enable_mask=control_mask or b"", execute=True)
+        _, stop_mask = executor.direct_control_enable_masks(row, plan.runtime_length)
+      result = executor.stop_test(session, plan, control_enable_mask=stop_mask, execute=True)
   except SystemExit as e:
     _report_exception_cleanup(e, session)
     raise
@@ -2127,7 +2120,6 @@ def build_parser() -> argparse.ArgumentParser:
   p.add_argument("--poll-interval", type=float, default=0.5, help="routine status-poll interval in seconds")
   p.add_argument("--value", help="explicit positional value bytes as hex (direct payload or masked routine value channel)")
   p.add_argument("--button", help="explicit positional routine button bytes as hex")
-  p.add_argument("--mask", help="explicit direct-test control-enable mask bytes as hex")
   p.add_argument("--execute", action="store_true", help="acknowledge vehicle mutation; omitted means dry-run only")
   p.add_argument("--json", action="store_true")
   p.set_defaults(func=cmd_active_test_run)
@@ -2135,7 +2127,6 @@ def build_parser() -> argparse.ArgumentParser:
   p.add_argument("ecu")
   p.add_argument("item")
   p.add_argument("--kind", choices=("direct", "routine"))
-  p.add_argument("--mask", help="direct-test control-enable mask bytes as hex")
   p.add_argument("--execute", action="store_true", help="acknowledge recovery mutation; omitted means dry-run only")
   p.add_argument("--json", action="store_true")
   p.set_defaults(func=cmd_active_test_stop)

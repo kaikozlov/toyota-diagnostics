@@ -5,7 +5,7 @@ from opendbc.car.uds import MessageTimeoutError, NegativeResponseError
 from toyota_diag import registry
 from toyota_diag.executor import (DirectTestPlan, ExecutorError, PlanNotExecutable, RoutineTestPlan,
                                         can_materialize_direct_runtime_length, can_materialize_routine_runtime,
-                                        direct_control_enable_mask, materialize_direct_runtime_length,
+                                        direct_control_enable_mask, direct_control_enable_masks, materialize_direct_runtime_length,
                                         materialize_routine_runtime, resolve_plan, run_direct_test, run_routine_test,
                                         runtime_refusals)
 from toyota_diag.session import DiagnosticSession
@@ -39,6 +39,8 @@ def executable_direct(**overrides):
     "id": 0x1001, "name": "Activate Valve", "kind": "direct", "execution": "executable",
     "service": 0x2F, "positive_response": 0x6F, "session_requirement": "extended",
     "did": 0x2801, "start_prefix": "2f280103", "stop_prefix": "2f280100", "runtime_length": 2,
+    "encoding_mode": 1, "bit_start": 15, "bit_end": 15,
+    "control_enable_mask": {"start": "none", "stop": "selected_bit_range"},
   }
   row.update(overrides)
   return row
@@ -111,7 +113,7 @@ class TestPlanResolution(unittest.TestCase):
         else:
           grades[str(row.get("execution"))] += 1
     self.assertEqual(grades, {
-      "executable": 66, "blocked_geometry": 3, "plan_only": 333, "unresolved_static_plan": 26,
+      "executable": 66, "blocked_geometry": 3, "plan_only": 349, "unresolved_static_plan": 10,
     })
 
   def test_unresolved_and_partially_recovered_rows_refuse(self):
@@ -232,12 +234,36 @@ class TestPlanResolution(unittest.TestCase):
     with self.assertRaisesRegex(ExecutorError, "does not accept --button"):
       materialize_routine_runtime(row, plan, value_payload=b"\x01", button_payload=b"\x00")
 
-  def test_direct_control_enable_mask_uses_toyota_msb0_bit_numbering(self):
-    self.assertEqual(direct_control_enable_mask({"bit_start": 15, "bit_end": 15}, 2), b"\x00\x01")
-    self.assertEqual(direct_control_enable_mask({"bit_start": 0, "bit_end": 7}, 2), b"\xff\x00")
-    self.assertEqual(direct_control_enable_mask({"bit_start": 6, "bit_end": 9}, 2), b"\x03\xc0")
+  def test_direct_control_enable_masks_follow_current_encoding_mode(self):
+    mode1 = {
+      "bit_start": 15, "bit_end": 15, "encoding_mode": 1,
+      "control_enable_mask": {"start": "none", "stop": "selected_bit_range"},
+    }
+    self.assertEqual(direct_control_enable_masks(mode1, 4), (b"", b"\x00\x01"))
+    self.assertEqual(direct_control_enable_mask(mode1, 4), b"\x00\x01")
+
+    mode4 = {
+      "bit_start": 6, "bit_end": 9, "encoding_mode": 4,
+      "control_enable_mask": {"start": "none", "stop": "selected_bit_range"},
+    }
+    self.assertEqual(direct_control_enable_masks(mode4, 4), (b"", b"\x03\xc0"))
+
+    mode3 = {
+      "bit_start": 0, "bit_end": 7, "encoding_mode": 3,
+      "control_enable_mask": {"start": "none", "stop": "none"},
+    }
+    self.assertEqual(direct_control_enable_masks(mode3, 2), (b"", b""))
+
+    profile = registry.load_database().profile("NA", 12704, bus=0)
+    shared = profile.lookup_active_test("engine", "77")
+    self.assertEqual(shared["encoding_mode"], 0)
+    self.assertEqual(direct_control_enable_masks(shared, 2), (b"\x80", b"\x80"))
+    shared_second = profile.lookup_active_test("engine", "78")
+    self.assertEqual(direct_control_enable_masks(shared_second, 2), (b"\x40", b"\x40"))
+
+    too_short = dict(mode1, bit_end=16)
     with self.assertRaisesRegex(ExecutorError, "do not fit"):
-      direct_control_enable_mask({"bit_start": 0, "bit_end": 16}, 2)
+      direct_control_enable_masks(too_short, 2)
 
   def test_executable_rows_resolve_with_decomposed_wire_plans(self):
     ecu = support.synthetic_ecu(support.load_profile(None))
@@ -439,7 +465,7 @@ class TestDirectExecution(unittest.TestCase):
 
   def test_direct_lifecycle_and_wire_shape(self):
     result = self.run_with(executable_direct(), session_control=current_p5(), execute=True,
-                           value_payload=b"\x00\x01", control_enable_mask=b"\x00\x01")
+                           value_payload=b"\x00\x01", start_control_enable_mask=b"", stop_control_enable_mask=b"\x00\x01")
     self.assertTrue(result.executed)
     calls = list(self.scripted.calls)
     for expected in [
@@ -452,18 +478,19 @@ class TestDirectExecution(unittest.TestCase):
       calls = calls[index + 1:]
     self.assertEqual(self.scripted.calls[-1], (ADDR, "session", 1))
 
-  def test_payload_and_mask_lengths_are_enforced_before_any_transmission(self):
-    for payload, mask in ((b"\x01", b"\x00\x01"), (b"\x00\x01", b"\x01"), (b"", b"")):
+  def test_value_payload_length_is_enforced_before_any_transmission(self):
+    for payload in (b"\x01", b""):
       with self.assertRaises(ExecutorError):
         self.run_with(executable_direct(), session_control=current_p5(), execute=True,
-                      value_payload=payload, control_enable_mask=mask)
+                      value_payload=payload, start_control_enable_mask=b"",
+                      stop_control_enable_mask=b"\x00\x01")
     self.assertEqual(self.scripted.calls, [])
 
   def test_direct_without_recovered_runtime_length_never_executes(self):
     row = executable_direct(runtime_length=None, runtime_length_minimum=2)
     with self.assertRaises(PlanNotExecutable):
       self.run_with(row, session_control=current_p5(), execute=True,
-                    value_payload=b"\x00\x01", control_enable_mask=b"\x00\x01")
+                    value_payload=b"\x00\x01", start_control_enable_mask=b"", stop_control_enable_mask=b"\x00\x01")
     self.assertEqual(self.scripted.calls, [])
 
   def test_exception_during_hold_stops_control(self):
@@ -480,7 +507,7 @@ class TestDirectExecution(unittest.TestCase):
     session = DiagnosticSession(profile, ecu, client_factory=self.scripted.factory, operation_row=row)
     with self.assertRaises(KeyboardInterrupt):
       run_direct_test(session, plan, hold_s=5.0, execute=True, value_payload=b"\x00\x01",
-                      control_enable_mask=b"\x00\x01", echo=lambda text: None, sleep=stop_fails)
+                      start_control_enable_mask=b"", stop_control_enable_mask=b"\x00\x01", echo=lambda text: None, sleep=stop_fails)
     controls = [call[3] for call in self.scripted.calls if call[1] == "io_control"]
     self.assertEqual(controls, [3, 0])  # start then emergency stop
 

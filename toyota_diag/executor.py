@@ -85,9 +85,9 @@ class TestPlan:
 class DirectTestPlan(TestPlan):
   """Recovered 0x2F InputOutputControlByIdentifier plan.
 
-  start/stop prefixes are decomposed as `2F | DID | control | option prefix`; the
-  runtime value payload (start) and control-enable mask (stop) are caller-supplied
-  explicit bytes of exactly `runtime_length`.
+  start/stop prefixes are decomposed as `2F | DID | control | option prefix`.
+  The runtime DID option record has exact length N; start/stop control-enable masks
+  are separate, encoding-mode-specific geometry recovered from Toyota type-67/type-68.
   """
   did: int = 0
   start_control: int = 0
@@ -373,8 +373,7 @@ def materialize_routine_runtime(
   return live_plan
 
 
-def direct_control_enable_mask(row: dict[str, Any], runtime_length: int) -> bytes:
-  """Build GTS+'s N-byte direct-test return-control mask from the recovered bit range."""
+def _direct_selected_bit_mask(row: dict[str, Any], runtime_length: int) -> bytes:
   if runtime_length <= 0:
     raise ExecutorError("runtime_length must be positive")
   try:
@@ -385,10 +384,83 @@ def direct_control_enable_mask(row: dict[str, Any], runtime_length: int) -> byte
   if bit_start < 0 or bit_end < bit_start or bit_end >= runtime_length * 8:
     raise ExecutorError(
       f"direct control bits {bit_start}..{bit_end} do not fit runtime length {runtime_length}")
-  mask = bytearray(runtime_length)
+  mask = bytearray(bit_end // 8 + 1)
   for bit in range(bit_start, bit_end + 1):
     mask[bit // 8] |= 1 << (7 - (bit & 7))
   return bytes(mask)
+
+
+def _direct_type67_mask(row: dict[str, Any], runtime_length: int) -> bytes:
+  try:
+    bit_start = registry.parse_int(row["bit_start"], "direct bit_start")
+    bit_end = registry.parse_int(row["bit_end"], "direct bit_end")
+  except (KeyError, registry.RegistryError) as e:
+    raise ExecutorError(f"direct Active Test has no resolved control bit range: {e}") from e
+  if bit_start < 0 or bit_end < bit_start or bit_end >= runtime_length * 8:
+    raise ExecutorError(
+      f"direct control bits {bit_start}..{bit_end} do not fit runtime length {runtime_length}")
+  records = row.get("data_id_for_act_records")
+  if not isinstance(records, list) or not records:
+    raise ExecutorError("mode-0 direct Active Test has no exported type-67 control-enable geometry")
+  span_start = bit_start >> 3
+  span_length = ((bit_end - bit_start) >> 3) + 1
+  span_end = span_start + span_length
+  enabled_bits: list[int] = []
+  for record in records:
+    if not isinstance(record, dict):
+      raise ExecutorError("malformed type-67 control-enable geometry")
+    try:
+      control_bit_1based = registry.parse_int(record["control_enable_bit_1based"], "type67 control-enable bit")
+      data_offset = registry.parse_int(record["data_byte_offset"], "type67 data byte offset")
+      data_length = registry.parse_int(record["data_byte_length"], "type67 data byte length")
+      mode = registry.parse_int(record["encoding_mode"], "type67 encoding mode")
+    except (KeyError, registry.RegistryError) as e:
+      raise ExecutorError(f"malformed type-67 control-enable geometry: {e}") from e
+    if mode != 0:
+      raise ExecutorError(f"mode-0 direct control references type-67 encoding mode {mode}")
+    if span_start <= data_offset < span_end and data_offset + data_length <= span_end:
+      if control_bit_1based <= 0:
+        raise ExecutorError("type-67 control-enable bit is not 1-based positive")
+      enabled_bits.append(control_bit_1based - 1)
+  if not enabled_bits:
+    raise ExecutorError("mode-0 direct control selected no type-67 control-enable bits")
+  mask = bytearray(max(enabled_bits) // 8 + 1)
+  for bit in enabled_bits:
+    mask[bit // 8] |= 1 << (7 - (bit & 7))
+  return bytes(mask)
+
+
+def direct_control_enable_masks(row: dict[str, Any], runtime_length: int) -> tuple[bytes, bytes]:
+  """Materialize current GTS+ start/stop control-enable masks for a direct P5 test."""
+  try:
+    encoding_mode = registry.parse_int(row["encoding_mode"], "direct encoding_mode")
+  except (KeyError, registry.RegistryError) as e:
+    raise ExecutorError(f"direct Active Test has no resolved encoding mode: {e}") from e
+  strategy = row.get("control_enable_mask")
+  if not isinstance(strategy, dict):
+    raise ExecutorError("direct Active Test has no exported control-enable-mask strategy")
+  expected = {
+    0: ("type67_rows_for_selected_byte_span", "type67_rows_for_selected_byte_span"),
+    1: ("none", "selected_bit_range"),
+    3: ("none", "none"),
+    4: ("none", "selected_bit_range"),
+  }.get(encoding_mode)
+  if expected is None:
+    raise ExecutorError(f"direct encoding mode {encoding_mode} has no recovered mask materializer")
+  actual = (strategy.get("start"), strategy.get("stop"))
+  if actual != expected:
+    raise ExecutorError(f"direct mask strategy {actual!r} does not match recovered mode-{encoding_mode} strategy {expected!r}")
+  if encoding_mode == 0:
+    mask = _direct_type67_mask(row, runtime_length)
+    return mask, mask
+  if encoding_mode in {1, 4}:
+    return b"", _direct_selected_bit_mask(row, runtime_length)
+  return b"", b""
+
+
+def direct_control_enable_mask(row: dict[str, Any], runtime_length: int) -> bytes:
+  """Compatibility helper returning the recovered return-control mask only."""
+  return direct_control_enable_masks(row, runtime_length)[1]
 
 
 def runtime_refusals(profile: registry.Profile, plan: TestPlan) -> tuple[str, ...]:
@@ -529,14 +601,15 @@ def _routine_stop(client, plan: RoutineTestPlan) -> bytes:
 
 
 def run_direct_test(session: DiagnosticSession, plan: DirectTestPlan, *, hold_s: float,
-                    value_payload: bytes = b"", control_enable_mask: bytes = b"", execute: bool = False,
+                    value_payload: bytes = b"", start_control_enable_mask: bytes = b"",
+                    stop_control_enable_mask: bytes = b"", execute: bool = False,
                     echo: Callable[[str], None] = print, sleep: Callable[[float], None] = time.sleep,
                     clock: Callable[[], float] = time.monotonic) -> ActiveTestResult:
   """Run a recovered 0x2F Active Test: start -> hold (keepalive) -> stop/return control.
 
-  `value_payload` and `control_enable_mask` are explicit caller-supplied runtime
-  bytes, each exactly `plan.runtime_length` long; nothing is derived from the
-  registry's minimum examples.
+  `value_payload` is the explicit caller-supplied N-byte option record. Start and
+  stop control-enable masks are separately materialized from Toyota's recovered
+  encoding-mode geometry and may be shorter than N (or empty).
   """
   if plan.kind != "direct" or not isinstance(plan, DirectTestPlan):
     raise ExecutorError(f"expected a direct plan, got kind {plan.kind!r}")
@@ -547,8 +620,6 @@ def run_direct_test(session: DiagnosticSession, plan: DirectTestPlan, *, hold_s:
       raise PlanNotExecutable(plan)
     if len(value_payload) != plan.runtime_length:
       raise ExecutorError(f"value_payload must be exactly {plan.runtime_length} byte(s), got {len(value_payload)}")
-    if len(control_enable_mask) != plan.runtime_length:
-      raise ExecutorError(f"control_enable_mask must be exactly {plan.runtime_length} byte(s), got {len(control_enable_mask)}")
 
   session_requirement = _prepare(session, plan, execute=execute)
   if not execute:
@@ -558,11 +629,12 @@ def run_direct_test(session: DiagnosticSession, plan: DirectTestPlan, *, hold_s:
 
   def start_control() -> bytes:
     return client.input_output_control_by_identifier(
-      plan.did, CONTROL_PARAMETER_TYPE(plan.start_control), plan.start_option_prefix + value_payload, b"")
+      plan.did, CONTROL_PARAMETER_TYPE(plan.start_control), plan.start_option_prefix + value_payload,
+      start_control_enable_mask)
 
   def stop_control() -> bytes:
     return client.input_output_control_by_identifier(
-      plan.did, CONTROL_PARAMETER_TYPE(plan.stop_control), plan.stop_option_prefix, control_enable_mask)
+      plan.did, CONTROL_PARAMETER_TYPE(plan.stop_control), plan.stop_option_prefix, stop_control_enable_mask)
 
   started = False
   cleanup_errors: list[str] = []
@@ -638,8 +710,8 @@ def stop_test(session: DiagnosticSession, plan: TestPlan, *, control_enable_mask
               execute: bool = False, echo: Callable[[str], None] = print) -> ActiveTestResult:
   """Explicit recovery/stop surface for an already-running recovered Active Test.
 
-  Routine stops use the recovered fixed 0x31 stop request. Direct controls require
-  an explicit control-enable mask of exactly the recovered runtime length. Like
+  Routine stops use the recovered fixed 0x31 stop request. Direct controls use
+  the recovered mode-specific return-control mask supplied by the caller. Like
   normal execution, no transmission occurs without `execute=True`.
   """
   session_requirement = _prepare(session, plan, execute=execute)
@@ -652,11 +724,8 @@ def stop_test(session: DiagnosticSession, plan: TestPlan, *, control_enable_mask
   elif isinstance(plan, DirectTestPlan):
     if plan.runtime_length is None:
       raise PlanNotExecutable(plan)
-    if len(control_enable_mask) != plan.runtime_length:
-      raise ExecutorError(
-        f"control_enable_mask must be exactly {plan.runtime_length} byte(s), got {len(control_enable_mask)}")
     stop = client.input_output_control_by_identifier(
-      plan.did, CONTROL_PARAMETER_TYPE(plan.stop_control), plan.stop_option_prefix, control_enable_mask)
+      plan.did, CONTROL_PARAMETER_TYPE(plan.stop_control), plan.stop_option_prefix, stop_control_enable_mask)
   else:
     raise ExecutorError(f"expected a routine or direct plan, got kind {plan.kind!r}")
   return ActiveTestResult(plan=plan, executed=True, session_requirement=session_requirement, stop=stop,
