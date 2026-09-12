@@ -76,6 +76,21 @@ class TestPlanResolution(unittest.TestCase):
     self.assertFalse(brake_plan.executable)
     self.assertIn("placeholder 0xFFFF", " ".join(brake_plan.refusals))
 
+  def test_static_routine_command_variable_is_fixed_request_material(self):
+    profile = registry.load_registry(registry.LEGACY_CAMRY_REGISTRY)
+    ecu = profile.lookup_ecu("engine")
+    row = profile.lookup_active_test("engine", "40402")
+    self.assertTrue(row["fixed_request"])
+    self.assertEqual(row["routine_command"]["bytes"], "00")
+    self.assertEqual(row["output_mask_value"]["bytes"], "")
+    self.assertEqual(row["output_mask_button"]["bytes"], "")
+    plan = resolve_plan(ecu, row)
+    self.assertIsInstance(plan, RoutineTestPlan)
+    self.assertTrue(plan.executable)
+    self.assertFalse(plan.parameterized)
+    self.assertEqual(plan.start_option_prefix, b"\x00")
+    self.assertEqual(plan.stop_option_prefix, b"")
+
   def test_legacy_v3_row_stays_plan_only_without_executable_geometry_grade(self):
     profile = support.load_profile(None, active_tests=[executable_routine(execution="plan_only")])
     row = profile.lookup_active_test("ecu", "0x2001")
@@ -95,7 +110,7 @@ class TestPlanResolution(unittest.TestCase):
         else:
           grades[str(row.get("execution"))] += 1
     self.assertEqual(grades, {
-      "executable": 38, "blocked_geometry": 3, "plan_only": 361, "unresolved_static_plan": 26,
+      "executable": 66, "blocked_geometry": 3, "plan_only": 333, "unresolved_static_plan": 26,
     })
 
   def test_unresolved_and_partially_recovered_rows_refuse(self):
