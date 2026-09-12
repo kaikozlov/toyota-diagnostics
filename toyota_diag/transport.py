@@ -252,6 +252,29 @@ def can_query_callbacks(panda, *, wait_timeout: float = QUERY_RECV_WAIT):
   return can_recv, can_send
 
 
+class _AddressExtensionAdapter:
+  """Keep other logical nodes on a shared CAN ID out of one ISO-TP client.
+
+  This adapter borrows the transport; it neither opens nor closes hardware.
+  UdsClient still performs CAN-ID/bus filtering and ISO-TP validation.
+  """
+
+  def __init__(self, panda, rx_sub_addr: int) -> None:
+    self.can_send = panda.can_send
+    self._receive = panda.can_recv
+    self._rx_sub_addr = rx_sub_addr
+
+  def can_recv(self) -> list[tuple[int, bytes, int]]:
+    out = []
+    while True:
+      frames = self._receive() or []
+      out.extend(frame for frame in frames if not frame[1] or frame[1][0] == self._rx_sub_addr)
+      # CanClient uses a full 254-frame batch as its queued-RX/drain hint.
+      # Do not lose that hint just because this adapter discarded other nodes.
+      if len(frames) < 254:
+        return out
+
+
 def uds_client_factory(panda, profile: Profile, timeouts: registry.CommTimeouts | None = None,
                        *, validate_profile_routes: bool = True) -> Callable[..., UdsClient]:
   bus = registry.require_panda_bus(profile)
@@ -275,7 +298,9 @@ def uds_client_factory(panda, profile: Profile, timeouts: registry.CommTimeouts 
       kwargs["rx_addr"] = rx_addr
     if rx_sub_addr is not None:
       kwargs["rx_sub_addr"] = rx_sub_addr
-    return UdsClient(panda, address, **kwargs)
+    receive_extension = sub_addr if rx_sub_addr is None else rx_sub_addr
+    adapter = panda if receive_extension is None else _AddressExtensionAdapter(panda, receive_extension)
+    return UdsClient(adapter, address, **kwargs)
   return factory
 
 

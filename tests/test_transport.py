@@ -118,16 +118,72 @@ class TestTransport(unittest.TestCase):
     self.assertEqual(panda.sent, [(0x7DF, bytes.fromhex("0209020000000000"), 0)])
 
   def test_uds_factory_passes_toyota_subaddress_to_upstream_client(self):
-    panda = object()
+    from tests.support import FakePanda
+    panda = FakePanda()
     sentinel = object()
     with mock.patch("toyota_diag.transport.UdsClient", return_value=sentinel) as uds:
       client = transport.uds_client_factory(panda, self.profile)(0x750, 0x2A)
     self.assertIs(client, sentinel)
+    adapter = uds.call_args.args[0]
+    self.assertEqual(adapter.can_send, panda.can_send)
     uds.assert_called_once_with(
-      panda, 0x750, bus=self.profile.bus, sub_addr=0x2A,
+      adapter, 0x750, bus=self.profile.bus, sub_addr=0x2A,
       timeout=self.profile.uds_timeout,
       response_pending_timeout=self.profile.uds_response_pending_timeout,
     )
+
+  def test_shared_reply_id_ignores_other_logical_nodes_before_isotp(self):
+    from tests.support import FakePanda
+
+    class ReplyOnSend(FakePanda):
+      def can_send(self, address, data, bus, timeout=None):
+        super().can_send(address, data, bus, timeout)
+        self._batches.append([
+          (address, bytes(data), bus + 128),
+          (0x758, bytes.fromhex("0f027e0000000000"), bus),
+          (0x758, bytes.fromhex("6d027e0000000000"), bus),
+          (0x758, bytes.fromhex("5f027eaa00000000"), bus + 1),
+          (0x758, bytes.fromhex("5f027e0000000000"), bus),
+        ])
+
+    panda = ReplyOnSend()
+    client = transport.uds_client_factory(panda, self.profile)(0x750, 0x5F)
+    response = transport.raw_isotp(client, bytes.fromhex("3e00"))
+    self.assertEqual(response, bytes.fromhex("7e00"))
+    self.assertEqual(panda.sent, [(0x750, bytes.fromhex("5f023e0000000000"), self.profile.bus)])
+
+  def test_shared_reply_demultiplexer_uses_explicit_rx_extension_including_zero(self):
+    from tests.support import FakePanda
+
+    class ReplyOnSend(FakePanda):
+      def can_send(self, address, data, bus, timeout=None):
+        super().can_send(address, data, bus, timeout)
+        self._batches.append([
+          (0x760, bytes.fromhex("5f037f2231000000"), bus),
+          (0x760, bytes.fromhex("000462f186010000"), bus),
+        ])
+
+    panda = ReplyOnSend()
+    client = transport.uds_client_factory(panda, self.profile)(
+      0x750, 0x5F, rx_addr=0x760, rx_sub_addr=0,
+    )
+    self.assertEqual(transport.raw_isotp(client, bytes.fromhex("22f186")), bytes.fromhex("62f18601"))
+    self.assertEqual(panda.sent, [(0x750, bytes.fromhex("5f0322f186000000"), self.profile.bus)])
+
+  def test_shared_reply_demultiplexer_preserves_full_batch_drain(self):
+    from tests.support import FakePanda
+    unrelated = (0x758, bytes.fromhex("0f027e0000000000"), self.profile.bus)
+    stale = (0x758, bytes.fromhex("5f027eaa00000000"), self.profile.bus)
+    panda = FakePanda(recv_batches=[[unrelated] * 254, [stale]])
+    client = transport.uds_client_factory(panda, self.profile)(0x750, 0x5F)
+    self.assertEqual(list(client._can_client.recv(drain=True)), [])
+    self.assertEqual(panda.can_recv(), [])
+
+  def test_plain_physical_uds_keeps_unwrapped_transport(self):
+    panda = object()
+    with mock.patch("toyota_diag.transport.UdsClient") as uds:
+      transport.uds_client_factory(panda, self.profile)(0x7A1)
+    self.assertIs(uds.call_args.args[0], panda)
 
   def test_connect_uses_managed_path_when_pandad_owns_panda(self):
     sentinel = object()
