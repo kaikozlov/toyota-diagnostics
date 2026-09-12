@@ -93,7 +93,7 @@ Still needed for GTS+ Health Check parity:
 - generic per-DTC freeze-frame retrieval and decoding;
 - Info Code / Operation History / VCH / RoB collection;
 - monitor-data and optional timestamp-data capture;
-- refresh/diff behavior over saved snapshots and report presentation.
+- richer report presentation. Saved-snapshot refresh/diff is implemented with `--compare`.
 
 ### 5. DTC and generic freeze-frame families
 
@@ -195,7 +195,7 @@ GTS+ also relies on Toyota-hosted services for operations such as reprogramming 
 ## Recommended implementation order
 
 1. **Finish transport breadth:** the Panda/J2534 raw-CAN abstraction is landed; next add native J2534 ISO15765 as needed, then CAN-FD/DoIP and older J2534 protocols.
-2. **Health Check breadth:** all-system mount/DTC/identity snapshot and durable JSON are landed; next generic FFD, Info Code/Operation History/VCH/RoB, and refresh/diff.
+2. **Health Check breadth:** all-system mount/DTC/identity snapshots, durable JSON, and refresh/diff are landed; next generic FFD and Info Code/Operation History/VCH/RoB.
 3. **Active Test completion:** ordinary P5 direct runtime length is landed; next parameterized routines, multi-control writes, and P6 execution.
 4. **Customize.** High user value and relatively bounded compared with reflash.
 5. **Utilities/registration/learning.** Add concrete operations family-by-family from exact recovered plugin semantics.

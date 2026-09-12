@@ -215,6 +215,130 @@ def save(document: dict[str, Any], path: str | Path) -> Path:
   return out
 
 
+def load(path: str | Path) -> dict[str, Any]:
+  source = Path(path).expanduser()
+  try:
+    document = json.loads(source.read_text())
+  except (OSError, json.JSONDecodeError) as e:
+    raise registry.RegistryError(f"cannot read Health Check snapshot {source}: {e}") from e
+  if not isinstance(document, dict) or document.get("schema") != SCHEMA:
+    raise registry.RegistryError(f"{source} is not a {SCHEMA} document")
+  return document
+
+
+def _ecu_identity(row: dict[str, Any]) -> tuple[int, int, int | None]:
+  return int(row["category_id"]), int(row["address"]), None if row.get("sub_addr") is None else int(row["sub_addr"])
+
+
+def _dtc_map(row: dict[str, Any]) -> dict[str, int]:
+  dtc_state = row.get("dtc") if isinstance(row.get("dtc"), dict) else {}
+  records = dtc_state.get("records") if isinstance(dtc_state.get("records"), list) else []
+  return {str(item["code"]): int(item["status"]) for item in records if isinstance(item, dict) and item.get("code")}
+
+
+def compare(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+  """Compare two Health Check snapshots without requiring Toyota binaries or live hardware."""
+  if before.get("schema") != SCHEMA or after.get("schema") != SCHEMA:
+    raise registry.RegistryError(f"Health Check comparison requires two {SCHEMA} documents")
+  before_rows = {_ecu_identity(row): row for row in before.get("ecus", [])}
+  after_rows = {_ecu_identity(row): row for row in after.get("ecus", [])}
+  changes: list[dict[str, Any]] = []
+  for identity in sorted(set(before_rows) | set(after_rows)):
+    old = before_rows.get(identity)
+    new = after_rows.get(identity)
+    exemplar = new or old or {}
+    entry: dict[str, Any] = {
+      "category_id": identity[0], "address": identity[1], "sub_addr": identity[2],
+      "key": exemplar.get("key"), "name": exemplar.get("name"),
+    }
+    if old is None:
+      entry["change"] = "candidate_added"
+      changes.append(entry)
+      continue
+    if new is None:
+      entry["change"] = "candidate_removed"
+      changes.append(entry)
+      continue
+
+    old_mount = (old.get("mount") or {}).get("live_state")
+    new_mount = (new.get("mount") or {}).get("live_state")
+    if old_mount != new_mount:
+      entry["mount"] = {"before": old_mount, "after": new_mount}
+
+    old_dtc = _dtc_map(old)
+    new_dtc = _dtc_map(new)
+    added = [{"code": code, "status": new_dtc[code]} for code in sorted(new_dtc.keys() - old_dtc.keys())]
+    removed = [{"code": code, "status": old_dtc[code]} for code in sorted(old_dtc.keys() - new_dtc.keys())]
+    status_changed = [
+      {"code": code, "before": old_dtc[code], "after": new_dtc[code]}
+      for code in sorted(old_dtc.keys() & new_dtc.keys()) if old_dtc[code] != new_dtc[code]
+    ]
+    if added or removed or status_changed:
+      entry["dtcs"] = {"added": added, "removed": removed, "status_changed": status_changed}
+
+    old_ident = old.get("identity") if isinstance(old.get("identity"), dict) else None
+    new_ident = new.get("identity") if isinstance(new.get("identity"), dict) else None
+    old_hex = old_ident.get("data_hex") if old_ident else None
+    new_hex = new_ident.get("data_hex") if new_ident else None
+    if old_hex != new_hex:
+      entry["identity"] = {"before": old_hex, "after": new_hex}
+
+    old_dtc_state = (old.get("dtc") or {}).get("state")
+    new_dtc_state = (new.get("dtc") or {}).get("state")
+    if old_dtc_state != new_dtc_state:
+      entry["dtc_state"] = {"before": old_dtc_state, "after": new_dtc_state}
+
+    if len(entry) > 5:
+      changes.append(entry)
+
+  return {
+    "schema": "toyota-health-check-diff-v1",
+    "vehicle_type": after.get("vehicle_type"),
+    "before_captured_at": before.get("captured_at"),
+    "after_captured_at": after.get("captured_at"),
+    "summary": {
+      "changed_ecus": len(changes),
+      "mount_state_changes": sum("mount" in row for row in changes),
+      "dtc_changes": sum("dtcs" in row for row in changes),
+      "identity_changes": sum("identity" in row for row in changes),
+    },
+    "changes": changes,
+  }
+
+
+def render_diff(document: dict[str, Any]) -> str:
+  summary = document["summary"]
+  lines = [
+    "Health Check changes",
+    (
+      f"ECUs changed: {summary['changed_ecus']}  mount: {summary['mount_state_changes']}  "
+      f"dtc: {summary['dtc_changes']}  identity: {summary['identity_changes']}"
+    ),
+  ]
+  if not document["changes"]:
+    lines.append("no changes")
+    return "\n".join(lines)
+  for row in document["changes"]:
+    endpoint = f"0x{row['address']:X}" + (f"/0x{row['sub_addr']:02X}" if row.get("sub_addr") is not None else "")
+    lines.append(f"{row.get('name') or row.get('key') or '?'} {endpoint} cat={row['category_id']}")
+    if row.get("change"):
+      lines.append(f"  {row['change']}")
+    if "mount" in row:
+      lines.append(f"  mount: {row['mount']['before']} -> {row['mount']['after']}")
+    if "dtc_state" in row:
+      lines.append(f"  dtc state: {row['dtc_state']['before']} -> {row['dtc_state']['after']}")
+    if "identity" in row:
+      lines.append(f"  identity: {row['identity']['before']} -> {row['identity']['after']}")
+    dtcs = row.get("dtcs") or {}
+    for item in dtcs.get("added", []):
+      lines.append(f"  + DTC {item['code']} status=0x{item['status']:02X}")
+    for item in dtcs.get("removed", []):
+      lines.append(f"  - DTC {item['code']} status=0x{item['status']:02X}")
+    for item in dtcs.get("status_changed", []):
+      lines.append(f"  ~ DTC {item['code']} 0x{item['before']:02X} -> 0x{item['after']:02X}")
+  return "\n".join(lines)
+
+
 def render(document: dict[str, Any]) -> str:
   summary = document["summary"]
   lines = [

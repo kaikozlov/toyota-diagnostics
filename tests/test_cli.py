@@ -567,6 +567,19 @@ class TestLiveCli(unittest.TestCase):
     self.assertEqual(alias_document["summary"]["install_candidates"], 34)
     self.assertEqual(alias_document["coverage"]["identity"], "disabled by caller")
 
+  def test_health_check_invalid_compare_refuses_before_transport(self):
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as directory:
+      bad = Path(directory) / "bad.json"
+      bad.write_text('{"schema":"wrong"}')
+      with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+        with self.assertRaisesRegex(SystemExit, "not a toyota-health-check-v1"):
+          run_cli([
+            "--vehicle", "12704", "health-check", "--compare", str(bad), "--json",
+          ], use_default_registry=True)
+
   def test_vehicle_detect_uses_toyota_vin_decision_not_f181_guard(self):
     scripted = support.ScriptedUds()
     panda = support.FakePanda()

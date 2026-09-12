@@ -1490,6 +1490,10 @@ def cmd_observe(args, profile: Profile) -> int:
 def cmd_health_check(args, profile: Profile) -> int:
   if profile.vehicle_type is None:
     raise SystemExit("Health Check requires a selected Toyota vehicle; use --vehicle or allow live VIN resolution")
+  try:
+    before = snapshot.load(args.compare) if args.compare else None
+  except registry.RegistryError as e:
+    raise SystemExit(str(e)) from e
   transport = _live_transport()
   state = transport.status(profile, **_transport_options(args))
   panda = _connect_live(args, profile, transport)
@@ -1507,10 +1511,13 @@ def cmd_health_check(args, profile: Profile) -> int:
       close()
 
   out_path = snapshot.save(document, args.out) if args.out else None
+  comparison = snapshot.compare(before, document) if before is not None else None
   if args.json:
-    print(json.dumps(document, sort_keys=True))
+    print(json.dumps(document if comparison is None else {"snapshot": document, "diff": comparison}, sort_keys=True))
   else:
     print(snapshot.render(document))
+    if comparison is not None:
+      print("\n" + snapshot.render_diff(comparison))
     if out_path is not None:
       print(f"\nsaved: {out_path}")
   return 1 if document["summary"]["fault_status_records"] else 0
@@ -1877,6 +1884,7 @@ def build_parser() -> argparse.ArgumentParser:
   )
   p.add_argument("--no-identities", action="store_true", help="skip exact exported generic-CID identity reads")
   p.add_argument("--out", help="write the complete open JSON snapshot to FILE")
+  p.add_argument("--compare", help="compare the live result with a previously saved Health Check JSON file")
   p.add_argument("--json", action="store_true")
   p.set_defaults(func=cmd_health_check)
 
