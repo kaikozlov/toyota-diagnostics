@@ -136,6 +136,23 @@ class TestTransport(unittest.TestCase):
       self.assertIs(transport.connect(self.profile), sentinel)
     managed.assert_called_once_with(self.profile)
 
+  def test_explicit_obd_remap_is_not_silently_ignored_by_managed_transport(self):
+    with mock.patch("toyota_diag.transport.pandad_running", return_value=True), \
+         mock.patch("toyota_diag.transport.ManagedPandaAdapter") as managed:
+      with self.assertRaisesRegex(SystemExit, "OBD.*direct Panda"):
+        transport.connect(self.profile, obd_multiplexing=True)
+    managed.assert_not_called()
+
+  def test_explicit_obd_remap_status_reports_managed_route_unavailable(self):
+    with mock.patch("toyota_diag.transport.pandad_running", return_value=True), \
+         mock.patch("toyota_diag.transport._wait_panda_states") as wait:
+      state = transport.status(self.profile, obd_multiplexing=True)
+    self.assertEqual((state["mode"], state["ready"]), ("blocked", False))
+    self.assertTrue(state["pandad_running"])
+    self.assertFalse(state["hardware_probed"])
+    self.assertIn("direct Panda", state["detail"])
+    wait.assert_not_called()
+
   def test_connect_keeps_normal_harness_routing_unless_obd_multiplexing_is_explicit(self):
     from tests.support import FakePanda
 

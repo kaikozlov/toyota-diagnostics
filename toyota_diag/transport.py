@@ -25,6 +25,10 @@ BACKENDS = ("panda", "j2534")
 MANAGED_READY_TIMEOUT = 1.0
 SENDCAN_WARMUP = 0.15
 QUERY_RECV_WAIT = 0.1
+OBD_REMAP_REQUIRES_DIRECT = (
+  "OBD bus-1 remapping requires direct Panda ownership; stop openpilot/manager first. "
+  "The managed sendcan path cannot apply --obd-multiplexing."
+)
 
 
 def pandad_running() -> bool:
@@ -156,6 +160,12 @@ def status(profile: Profile, *, backend: str = "panda", messaging_module=None, o
                  + f"with {'OBD-port' if obd_multiplexing else 'normal-harness'} bus-1 routing (hardware not probed)"),
     }
 
+  if obd_multiplexing:
+    return {
+      "backend": "panda", "pandad_running": True, "mode": "blocked",
+      "ready": False, "hardware_probed": False, "detail": OBD_REMAP_REQUIRES_DIRECT,
+    }
+
   if messaging_module is None:
     import openpilot.cereal.messaging as messaging_module
   _, states = _wait_panda_states(messaging_module)
@@ -208,6 +218,10 @@ def connect(profile: Profile, *, backend: str = "panda", obd_multiplexing: bool 
       bus=registry.require_panda_bus(profile),
     )
   if pandad_running():
+    # An explicit physical-route change must not degrade into inherited routing.
+    # safetyParam alone is not a mux readback: Panda also exposes set_obd().
+    if obd_multiplexing:
+      raise SystemExit(OBD_REMAP_REQUIRES_DIRECT)
     return ManagedPandaAdapter(profile)
 
   from panda import Panda  # lazy: offline commands must not import Panda
