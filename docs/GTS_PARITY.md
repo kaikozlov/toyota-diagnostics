@@ -46,7 +46,7 @@ For NA decoded catalogs, the current Active Test census is:
 
 ### 1. Transport matrix
 
-The runtime is still Panda-centric. The current Toyota routing database contains transport families beyond the backend's implemented classic-CAN ISO-TP paths.
+The runtime now has Panda and J2534 raw-CAN backends behind the same diagnostic stack, but Toyota's transport matrix extends beyond the implemented classic-CAN ISO-TP paths.
 
 NA current route census:
 
@@ -58,9 +58,9 @@ NA current route census:
 
 Parity work:
 
-- introduce a transport-neutral diagnostic interface;
-- retain Panda as one backend;
-- add J2534 as a first-class backend;
+- **done:** select transport independently of Toyota operation semantics while retaining Panda as the default backend;
+- **done baseline:** J2534 v04.04 provider discovery plus raw 11/29-bit classic-CAN backend;
+- add native J2534 ISO15765 where it improves adapter compatibility and older-protocol expansion;
 - add CAN-FD ISO-TP and DoIP backends where Toyota routing selects them;
 - recover the remaining `ChangeCommIf` controller families instead of coercing them into CAN.
 
@@ -194,7 +194,7 @@ GTS+ also relies on Toyota-hosted services for operations such as reprogramming 
 
 ## Recommended implementation order
 
-1. **Transport abstraction + J2534 backend.** This improves hardware support and aligns the runtime with GTS+'s native VCI architecture.
+1. **Finish transport breadth:** the Panda/J2534 raw-CAN abstraction is landed; next add native J2534 ISO15765 as needed, then CAN-FD/DoIP and older J2534 protocols.
 2. **Health Check foundation:** generic mounted-ECU inventory, DTC + generic FFD + Info Code collection, durable open snapshots.
 3. **Active Test completion:** `DataIdLengthList`, parameterized routines, multi-control writes, P6 execution.
 4. **Customize.** High user value and relatively bounded compared with reflash.
@@ -205,6 +205,10 @@ GTS+ also relies on Toyota-hosted services for operations such as reprogramming 
 9. **CUW/reprogramming last**, with explicit recovery-oriented design and no coupling to ordinary diagnostic commands.
 
 ## J2534 / MVCI backend
+
+**Implemented baseline (2026-09-12):** the CLI now has a first-class `--transport j2534` backend. It discovers Windows v04.04 providers or accepts an explicit shared library, opens a raw CAN channel with separate 11-bit and 29-bit pass filters, and presents the same CAN contract used by the existing opendbc ISO-TP/UDS layer. This gives the current DID/DTC/VIN/Active-Test/FFD operations a transport-independent path through J2534 without duplicating their protocol logic. The implementation was ABI-tested and load-tested against a locally built OpenMVCI dylib; no physical MVCI was attached for a live vehicle test.
+
+Still missing on the J2534 side: native J2534 ISO15765 channels, CAN-FD/ISO15765-PS, ISO9141/ISO14230 for older Toyotas, DoIP, and live validation against the maintainer Mini-VCI clone.
 
 J2534 is a natural backend, not an adapter-specific exception: Techstream/GTS+ itself uses the J2534 pass-thru model.
 

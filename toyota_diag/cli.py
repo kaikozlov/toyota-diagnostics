@@ -108,9 +108,39 @@ def _live_transport():
   return transport
 
 
+def _transport_options(args) -> dict[str, Any]:
+  return {
+    "backend": getattr(args, "transport_backend", "panda"),
+    "obd_multiplexing": bool(getattr(args, "obd_multiplexing", False)),
+    "j2534_library": getattr(args, "j2534_library", None),
+    "j2534_device": getattr(args, "j2534_device", None),
+    "j2534_baud": int(getattr(args, "j2534_baud", 500_000)),
+  }
+
+
 def _connect_live(args, profile: Profile, live=None):
   live = _live_transport() if live is None else live
-  return live.connect(profile, obd_multiplexing=bool(getattr(args, "obd_multiplexing", False)))
+  try:
+    return live.connect(profile, **_transport_options(args))
+  except Exception as e:
+    from toyota_diag.j2534 import J2534Error
+    if isinstance(e, J2534Error):
+      raise SystemExit(str(e)) from e
+    raise
+
+
+def _passive_receiver(args, profile: Profile, live=None):
+  live = _live_transport() if live is None else live
+  options = _transport_options(args)
+  options.pop("obd_multiplexing")
+  logical_bus = profile.bus if getattr(args, "bus", None) is None else int(args.bus)
+  try:
+    return live.passive_receiver(profile=profile, logical_bus=logical_bus, **options)
+  except Exception as e:
+    from toyota_diag.j2534 import J2534Error
+    if isinstance(e, J2534Error):
+      raise SystemExit(str(e)) from e
+    raise
 
 
 def _format_signal(row: dict[str, Any]) -> str:
@@ -826,15 +856,37 @@ def cmd_utility_run(args, profile: Profile) -> int:
 
 def cmd_transport_status(args, profile: Profile) -> int:
   live = _live_transport()
-  state = live.status(profile, obd_multiplexing=bool(getattr(args, "obd_multiplexing", False)))
+  state = live.status(profile, **_transport_options(args))
   if args.json:
     print(json.dumps(state, sort_keys=True))
   else:
-    print(f"pandad: {'running' if state['pandad_running'] else 'stopped'}")
-    print(f"mode:   {state['mode']}")
-    print(f"ready:  {'yes' if state['ready'] else 'no'}")
-    print(f"detail: {state['detail']}")
+    print(f"backend: {state.get('backend', getattr(args, 'transport_backend', 'panda'))}")
+    print(f"mode:    {state['mode']}")
+    print(f"ready:   {'yes' if state['ready'] else 'no'}")
+    if state.get("library"):
+      print(f"library: {state['library']}")
+    if state.get("device_selector"):
+      print(f"device:  {state['device_selector']}")
+    if "pandad_running" in state:
+      print(f"pandad:  {'running' if state['pandad_running'] else 'stopped'}")
+    print(f"detail:  {state['detail']}")
   return 0 if state["ready"] else 1
+
+
+def cmd_transport_list(args, profile: Profile) -> int:
+  del profile
+  document = _live_transport().backend_inventory(j2534_library=getattr(args, "j2534_library", None))
+  if args.json:
+    print(json.dumps(document, sort_keys=True))
+    return 0
+  for backend in document["backends"]:
+    print(f"{backend['name']}: {backend['kind']}")
+    for provider in backend.get("providers", []):
+      mark = "✓" if provider.get("loadable") else "-"
+      print(f"  {mark} {provider['name']}  {provider['library']}  [{provider['source']}]")
+      if provider.get("error"):
+        print(f"    {provider['error']}")
+  return 0
 
 
 def cmd_can_topology(args, profile: Profile) -> int:
@@ -874,7 +926,7 @@ def cmd_can_sniff(args, profile: Profile) -> int:
   if any(not 0 <= address <= 0x1FFFFFFF for address in addresses):
     raise SystemExit("CAN address must fit 29 bits")
 
-  receiver = _live_transport().passive_receiver()
+  receiver = _passive_receiver(args, profile)
   started = time.monotonic()
   seen = 0
   try:
@@ -1410,7 +1462,7 @@ def cmd_observe(args, profile: Profile) -> int:
 
 def cmd_scan(args, profile: Profile) -> int:
   transport = _live_transport()
-  state = transport.status(profile)
+  state = transport.status(profile, **_transport_options(args))
   panda = _connect_live(args, profile, transport)
   client_factory = transport.uds_client_factory(panda, profile)
   document = snapshot.build(profile, client_factory, state, show_all_dtcs=args.all_dtcs)
@@ -1731,7 +1783,7 @@ def cmd_functional_obd(args, profile: Profile) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-  parser = argparse.ArgumentParser(prog="toyota", description="Toyota/GTS-derived diagnostics using Panda transport")
+  parser = argparse.ArgumentParser(prog="toyota", description="Toyota/GTS-derived diagnostics with pluggable vehicle transports")
   parser.add_argument(
     "--registry", "--profile", dest="registry", default=str(registry.DEFAULT_REGISTRY), metavar="BUNDLE_OR_FILE",
     help="Toyota derived diagnostics bundle/legacy registry (default: bundled universal current-GTS Toyota database)",
@@ -1742,9 +1794,14 @@ def build_parser() -> argparse.ArgumentParser:
     help="Toyota DB vehicle type or OEM name; live vehicle-scoped commands auto-resolve from VIN when omitted",
   )
   parser.add_argument("--bus", dest="panda_bus", type=int, default=DEFAULT_LOCAL_PANDA_BUS,
-                      help="installation-local Panda logical bus for diagnostics (default: 0; not Toyota DB metadata)")
+                      help="installation-local logical diagnostic bus tag (Panda bus for Panda; default: 0; not Toyota DB metadata)")
+  parser.add_argument("--transport", dest="transport_backend", choices=("panda", "j2534"), default="panda",
+                      help="live vehicle transport backend (default: panda)")
   parser.add_argument("--obd-multiplexing", action="store_true",
                       help="direct-Panda only: remap logical bus 1 to OBD-II pins (default: preserve normal harness routing)")
+  parser.add_argument("--j2534-library", help="J2534 provider DLL/dylib/so; otherwise use environment/registry/system discovery")
+  parser.add_argument("--j2534-device", help="optional provider-specific PassThruOpen device selector (OpenMVCI accepts vid:pid[:serial] or serial:/dev/...)")
+  parser.add_argument("--j2534-baud", type=int, default=500_000, help="raw CAN bitrate for the J2534 backend (default: 500000)")
   commands = parser.add_subparsers(dest="command", required=True)
 
   p = commands.add_parser("search", help="search ECUs, Data List/FFD items, DTCs, functions, and Active Tests")
@@ -1804,6 +1861,9 @@ def build_parser() -> argparse.ArgumentParser:
   p = transport_sub.add_parser("status")
   p.add_argument("--json", action="store_true")
   p.set_defaults(func=cmd_transport_status)
+  p = transport_sub.add_parser("list", help="list transport backends and discoverable J2534 providers")
+  p.add_argument("--json", action="store_true")
+  p.set_defaults(func=cmd_transport_list)
 
   can_parser = commands.add_parser("can")
   can_sub = can_parser.add_subparsers(required=True)
@@ -2043,7 +2103,7 @@ def _normalize_argv(argv: list[str]) -> list[str]:
   # options may precede the command, so normalize only the command tail.
   prefix: list[str] = []
   index = 0
-  value_options = {"--registry", "--profile", "--region", "--vehicle", "--bus"}
+  value_options = {"--registry", "--profile", "--region", "--vehicle", "--bus", "--transport", "--j2534-library", "--j2534-device", "--j2534-baud"}
   flag_options = {"--obd-multiplexing"}
   while index < len(argv):
     if argv[index] in value_options and index + 1 < len(argv):

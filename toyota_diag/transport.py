@@ -21,6 +21,7 @@ from opendbc.car.uds import IsoTpMessage, UdsClient
 from toyota_diag import registry
 from toyota_diag.registry import Profile
 
+BACKENDS = ("panda", "j2534")
 MANAGED_READY_TIMEOUT = 1.0
 SENDCAN_WARMUP = 0.15
 QUERY_RECV_WAIT = 0.1
@@ -125,13 +126,32 @@ class ManagedPandaAdapter(ManagedCanReceiver):
     self.messaging.drain_sock(self.can_sock, wait_for_one=False)
 
 
-def status(profile: Profile, *, messaging_module=None, obd_multiplexing: bool = False) -> dict[str, Any]:
-  """Describe the transport a live command could use without transmitting anything."""
+def _require_backend(backend: str) -> str:
+  if backend not in BACKENDS:
+    raise SystemExit(f"unknown transport backend {backend!r}; choose one of {', '.join(BACKENDS)}")
+  return backend
+
+
+def status(profile: Profile, *, backend: str = "panda", messaging_module=None, obd_multiplexing: bool = False,
+           j2534_library: str | None = None, j2534_device: str | None = None, j2534_baud: int = 500_000) -> dict[str, Any]:
+  """Describe the selected live transport without transmitting or opening vehicle hardware."""
+  backend = _require_backend(backend)
+  if backend == "j2534":
+    if obd_multiplexing:
+      return {
+        "backend": "j2534", "mode": "blocked", "ready": False, "hardware_probed": False,
+        "detail": "--obd-multiplexing is a Panda-only harness option and cannot be used with J2534",
+      }
+    from toyota_diag import j2534
+    return j2534.status(library_path=j2534_library, device_selector=j2534_device, baud=j2534_baud)
+
   if not pandad_running():
     return {
+      "backend": "panda",
       "pandad_running": False,
       "mode": "direct-panda",
       "ready": True,
+      "hardware_probed": False,
       "detail": ("pandad stopped; next live command will claim Panda directly "
                  + f"with {'OBD-port' if obd_multiplexing else 'normal-harness'} bus-1 routing (hardware not probed)"),
     }
@@ -141,22 +161,52 @@ def status(profile: Profile, *, messaging_module=None, obd_multiplexing: bool = 
   _, states = _wait_panda_states(messaging_module)
   ready = managed_diagnostic_ready(states, profile)
   return {
+    "backend": "panda",
     "pandad_running": True,
     "mode": "managed-sendcan" if ready else "blocked",
     "ready": ready,
+    "hardware_probed": True,
     "detail": "pandad already owns Panda in ELM327 diagnostic safety" if ready else _managed_refusal(states, profile),
   }
 
 
-def passive_receiver():
-  """Return a receive-only CAN source without changing Panda safety."""
+def backend_inventory(*, j2534_library: str | None = None) -> dict[str, Any]:
+  """List transport backends and discoverable J2534 providers without opening hardware."""
+  from toyota_diag import j2534
+  return {
+    "backends": [
+      {"name": "panda", "kind": "CAN", "available": True},
+      {"name": "j2534", "kind": "J2534 v04.04 raw CAN", "providers": j2534.provider_documents(j2534_library)},
+    ]
+  }
+
+
+def passive_receiver(*, backend: str = "panda", profile: Profile | None = None, logical_bus: int | None = None,
+                     j2534_library: str | None = None, j2534_device: str | None = None,
+                     j2534_baud: int = 500_000):
+  """Return a receive-only CAN source for the selected backend."""
+  backend = _require_backend(backend)
+  if backend == "j2534":
+    from toyota_diag import j2534
+    bus = logical_bus if logical_bus is not None else (0 if profile is None else registry.require_panda_bus(profile))
+    return j2534.CanAdapter(library_path=j2534_library, device_selector=j2534_device, baud=j2534_baud, bus=bus)
   if pandad_running():
     return ManagedCanReceiver()
   from panda import Panda  # lazy: offline commands must not import Panda
   return Panda()
 
 
-def connect(profile: Profile, *, obd_multiplexing: bool = False):
+def connect(profile: Profile, *, backend: str = "panda", obd_multiplexing: bool = False,
+            j2534_library: str | None = None, j2534_device: str | None = None, j2534_baud: int = 500_000):
+  backend = _require_backend(backend)
+  if backend == "j2534":
+    if obd_multiplexing:
+      raise SystemExit("--obd-multiplexing is a Panda-only harness option and cannot be used with J2534")
+    from toyota_diag import j2534
+    return j2534.CanAdapter(
+      library_path=j2534_library, device_selector=j2534_device, baud=j2534_baud,
+      bus=registry.require_panda_bus(profile),
+    )
   if pandad_running():
     return ManagedPandaAdapter(profile)
 
@@ -200,7 +250,7 @@ def uds_client_factory(panda, profile: Profile, timeouts: registry.CommTimeouts 
         kinds = ", ".join(sorted({ecu.transport_kind or "unclassified" for ecu in matches}))
         raise registry.RegistryError(
           f"Toyota route {address:#x}{f'/{sub_addr:#x}' if sub_addr is not None else ''} uses {kinds}; "
-          + "the current Panda UDS transport does not implement that controller")
+          + "the current raw-CAN UDS transport does not implement that controller")
     kwargs = {
       "bus": bus,
       "sub_addr": sub_addr,

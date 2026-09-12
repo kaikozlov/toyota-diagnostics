@@ -46,11 +46,21 @@ toyota ffd robs "Hands Free"
 
 `search` spans ECU/category names, Data List signals, DTCs, Active Tests, v4 function/plugin bindings, recovered generic utility-family metadata, and the separate PCS Data Viewer TSS3 Operation-FFD signal/trigger namespace. This matters because recorder-only Toyota names such as `Arbitration result_lateral ID` (`0x5285`) and `Arbitration result Pinion angle` (`0x57DE`) do not exist in the ordinary P5 Data Monitor DDB. `ecu ... functions` shows the recovered type-26/27 function/detail hierarchy even where Toyota's function names remain unrecovered; `ecu ... plugins` shows the role → DLL binding and only labels semantic kinds recovered for the exact plugin identity. Offline catalog browsing (`ecu list/info/functions/plugins/data/dtcs/active-tests`, `did list`, and `dtc catalog/decode`) accepts `--json`, matching the machine-readable live/planning surfaces without importing Panda. ECU lookup errors include close-match suggestions. The original verb-first `ecu info`, `did list`, `dtc catalog`, etc. remain supported.
 
-Live commands have two transport modes. If `pandad` is stopped, the CLI takes direct Panda ownership using Panda's ordinary ELM327 diagnostic safety mode. Direct mode preserves the normal harness routing by default (`ELM327` param 1); `--obd-multiplexing` is an explicit installation-local request to remap logical bus 1 onto the OBD-II pins (`ELM327` param 0). That remap is never inferred from Toyota vehicle/category metadata. If `pandad` is already running, the CLI reuses openpilot's `can`/`sendcan` ISO-TP path when the single live Panda is already in ELM327 safety; the ELM327 safety parameter and `controlsAllowed` state are not additional CLI admission criteria, and `--obd-multiplexing` cannot change a Panda already owned by pandad. It never changes a running Panda's safety mode. If manager has transitioned Panda to an onroad safety model, the managed diagnostic path stops transmitting and directs you to use direct Panda access instead. `toyota transport status` checks this transport state without transmitting anything.
+Live commands use a selectable transport backend. `--transport panda` remains the default: if `pandad` is stopped, the CLI takes direct Panda ownership using Panda's ordinary ELM327 diagnostic safety mode; if `pandad` is already running, it reuses openpilot's `can`/`sendcan` path only when the Panda is already in ELM327 safety. Direct Panda mode preserves normal-harness routing by default (`ELM327` param 1); `--obd-multiplexing` explicitly remaps logical bus 1 onto the OBD-II pins (`ELM327` param 0).
+
+`--transport j2534` uses a standard J2534 v04.04 provider as a raw classic-CAN link and reuses the same opendbc ISO-TP/UDS implementation as Panda. The backend supports ordinary 11-bit CAN diagnostics, 29-bit normal-fixed routes, and Toyota ISO-TP address-extension routes without changing the Toyota operation layer. PassThru providers are discovered from the Windows `PassThruSupport.04.04` registry, `TOYOTA_J2534_LIBRARY`, or an installed OpenMVCI library; `--j2534-library` selects one explicitly and `--j2534-device` passes a provider-specific selector to `PassThruOpen`. A vendor `MVCI32.dll` must match the Python process architecture. Native J2534 ISO15765, CAN-FD, K-Line, and DoIP transports are future backends; unsupported Toyota transport-controller families continue to fail closed instead of being coerced to CAN.
+
+`toyota transport status` is non-transmitting: it verifies transport/provider availability but does not open the vehicle hardware. `toyota transport list` shows known backends and J2534 providers.
 
 ```bash
+toyota transport list
 toyota transport status
-toyota --bus 1 --obd-multiplexing transport status  # explicit direct-mode OBD bus-1 remap
+toyota --bus 1 --obd-multiplexing transport status  # explicit direct-Panda OBD bus-1 remap
+
+toyota --transport j2534 --j2534-library /path/to/MVCI32.dll transport status
+toyota --transport j2534 --j2534-library /path/to/libopenmvci.dylib --j2534-device 0403:6001 vehicle detect
+toyota --transport j2534 --j2534-library /path/to/libopenmvci.dylib dtc scan
+toyota --transport j2534 --j2534-library /path/to/libopenmvci.dylib did read frc 0x1601
 toyota can sniff 0xB6 --duration 10
 toyota can sniff 0x30 0x412 --duration 0 --json > can.jsonl
 toyota dtc scan

@@ -25,13 +25,34 @@ class TestOfflineCli(unittest.TestCase):
       rc, output = run_cli(["transport", "status", "--json"])
     self.assertEqual(rc, 0)
     self.assertEqual(__import__("json").loads(output), state)
-    status.assert_called_once_with(mock.ANY, obd_multiplexing=False)
+    status.assert_called_once_with(
+      mock.ANY, backend="panda", obd_multiplexing=False,
+      j2534_library=None, j2534_device=None, j2534_baud=500_000,
+    )
 
     with mock.patch("toyota_diag.transport.status", return_value=state) as status:
       rc, output = run_cli(["--obd-multiplexing", "transport", "status", "--json"])
     self.assertEqual(rc, 0)
     self.assertEqual(__import__("json").loads(output), state)
-    status.assert_called_once_with(mock.ANY, obd_multiplexing=True)
+    status.assert_called_once_with(
+      mock.ANY, backend="panda", obd_multiplexing=True,
+      j2534_library=None, j2534_device=None, j2534_baud=500_000,
+    )
+
+  def test_j2534_transport_options_reach_transport_facade(self):
+    state = {"backend": "j2534", "mode": "j2534-raw-can", "ready": True, "detail": "ready"}
+    with mock.patch("toyota_diag.transport.status", return_value=state) as status:
+      rc, output = run_cli([
+        "--transport", "j2534", "--j2534-library", "/tmp/provider.dylib",
+        "--j2534-device", "0403:6001", "--j2534-baud", "250000",
+        "transport", "status", "--json",
+      ])
+    self.assertEqual(rc, 0)
+    self.assertEqual(__import__("json").loads(output), state)
+    status.assert_called_once_with(
+      mock.ANY, backend="j2534", obd_multiplexing=False,
+      j2534_library="/tmp/provider.dylib", j2534_device="0403:6001", j2534_baud=250_000,
+    )
 
   def test_tss3_ffd_catalog_and_search_are_first_class(self):
     import json
