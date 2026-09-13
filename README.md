@@ -167,9 +167,14 @@ toyota active-test stop frc 0xA429 --execute
 toyota customize groups Wireless --body-type 0
 toyota customize items 1 --body-type 0
 toyota customize info 1 23 --body-type 0
+toyota --vehicle 12704 customize read 1 200
+toyota --vehicle 12704 customize set 1 200 ON             # dry-run
+toyota --vehicle 12704 customize set 1 200 ON --execute   # read/merge/2E/re-read verify
 ```
 
-`customize groups/items/info` browses Toyota's regional master-level Customize catalog without touching the vehicle. The catalog preserves body-type-specific group IDs, OEM item/choice names, target ECU/category IDs, current-value DID/bit geometry, and the structural fields consumed by `GetCustomItemList` / `SetCustom`. This is intentionally not flattened into ordinary ECU Data List metadata: current GTS+ stores Customize in master tables 20/21/22/34 and points each item at its live target ECU. Live body-type selection, current-value acquisition, and write/default execution are separate stages and are not guessed from the static catalog.
+`customize groups/items/info` browses Toyota's regional master-level Customize catalog without touching the vehicle. The catalog preserves body-type-specific group IDs, OEM item/choice names, target ECU/category IDs, current/write DID and MSB0 field geometry, and the structural fields consumed by `GetCustomItemList` / `SetCustom`. This is intentionally not flattened into ordinary ECU Data List metadata: current GTS+ stores Customize in master tables 20/21/22/34 and points each item at its live target ECU.
+
+For installed **standard P5/P6** targets, `customize read` and `customize set` now reproduce the current GTS transaction directly. The selected item must resolve to a mounted category on the chosen Toyota vehicle and its exported phase must match that mounted route. The runtime validates Toyota's P5/P6 DID support inventory, reads `22 <write_did>`, extracts the current OEM field, and on explicit `--execute` merges the selected OEM value into the current bytes, sends `2E <write_did> <merged>`, then re-reads and requires the exact merged bytes/value. Merge mode 1 also enforces Toyota's preceding-byte support bit before mutation. Duplicate P6/P6F item rows are resolved from the selected vehicle's mounted categories rather than by arbitrary catalog order. `customize set` is dry-run without `--execute`. Automatic body-type selection is still separate because current GTS performs that stage through legacy P3/P4 communication targets; those are not projected onto the UDS transport. `SetCustomizeAllDefault` also remains separate because the current master does not encode a per-item default in the field that path checks.
 
 `utility list/plan` exposes the ten recovered generic category-0 Techstream utility/plugin families and their generic `0x31`/`0x2F` templates. Registry v4 deliberately does **not** convert those family bindings into concrete per-ECU utility operations, so `utility run` fails closed today. The backend is already generic and will execute future concrete utility rows only when the registry supplies an exact target plan.
 

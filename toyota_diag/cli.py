@@ -7,7 +7,7 @@ import json
 import sys
 from typing import Any
 
-from toyota_diag import active_test, decode, discovery, dtc, executor, monitor, recorder, registry, resolver, snapshot, utility
+from toyota_diag import active_test, customize, decode, discovery, dtc, executor, monitor, recorder, registry, resolver, snapshot, utility
 from toyota_diag.registry import Profile
 from toyota_diag.session import DiagnosticSession, LifecycleError
 
@@ -36,6 +36,7 @@ LIVE_VEHICLE_CONTEXT_FUNCS = frozenset({
   "cmd_ffd_operation_list", "cmd_ffd_operation_records", "cmd_ffd_operation_read",
   "cmd_ffd_image_info", "cmd_ffd_image_list", "cmd_ffd_image_read",
   "cmd_uds_raw", "cmd_functional_obd", "cmd_active_test_run", "cmd_active_test_stop", "cmd_utility_run",
+  "cmd_customize_read", "cmd_customize_set",
 })
 
 
@@ -294,10 +295,103 @@ def cmd_customize_info(args, profile: Profile) -> int:
     f"group: {group_id} ({', '.join(sorted({str(group.get('name') or '') for group in group_rows}))})",
     f"item id: {row['item_id']}",
     f"target: {row['target_category_id']} {row.get('target_category_name') or ''} generation={row.get('target_generation')}",
-    f"data id: 0x{int(row['data_id']):04X}; current bits {row['current_bit_start']}..{row['current_bit_end']}",
+    f"current/write DID: 0x{int(row.get('write_did') or row.get('legacy_data_id') or 0):04X}; "
+    f"current bits {row['current_bit_start']}..{row['current_bit_end']}",
     f"choices: {choices}",
     f"read current: {bool(row.get('read_current'))}; support mode={row.get('support_mode')} selector=0x{int(row.get('support_selector') or 0):02X}",
   ])
+  return _json_or_text(args, document, text)
+
+
+def _customize_live_lookup(args, profile: Profile) -> tuple[dict[str, Any], customize.CustomizeTarget]:
+  try:
+    item = customize.lookup_item(profile, args.group, args.item, body_type=args.body_type)
+    target = customize.resolve_target(profile, item)
+  except customize.CustomizeError as e:
+    raise SystemExit(f"Customize refused before transport: {e}") from e
+  return item, target
+
+
+def cmd_customize_read(args, profile: Profile) -> int:
+  item, target = _customize_live_lookup(args, profile)
+  live = _live_transport()
+  panda = _connect_live(args, profile, live)
+  session = DiagnosticSession(profile, target.ecu, panda=panda, operation_row={"session_requirement": "extended"})
+  try:
+    with session:
+      session.enter_extended()
+      current = customize.read_current(profile, target, session.client())
+  except (customize.CustomizeError, resolver.ResolverError, LifecycleError, registry.RegistryError) as e:
+    cleanup = f"; cleanup: {'; '.join(session.cleanup_errors)}" if session.cleanup_errors else ""
+    raise SystemExit(f"Customize read failed: {e}{cleanup}") from e
+  finally:
+    close = getattr(panda, "close", None)
+    if callable(close):
+      close()
+  if session.cleanup_errors:
+    raise SystemExit("Customize read cleanup failed: " + "; ".join(session.cleanup_errors))
+  document = {
+    "item": item,
+    "target": {"ecu": target.ecu.key, "name": target.ecu.name, "category_id": target.ecu.category_id,
+               "endpoint": target.ecu.address, "sub_addr": target.ecu.sub_addr,
+               "phase_type": target.phase_type, "write_did": target.write_did, "family": target.family},
+    "current": {"payload_hex": current["payload"].hex(), "value": current["value"], "choice": current["choice"]},
+  }
+  text = (
+    f"{item.get('name') or ''}: {current['choice'] or current['value']} "
+    f"(raw={current['value']}, DID 0x{target.write_did:04X}, payload={current['payload'].hex()})"
+  )
+  return _json_or_text(args, document, text)
+
+
+def cmd_customize_set(args, profile: Profile) -> int:
+  item, target = _customize_live_lookup(args, profile)
+  try:
+    requested, requested_name = customize.resolve_choice(item, args.value)
+  except customize.CustomizeError as e:
+    raise SystemExit(f"Customize refused before transport: {e}") from e
+  if not args.execute:
+    choices = ", ".join(f"{row.get('name')}={row.get('value')}" for row in item.get("choices", []))
+    print("CUSTOMIZE DRY RUN - no request is sent.")
+    print(f"item: {item.get('name') or ''} (group {item['group_id']} item {item['item_id']})")
+    print(f"target: {target.ecu.key} ({target.ecu.name}) category {target.ecu.category_id}, DID 0x{target.write_did:04X}")
+    print(f"requested: {requested_name or requested} ({requested})")
+    print(f"choices: {choices or '(none)'}")
+    print("pass --execute to read current data, merge Toyota's field, write 0x2E, and re-read/verify")
+    return 0
+
+  live = _live_transport()
+  panda = _connect_live(args, profile, live)
+  session = DiagnosticSession(profile, target.ecu, panda=panda, operation_row={"session_requirement": "extended"})
+  try:
+    with session:
+      session.enter_extended()
+      result = customize.set_value(profile, target, session.client(), requested)
+  except (customize.CustomizeError, resolver.ResolverError, LifecycleError, registry.RegistryError) as e:
+    cleanup = f"; cleanup: {'; '.join(session.cleanup_errors)}" if session.cleanup_errors else ""
+    raise SystemExit(f"Customize set failed: {e}{cleanup}") from e
+  finally:
+    close = getattr(panda, "close", None)
+    if callable(close):
+      close()
+  if session.cleanup_errors:
+    raise SystemExit("Customize set cleanup failed: " + "; ".join(session.cleanup_errors))
+  document = {
+    "item": item,
+    "requested": {"value": requested, "choice": requested_name},
+    "target": {"ecu": target.ecu.key, "name": target.ecu.name, "category_id": target.ecu.category_id,
+               "phase_type": target.phase_type, "write_did": target.write_did, "family": target.family},
+    "changed": result["changed"],
+    "before": {"payload_hex": result["before"]["payload"].hex(), "value": result["before"]["value"],
+               "choice": result["before"]["choice"]},
+    "after": {"payload_hex": result["after"]["payload"].hex(), "value": result["after"]["value"],
+              "choice": result["after"]["choice"]},
+  }
+  text = (
+    f"{item.get('name') or ''}: {document['before']['choice'] or document['before']['value']} -> "
+    f"{document['after']['choice'] or document['after']['value']} "
+    f"({'changed' if result['changed'] else 'already set'})"
+  )
   return _json_or_text(args, document, text)
 
 
@@ -2452,6 +2546,20 @@ def build_parser() -> argparse.ArgumentParser:
   p.add_argument("--body-type", type=lambda value: int(value, 0))
   p.add_argument("--json", action="store_true")
   p.set_defaults(func=cmd_customize_info)
+  p = customize_sub.add_parser("read", help="read one installed current-P5/P6 Customize item")
+  p.add_argument("group")
+  p.add_argument("item")
+  p.add_argument("--body-type", type=lambda value: int(value, 0))
+  p.add_argument("--json", action="store_true")
+  p.set_defaults(func=cmd_customize_read)
+  p = customize_sub.add_parser("set", help="set one installed current-P5/P6 Customize item with read/merge/write/verify")
+  p.add_argument("group")
+  p.add_argument("item")
+  p.add_argument("value", help="OEM choice name or numeric raw value")
+  p.add_argument("--body-type", type=lambda value: int(value, 0))
+  p.add_argument("--execute", action="store_true", help="acknowledge Customize mutation; omitted means dry-run only")
+  p.add_argument("--json", action="store_true")
+  p.set_defaults(func=cmd_customize_set)
 
   at = commands.add_parser("active-test", help="browse, plan, run, or stop recovered Active Tests")
   at_sub = at.add_subparsers(required=True)

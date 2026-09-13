@@ -112,7 +112,7 @@ class TestOfflineCli(unittest.TestCase):
                          use_default_registry=True)
     self.assertEqual(rc, 0, output)
     item = json.loads(output)["item"]
-    self.assertEqual((item["name"], item["target_category_name"], item["data_id"]),
+    self.assertEqual((item["name"], item["target_category_name"], item["legacy_data_id"]),
                      ("Open Door Warn", "Theft Deterrent", 0x03F1))
     self.assertEqual([(row["name"], row["value"]) for row in item["choices"]], [("OFF", 0), ("ON", 1)])
 
@@ -245,6 +245,86 @@ class TestLiveCli(unittest.TestCase):
   @staticmethod
   def mode04_panda():
     return support.FakePanda(recv_batches=[[(addr, b"\x01\x44\x00\x00\x00\x00\x00\x00", 0) for addr in support.LEGISLATED_RESPONDERS]])
+
+  @staticmethod
+  def p5_support_script(scripted, endpoint, did, current):
+    root = bytearray(32)
+    group = did & 0xFF00
+    root[(group >> 8) // 8] |= 0x80 >> ((group >> 8) % 8)
+    members = bytearray(32)
+    low_index = (did & 0xFF) - 1
+    members[low_index // 8] |= 0x80 >> (low_index % 8)
+    scripted.did[endpoint] = {0x0101: bytes(root), group: bytes(members), did: bytes(current)}
+
+  @staticmethod
+  def p6_support_script(scripted, endpoint, did, current):
+    root = bytearray(32)
+    selector_index = did >> 8
+    root[selector_index // 8] |= 0x80 >> (selector_index % 8)
+    selector = 0xA100 + selector_index
+    members = bytearray(32)
+    low = did & 0xFF
+    members[low // 8] |= 0x80 >> (low % 8)
+    scripted.did[endpoint] = {0xA100: bytes(root), selector: bytes(members), did: bytes(current)}
+
+  def test_customize_p5_read_and_set_use_support_read_merge_write_verify(self):
+    import json
+    endpoint = (0x750, 0x40)
+    scripted = support.ScriptedUds()
+    self.p5_support_script(scripted, endpoint, 0x225A, b"\x00")
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli(["--vehicle", "12704", "customize", "read", "1", "200", "--json"],
+                           use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual((document["item"]["name"], document["current"]["choice"], document["current"]["value"]),
+                     ("Wireless Control Function", "OFF", 0))
+    self.assertEqual(scripted.calls, [
+      (endpoint, "read_did", 0xF186), (endpoint, "session", 1), (endpoint, "session", 3),
+      (endpoint, "read_did", 0x0101), (endpoint, "read_did", 0x2200),
+      (endpoint, "read_did", 0x225A), (endpoint, "session", 1),
+    ])
+
+    scripted = support.ScriptedUds()
+    self.p5_support_script(scripted, endpoint, 0x225A, b"\x00")
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12704", "customize", "set", "1", "200", "ON", "--execute", "--json",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertTrue(document["changed"])
+    self.assertEqual((document["before"]["choice"], document["after"]["choice"]), ("OFF", "ON"))
+    self.assertIn((endpoint, "write_did", 0x225A, b"\x01"), scripted.calls)
+    self.assertEqual(scripted.calls[-2:], [(endpoint, "read_did", 0x225A), (endpoint, "session", 1)])
+
+  def test_customize_p6_set_uses_a1_support_and_selected_vehicle_duplicate_resolution(self):
+    import json
+    endpoint = 0x18DA71F1
+    scripted = support.ScriptedUds()
+    self.p6_support_script(scripted, endpoint, 0x225A, b"\x00")
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12165", "customize", "set", "1", "210", "w/o stop lump", "--execute", "--json",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    document = json.loads(output)
+    self.assertEqual(document["item"]["target_category_id"], 6033)
+    self.assertEqual(document["after"]["choice"], "w/o stop lump")
+    self.assertIn((endpoint, "read_did", 0xA100), scripted.calls)
+    self.assertIn((endpoint, "read_did", 0xA122), scripted.calls)
+    self.assertIn((endpoint, "write_did", 0x225A, b"\x01"), scripted.calls)
+
+  def test_customize_set_dry_run_never_connects(self):
+    with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+      rc, output = run_cli([
+        "--vehicle", "12704", "customize", "set", "1", "200", "ON",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertIn("CUSTOMIZE DRY RUN", output)
 
   def test_operation_ffd_live_commands_use_exact_read_only_ab_family(self):
     import json

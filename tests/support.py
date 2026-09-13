@@ -66,6 +66,14 @@ class _ScriptedClient:
     self.owner.calls.append((self.endpoint, "read_did", did))
     return self.owner.result(self.owner.did.get(self.endpoint, {}).get(did), MessageTimeoutError())
 
+  def write_data_by_identifier(self, did, data_record):
+    payload = bytes(data_record)
+    self.owner.calls.append((self.endpoint, "write_did", int(did), payload))
+    scripted = self.owner.write_did.get((self.endpoint, int(did)))
+    result = self.owner.result(scripted, b"")
+    self.owner.did.setdefault(self.endpoint, {})[int(did)] = payload
+    return result
+
   def diagnostic_session_control(self, session_type):
     self.owner.calls.append((self.endpoint, "session", int(session_type)))
     return self.owner.result(self.owner.session.get((self.endpoint, int(session_type))), None)
@@ -96,6 +104,7 @@ class ScriptedUds:
     self.dtc_report = {}
     self.clear = {}
     self.did = {}
+    self.write_did = {}
     self.session = {}
     self.tester = {}
     self.io_control = {}

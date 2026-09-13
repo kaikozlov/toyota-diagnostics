@@ -103,7 +103,7 @@ class TestUniversalToyotaDatabase(unittest.TestCase):
     group = next(row for row in catalog["groups"] if row["body_type"] == 0 and row["group_id"] == 1)
     self.assertEqual(group["name"], "Wireless Door Lock")
     item = next(row for row in catalog["items"] if row["group_id"] == 1 and row["item_id"] == 23)
-    self.assertEqual((item["name"], item["target_category_id"], item["data_id"]),
+    self.assertEqual((item["name"], item["target_category_id"], item["legacy_data_id"]),
                      ("Open Door Warn", 26, 0x03F1))
     self.assertEqual([(row["name"], row["value"]) for row in item["choices"]], [("OFF", 0), ("ON", 1)])
     self.assertEqual(item["all_default_gate_u16_22"], 0)

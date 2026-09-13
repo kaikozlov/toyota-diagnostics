@@ -118,17 +118,16 @@ The biggest unlocks are:
 
 ### 7. Customize
 
-GTS+ customization writes are effectively absent from the standalone runtime today.
+**Static catalog browsing and modern single-item execution are landed.** The universal bundle carries each region's current master-level `CustSignList` / `CustItem` / `PossibleToSet` / body-type-probe data as a lazy `customize/<region>/0.json` member. The CLI exposes `customize groups`, `customize items`, and `customize info`, preserving body type, OEM names/values, live target category, and current/write geometry without projecting Customize into ordinary ECU Data List tables.
 
-Current GTS+ has direct customization command families such as `SetCustom.dll` and `SetCustomizeAllDefault_DT.dll`; the CLI currently exposes similarly named values only when they appear as ordinary Data List signals.
+For installed standard P5/P6 targets, `customize read` and `customize set` reproduce current GTS `SetCustom`: P5/P6 DID support admission, selector-`0xCA` `22 <write_did>` current-data acquisition, exact MSB0 clear-and-OR field merge (including mode-1 preceding-byte support), selector-`0x74` `2E <write_did> || merged bytes`, and post-write re-read verification. All 1,933 current-generation NA rows fit the recovered merge modes 0/1; all 287 mode-1 rows are one-bit fields.
 
-Needed:
+Remaining Customize gaps are narrower:
 
-- recover customize-item catalogs and presentation values;
-- read current settings;
-- write one selected setting with exact Toyota request geometry;
-- restore-default/all-default flows;
-- preserve explicit mutation acknowledgement and post-write verification.
+- automatic body-type/group selection, because current GTS probes legacy P3/P4 body targets and this runtime does not yet implement that transport family;
+- P3/P4 item read/write execution;
+- `SetCustomizeAllDefault` / restore-default flows. The apparent current `CustItem +0x22` gate is zero in every NA/EU/JP row, so no default is inferred heuristically;
+- broader partner-family P5 support modes beyond the standard Toyota P5/P6 executors.
 
 ### 8. Utilities / registration / learning / calibration
 
