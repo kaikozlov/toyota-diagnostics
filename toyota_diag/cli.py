@@ -186,6 +186,121 @@ def cmd_search(args, profile: Profile) -> int:
   return 0 if rows else 1
 
 
+def _customize_catalog(profile: Profile) -> dict[str, Any]:
+  if profile.database is None:
+    raise SystemExit("Customize catalog requires the universal Toyota diagnostic bundle")
+  try:
+    return profile.database.customize_catalog(profile.region)
+  except registry.RegistryError as e:
+    raise SystemExit(str(e)) from e
+
+
+def _customize_group_ids(catalog: dict[str, Any], ref: str, body_type: int | None) -> tuple[list[dict[str, Any]], set[int]]:
+  rows = [row for row in catalog.get("groups", []) if isinstance(row, dict)]
+  if body_type is not None:
+    rows = [row for row in rows if int(row.get("body_type", -1)) == body_type]
+  try:
+    numeric = int(str(ref), 0)
+  except ValueError:
+    numeric = None
+  if numeric is not None:
+    matches = [row for row in rows if int(row.get("group_id", -1)) == numeric]
+  else:
+    needle = str(ref).casefold()
+    exact = [row for row in rows if str(row.get("name") or "").casefold() == needle]
+    matches = exact or [row for row in rows if needle in str(row.get("name") or "").casefold()]
+  ids = {int(row["group_id"]) for row in matches}
+  if not matches:
+    raise SystemExit(f"no Customize group matches {ref!r}")
+  if len(ids) != 1:
+    summary = ", ".join(f"{row['group_id']} {row.get('name') or ''} body={row.get('body_type')}" for row in matches[:12])
+    raise SystemExit(f"ambiguous Customize group {ref!r}: {summary}")
+  return matches, ids
+
+
+def cmd_customize_groups(args, profile: Profile) -> int:
+  catalog = _customize_catalog(profile)
+  rows = [dict(row) for row in catalog.get("groups", []) if isinstance(row, dict)]
+  if args.body_type is not None:
+    rows = [row for row in rows if int(row.get("body_type", -1)) == args.body_type]
+  if args.query:
+    needle = args.query.casefold()
+    rows = [row for row in rows if needle in str(row.get("name") or "").casefold()]
+  item_counts: dict[int, int] = {}
+  for item in catalog.get("items", []):
+    if isinstance(item, dict):
+      gid = int(item["group_id"])
+      item_counts[gid] = item_counts.get(gid, 0) + 1
+  for row in rows:
+    row["item_count"] = item_counts.get(int(row["group_id"]), 0)
+  document = {"region": profile.region, "groups": rows, "boundary": catalog.get("boundary")}
+  text = "\n".join(
+    f"body {int(row['body_type']):>2}  {int(row['group_id']):>3}  {str(row.get('name') or ''):<34} {int(row['item_count']):>4} item(s)"
+    for row in rows
+  ) or "no Customize groups matched"
+  return _json_or_text(args, document, text)
+
+
+def cmd_customize_items(args, profile: Profile) -> int:
+  catalog = _customize_catalog(profile)
+  group_rows, group_ids = _customize_group_ids(catalog, args.group, args.body_type)
+  group_id = next(iter(group_ids))
+  rows = [dict(row) for row in catalog.get("items", []) if isinstance(row, dict) and int(row.get("group_id", -1)) == group_id]
+  if args.query:
+    needle = args.query.casefold()
+    rows = [row for row in rows if needle in str(row.get("name") or "").casefold()]
+  document = {
+    "region": profile.region,
+    "group": group_rows,
+    "items": rows,
+    "boundary": catalog.get("boundary"),
+  }
+  lines = []
+  for row in rows:
+    choices = ", ".join(f"{choice.get('name')}={choice.get('value')}" for choice in row.get("choices", []))
+    lines.append(
+      f"{int(row['item_id']):>4}  {str(row.get('name') or ''):<42} "
+      f"target={row.get('target_category_id')} {row.get('target_category_name') or ''}  "
+      f"choices=[{choices}]"
+    )
+  return _json_or_text(args, document, "\n".join(lines) or "no Customize items matched")
+
+
+def cmd_customize_info(args, profile: Profile) -> int:
+  catalog = _customize_catalog(profile)
+  group_rows, group_ids = _customize_group_ids(catalog, args.group, args.body_type)
+  group_id = next(iter(group_ids))
+  rows = [dict(row) for row in catalog.get("items", []) if isinstance(row, dict) and int(row.get("group_id", -1)) == group_id]
+  try:
+    numeric = int(str(args.item), 0)
+  except ValueError:
+    numeric = None
+  if numeric is not None:
+    matches = [row for row in rows if int(row.get("item_id", -1)) == numeric]
+  else:
+    needle = str(args.item).casefold()
+    exact = [row for row in rows if str(row.get("name") or "").casefold() == needle]
+    matches = exact or [row for row in rows if needle in str(row.get("name") or "").casefold()]
+  if len(matches) != 1:
+    if not matches:
+      raise SystemExit(f"no Customize item in group {group_id} matches {args.item!r}")
+    summary = ", ".join(f"{row['item_id']} {row.get('name') or ''}" for row in matches[:12])
+    raise SystemExit(f"ambiguous Customize item {args.item!r}: {summary}")
+  row = matches[0]
+  document = {"region": profile.region, "group": group_rows, "item": row, "boundary": catalog.get("boundary")}
+  choices = ", ".join(f"{choice.get('name')}={choice.get('value')}" for choice in row.get("choices", [])) or "(none)"
+  text = "\n".join([
+    f"Customize: {row.get('name') or ''}",
+    f"group: {group_id} ({', '.join(sorted({str(group.get('name') or '') for group in group_rows}))})",
+    f"item id: {row['item_id']}",
+    f"target: {row['target_category_id']} {row.get('target_category_name') or ''} generation={row.get('target_generation')}",
+    f"data id: 0x{int(row['data_id']):04X}; current bits {row['current_bit_start']}..{row['current_bit_end']}",
+    f"choices: {choices}",
+    f"read current: {bool(row.get('read_current'))}; support mode={row.get('support_mode')} selector=0x{int(row.get('support_selector') or 0):02X}",
+  ])
+  return _json_or_text(args, document, text)
+
+
 def cmd_vehicle_show(args, profile: Profile) -> int:
   vehicle_resolution = profile.vehicle_resolution
   resolver_summary = None
@@ -2318,6 +2433,26 @@ def build_parser() -> argparse.ArgumentParser:
   p.add_argument("--force", action="store_true")
   p.set_defaults(func=cmd_functional_obd)
 
+  customize = commands.add_parser("customize", help="browse Toyota OEM Customize groups/items from the current regional master")
+  customize_sub = customize.add_subparsers(required=True)
+  p = customize_sub.add_parser("groups", help="list OEM Customize groups")
+  p.add_argument("query", nargs="?")
+  p.add_argument("--body-type", type=lambda value: int(value, 0))
+  p.add_argument("--json", action="store_true")
+  p.set_defaults(func=cmd_customize_groups)
+  p = customize_sub.add_parser("items", help="list OEM items in one Customize group")
+  p.add_argument("group")
+  p.add_argument("query", nargs="?")
+  p.add_argument("--body-type", type=lambda value: int(value, 0))
+  p.add_argument("--json", action="store_true")
+  p.set_defaults(func=cmd_customize_items)
+  p = customize_sub.add_parser("info", help="show one OEM Customize item and its target/value geometry")
+  p.add_argument("group")
+  p.add_argument("item")
+  p.add_argument("--body-type", type=lambda value: int(value, 0))
+  p.add_argument("--json", action="store_true")
+  p.set_defaults(func=cmd_customize_info)
+
   at = commands.add_parser("active-test", help="browse, plan, run, or stop recovered Active Tests")
   at_sub = at.add_subparsers(required=True)
   p = at_sub.add_parser("list")
@@ -2423,7 +2558,7 @@ def _normalize_argv(argv: list[str]) -> list[str]:
   ecu_actions = {"list", "info", "functions", "plugins", "data", "dtcs", "active-tests"}
   top_level = {
     "search", "vehicle", "health-check", "scan", "monitor", "observe", "transport", "can", "ecu", "did", "dtc",
-    "uds", "ffd", "functional", "active-test", "utility", "rid",
+    "uds", "ffd", "functional", "active-test", "utility", "rid", "customize",
   }
   live_ecu_actions = {"monitor", "read", "watch"}
   if len(tail) >= 2 and tail[0] == "ecu":

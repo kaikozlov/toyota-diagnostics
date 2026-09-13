@@ -99,6 +99,23 @@ class TestOfflineCli(unittest.TestCase):
     self.assertIn("utility-family", output)
     self.assertIn("0xD4", output)
 
+  def test_customize_browse_is_offline_and_preserves_master_context(self):
+    import json
+    with mock.patch("toyota_diag.transport.connect", side_effect=AssertionError("must not connect")):
+      rc, output = run_cli(["customize", "groups", "Wireless", "--body-type", "0", "--json"],
+                           use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    groups = json.loads(output)["groups"]
+    self.assertTrue(any(row["group_id"] == 1 and row["name"] == "Wireless Door Lock" for row in groups))
+
+    rc, output = run_cli(["customize", "info", "1", "23", "--body-type", "0", "--json"],
+                         use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    item = json.loads(output)["item"]
+    self.assertEqual((item["name"], item["target_category_name"], item["data_id"]),
+                     ("Open Door Warn", "Theft Deterrent", 0x03F1))
+    self.assertEqual([(row["name"], row["value"]) for row in item["choices"]], [("OFF", 0), ("ON", 1)])
+
   def test_offline_catalog_browsing_json_is_consistent(self):
     import json
 

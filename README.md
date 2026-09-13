@@ -164,7 +164,12 @@ toyota --vehicle 12704 active-test group-plan engine 76
 toyota --vehicle 12704 active-test group-run engine 76 --execute \
   --member-choice '77=#2' --member-choice '78=0mm3/st' --hold 1
 toyota active-test stop frc 0xA429 --execute
+toyota customize groups Wireless --body-type 0
+toyota customize items 1 --body-type 0
+toyota customize info 1 23 --body-type 0
 ```
+
+`customize groups/items/info` browses Toyota's regional master-level Customize catalog without touching the vehicle. The catalog preserves body-type-specific group IDs, OEM item/choice names, target ECU/category IDs, current-value DID/bit geometry, and the structural fields consumed by `GetCustomItemList` / `SetCustom`. This is intentionally not flattened into ordinary ECU Data List metadata: current GTS+ stores Customize in master tables 20/21/22/34 and points each item at its live target ECU. Live body-type selection, current-value acquisition, and write/default execution are separate stages and are not guessed from the static catalog.
 
 `utility list/plan` exposes the ten recovered generic category-0 Techstream utility/plugin families and their generic `0x31`/`0x2F` templates. Registry v4 deliberately does **not** convert those family bindings into concrete per-ECU utility operations, so `utility run` fails closed today. The backend is already generic and will execute future concrete utility rows only when the registry supplies an exact target plan.
 

@@ -571,6 +571,21 @@ class ToyotaDatabase:
       raise RegistryError(f"unknown Toyota GTS region {key!r}; available: {', '.join(sorted(self.index['regions']))}")
     return row
 
+  def customize_catalog(self, region: str | None = None) -> dict[str, Any]:
+    key = (region or self.default_region).upper()
+    row = self.region_index(key)
+    member = row.get("customize_member")
+    if not member:
+      raise RegistryError(f"Toyota {key} index has no Customize catalog")
+    try:
+      with zipfile.ZipFile(self.path) as archive:
+        payload = json.loads(archive.read(str(member)))
+    except (FileNotFoundError, KeyError, zipfile.BadZipFile, json.JSONDecodeError) as e:
+      raise RegistryError(f"cannot load Toyota {key} Customize catalog from {self.path}: {e}") from e
+    if not isinstance(payload, dict) or payload.get("schema") != "toyota-customize-catalog-v1":
+      raise RegistryError(f"Toyota {key} Customize catalog has unsupported schema {payload.get('schema')!r}")
+    return payload
+
   def vehicle_rows(self, region: str | None = None) -> list[dict[str, Any]]:
     raw = self.region_index(region).get("vehicles")
     if not isinstance(raw, dict):

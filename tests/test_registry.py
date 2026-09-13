@@ -94,6 +94,20 @@ class TestUniversalToyotaDatabase(unittest.TestCase):
   def setUpClass(cls):
     cls.database = registry.ToyotaDatabase.load()
 
+  def test_customize_catalog_is_lazy_master_metadata(self):
+    catalog = self.database.customize_catalog("NA")
+    self.assertEqual(catalog["schema"], "toyota-customize-catalog-v1")
+    self.assertEqual(catalog["counts"], {
+      "group_rows": 79, "item_rows": 3431, "choice_rows": 2444, "body_type_probe_rows": 4,
+    })
+    group = next(row for row in catalog["groups"] if row["body_type"] == 0 and row["group_id"] == 1)
+    self.assertEqual(group["name"], "Wireless Door Lock")
+    item = next(row for row in catalog["items"] if row["group_id"] == 1 and row["item_id"] == 23)
+    self.assertEqual((item["name"], item["target_category_id"], item["data_id"]),
+                     ("Open Door Warn", 26, 0x03F1))
+    self.assertEqual([(row["name"], row["value"]) for row in item["choices"]], [("OFF", 0), ("ON", 1)])
+    self.assertEqual(item["all_default_gate_u16_22"], 0)
+
   def test_bundle_covers_all_current_regions_and_keeps_offline_categories_unrouted(self):
     self.assertEqual(self.database.index["schema"], registry.BUNDLE_SCHEMA)
     self.assertEqual(set(self.database.index["regions"]), {"NA", "EU", "JP"})
