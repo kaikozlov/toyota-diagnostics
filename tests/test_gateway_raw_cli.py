@@ -19,8 +19,11 @@ class TestGatewayRawCli(unittest.TestCase):
       (["00"], "3e00", "7e00"),
       ([], "3e", "7f3e13"),
     )
-    for suffix, request_hex, reply_hex in cases:
-      with self.subTest(request=request_hex, reply=reply_hex):
+    profile_arguments = ([], ["--registry", str(registry.LEGACY_CAMRY_REGISTRY)])
+    for registry_args, suffix, request_hex, reply_hex in (
+      (registry_args, *case) for registry_args in profile_arguments for case in cases
+    ):
+      with self.subTest(registry=registry_args, request=request_hex, reply=reply_hex):
         reply = bytes.fromhex(reply_hex)
 
         class ReplyOnSend(FakePanda):
@@ -41,12 +44,17 @@ class TestGatewayRawCli(unittest.TestCase):
         panda = ReplyOnSend(reply)
         output = StringIO()
         args = [
-          "--registry", str(registry.LEGACY_CAMRY_REGISTRY),
+          *registry_args,
           "--bus", "1", "--obd-multiplexing", "uds", "raw", "0x750", "0x3E", *suffix,
           "--sub-address", "0x5F", "--rx-address", "0x758", "--rx-sub-address", "0x5F",
         ]
-        with mock.patch("toyota_diag.transport.pandad_running", return_value=False), \
-             mock.patch("panda.Panda", return_value=panda), redirect_stdout(output):
+        with (
+          mock.patch("toyota_diag.transport.pandad_running", return_value=False),
+          mock.patch("panda.Panda", return_value=panda),
+          mock.patch("toyota_diag.resolver.read_vehicle_vin",
+                     side_effect=AssertionError("numeric raw must not query VIN")),
+          redirect_stdout(output),
+        ):
           result = cli.main(args)
         self.assertEqual(result, 0)
         request = bytes.fromhex(request_hex)
