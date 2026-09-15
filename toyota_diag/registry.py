@@ -398,8 +398,9 @@ class Profile:
   def utilities(self, ecu: EcuSpec | str | int) -> list[dict[str, Any]]:
     """Concrete per-ECU utility rows, when a registry has recovered them.
 
-    Registry v4 currently carries generic utility-family metadata at top level,
-    but deliberately contains no concrete per-ECU utility execution rows.
+    The current universal bundle includes recovered type-77 Simple Operation
+    rows; older registry revisions may expose only top-level utility-family
+    metadata.
     """
     category = self.category(ecu)
     rows = category.get("utilities") if category is not None else None

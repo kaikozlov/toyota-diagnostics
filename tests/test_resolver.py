@@ -85,6 +85,55 @@ class TestVehicleResolver(unittest.TestCase):
     self.assertEqual(scripted.calls.count((0x123, "read_did", 0xA102)), 1)
     self.assertNotIn((0x123, "read_did", 0xA1FD), scripted.calls)
 
+  def test_p5_rid_support_uses_1001_group_hierarchy(self):
+    profile = registry.ToyotaDatabase.load().profile("NA", 12704, bus=0)
+    scripted = support.ScriptedUds()
+    endpoint = 0x700
+    root = bytearray(32)
+    group_index = 0x11
+    root[group_index // 8] |= 0x80 >> (group_index % 8)  # 0x1100 group
+    members = bytearray(32)
+    member_index = 0x87 - 1
+    members[member_index // 8] |= 0x80 >> (member_index % 8)  # RID 0x1187
+    scripted.routine[(endpoint, 1, 0x1001)] = bytes(root)
+    scripted.routine[(endpoint, 1, 0x1100)] = bytes(members)
+    current = resolver.P5RidSupportResolver.from_profile(profile, 372, scripted.factory(endpoint))
+    self.assertFalse(current.strip_routine_info)
+    self.assertTrue(current.supports(0x1100))
+    self.assertTrue(current.supports(0x1187))
+    self.assertFalse(current.supports(0x1188))
+    self.assertIn(0x1187, current.supported_rids())
+    self.assertEqual(scripted.calls.count((endpoint, "routine", 1, 0x1001, b"")), 1)
+    self.assertEqual(scripted.calls.count((endpoint, "routine", 1, 0x1100, b"")), 1)
+
+  def test_p5_generation21_rid_support_uses_static_cache_even_when_empty(self):
+    profile = registry.ToyotaDatabase.load().profile("NA", 11985, bus=0)
+    self.assertEqual(resolver.support_mode(profile, 851), "p5-mazda")
+    scripted = support.ScriptedUds()
+    current = resolver.rid_support_resolver(profile, 851, scripted.factory(0x700))
+    self.assertEqual(current.static_rids, ())
+    self.assertEqual(current.root_bitmap(), b"")
+    self.assertEqual(current.supported_rids(), ())
+    self.assertFalse(current.supports(0x1187))
+    self.assertEqual(scripted.calls, [])
+
+  def test_p5_rid_support_strips_exported_routine_info_byte(self):
+    profile = registry.ToyotaDatabase.load().profile("NA", 11763, bus=0)
+    candidate, route = resolver.lookup_mount_candidate(profile, 406)
+    self.assertEqual(candidate["category_id"], 406)
+    scripted = support.ScriptedUds()
+    endpoint = (route.request_address, route.sub_addr) if route.sub_addr is not None else route.request_address
+    root = bytearray(32)
+    root[0x11 // 8] |= 0x80 >> (0x11 % 8)
+    members = bytearray(32)
+    members[(0x87 - 1) // 8] |= 0x80 >> ((0x87 - 1) % 8)
+    scripted.routine[(endpoint, 1, 0x1001)] = b"\xAA" + bytes(root)
+    scripted.routine[(endpoint, 1, 0x1100)] = b"\x55" + bytes(members)
+    current = resolver.P5RidSupportResolver.from_profile(profile, 406, scripted.factory(route.request_address, route.sub_addr))
+    self.assertTrue(current.strip_routine_info)
+    self.assertTrue(current.supports(0x1187))
+    self.assertEqual(current.supported_rids(), (0x1100, 0x1187))
+
   def test_p6_rid_support_uses_d1_selector_hierarchy(self):
     profile = registry.ToyotaDatabase.load().profile("NA", 12165, bus=0)
     scripted = support.ScriptedUds()

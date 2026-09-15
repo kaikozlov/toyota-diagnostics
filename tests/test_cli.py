@@ -793,6 +793,25 @@ class TestLiveCli(unittest.TestCase):
       ("session", 1),
     ])
 
+  def test_current_simple_utility_uses_live_rid_gate_before_execution(self):
+    scripted = support.ScriptedUds()
+    root = bytearray(32)
+    root[0x11 // 8] |= 0x80 >> (0x11 % 8)
+    members = bytearray(32)
+    members[(0x87 - 1) // 8] |= 0x80 >> ((0x87 - 1) % 8)
+    scripted.routine[(0x700, 1, 0x1001)] = bytes(root)
+    scripted.routine[(0x700, 1, 0x1100)] = bytes(members)
+    panda = support.FakePanda()
+    with self.patch_live(panda, scripted):
+      rc, output = run_cli([
+        "--vehicle", "12704", "utility", "run", "engine", "Reset Memory",
+        "--kind", "simple_operation", "--execute", "--hold", "0.001", "--poll-interval", "1",
+      ], use_default_registry=True)
+    self.assertEqual(rc, 0, output)
+    self.assertIn("executed: yes", output)
+    routine_calls = [call for call in scripted.calls if call[1] == "routine"]
+    self.assertEqual([call[3] for call in routine_calls], [0x1001, 0x1100, 0x1187, 0x1187])
+
   def test_v4_utility_families_are_plan_only_not_concrete_execution(self):
     rc, output = run_cli(["utility", "list"])
     self.assertEqual(rc, 0, output)

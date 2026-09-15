@@ -131,14 +131,14 @@ Remaining Customize gaps are narrower:
 
 ### 8. Utilities / registration / learning / calibration
 
-`utility list/plan` currently exports only the small recovered generic category-0 family and does not provide broad ECU-specific utility parity.
+Current P5/P6 type-77 **Simple Operation Utility** execution is landed for standard Toyota support modes: the bundle exports the exact `D8/D9/DA` RoutineControl geometry and fixed command bytes, while the runtime follows the recovered category lifecycle and applies Toyota's live RID-support inventory before any acknowledged mutation. Generic category-0 utility/plugin-family browsing remains metadata-only.
 
-Needed:
+Remaining work:
 
-- map the per-ECU function/detail hierarchy to concrete utility executors;
-- recover simple-operation utility families, especially current P6;
-- initialization, zero-point calibration, learning, registration, replacement workflows, check modes, and ECU-specific maintenance routines;
-- exact lifecycle and SecurityAccess prerequisites per operation rather than a generic policy layer.
+- map more of the per-ECU function/detail hierarchy to concrete utility executors;
+- initialization, zero-point calibration, learning, registration, replacement workflows, check modes, and ECU-specific maintenance routines beyond the recovered type-77 family;
+- recover partner P5-mode utility/support executors rather than projecting standard Toyota P5 behavior onto them;
+- complete operation-specific result/status presentation and any SecurityAccess prerequisites from the exact plugin path.
 
 ### 9. SecurityAccess and session families
 

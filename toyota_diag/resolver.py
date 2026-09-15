@@ -478,6 +478,132 @@ class P6DidSupportResolver:
 
 
 @dataclass
+class P5RidSupportResolver:
+  """Ordinary Toyota P5 RID support resolver recovered from CreateEnableRIdList."""
+  profile: Profile
+  category_id: int
+  client: Any
+  root_rid: int = 0x1001
+  selector_min: int = 0x0200
+  selector_max: int = 0xDF00
+  strip_routine_info: bool = False
+  # None means Toyota's live 0x1001/xx00 bitmap path. A tuple, including an
+  # empty tuple, means generation-low5 0x15's static type-71/type-77 cache.
+  static_rids: tuple[int, ...] | None = None
+  _root: bytes | None = None
+  _selectors: dict[int, bytes] | None = None
+
+  @classmethod
+  def from_profile(cls, profile: Profile, category_id: int, client: Any) -> P5RidSupportResolver:
+    raw = support_contract(profile, "p5")
+    routine_root = raw.get("routine_root") if isinstance(raw, dict) else None
+    if not isinstance(routine_root, dict):
+      raise ResolverError("support_contracts.p5.routine_root is missing")
+    request = registry.parse_bytes(routine_root.get("request"), "support_contracts.p5.routine_root.request")
+    if len(request) != 4 or request[:2] != bytes([0x31, int(ROUTINE_CONTROL_TYPE.START)]):
+      raise ResolverError(f"P5 RID support root request is not 3101xxxx: {request.hex()}")
+    if str(routine_root.get("positive_sid")).lower() not in {"0x71", "71"}:
+      raise ResolverError("P5 RID support root positive SID is not 0x71")
+    root = registry.parse_int(routine_root.get("root_request_rid", int.from_bytes(request[2:], "big")),
+                              "support_contracts.p5.routine_root.root_request_rid")
+    selector_range = routine_root.get("selector_range") or ["0x0200", "0xDF00"]
+    if not isinstance(selector_range, list) or len(selector_range) != 2:
+      raise ResolverError("support_contracts.p5.routine_root.selector_range must have two entries")
+    selector_min = registry.parse_int(selector_range[0], "P5 RID selector minimum")
+    selector_max = registry.parse_int(selector_range[1], "P5 RID selector maximum")
+
+    meta = category_metadata(profile, category_id) or {}
+    generation = registry.parse_int(meta.get("generation"), "P5 RID category generation")
+    low5 = generation & 0x1F
+    if low5 == 0x15:
+      ecu = next((row for row in profile.ecus if row.category_id == category_id), None)
+      if ecu is None:
+        raise ResolverError(f"P5 RID static cache category {category_id} is not mounted on selected vehicle")
+      rids = {
+        registry.parse_int(row["routine_id"], "P5 static RID")
+        for row in [*profile.active_tests(ecu), *profile.utilities(ecu)]
+        if isinstance(row, dict) and row.get("routine_id") is not None
+      }
+      return cls(profile, category_id, client, root, selector_min, selector_max,
+                 strip_routine_info=False, static_rids=tuple(sorted(rids)))
+    if low5 != 0x14:
+      raise ResolverError(f"ordinary P5 RID executor covers generation-low5 0x14/0x15, got 0x{low5:02X}")
+
+    ecu = next((row for row in profile.ecus if row.category_id == category_id), None)
+    catalog = profile.category(ecu) if ecu is not None else None
+    strip = False
+    if isinstance(catalog, dict):
+      for function in catalog.get("functions", []):
+        if not isinstance(function, dict):
+          continue
+        function_id = registry.parse_int(function.get("function_id", -1), "P5 function id")
+        details = {registry.parse_int(value, "P5 function detail id") for value in function.get("detail_ids", [])}
+        if function_id == 3 and 0x56 in details:
+          strip = True
+          break
+    return cls(profile, category_id, client, root, selector_min, selector_max,
+               strip_routine_info=strip)
+
+  @property
+  def selector_cache(self) -> dict[int, bytes]:
+    if self._selectors is None:
+      self._selectors = {}
+    return self._selectors
+
+  def _request(self, rid: int) -> bytes:
+    payload = bytes(self.client.routine_control(ROUTINE_CONTROL_TYPE.START, rid))
+    if self.strip_routine_info:
+      if not payload:
+        raise ResolverError(f"P5 RID 0x{rid:04X} response is missing required routine-info byte")
+      payload = payload[1:]
+    return payload
+
+  def root_bitmap(self) -> bytes:
+    if self.static_rids is not None:
+      return b""
+    if self._root is None:
+      self._root = self._request(self.root_rid)
+    return self._root
+
+  def supported_groups(self) -> tuple[int, ...]:
+    if self.static_rids is not None:
+      return tuple(rid for rid in self.static_rids if (rid & 0xFF) == 0)
+    return tuple(analyze_support_bitmap(0, self.root_bitmap(), 8))
+
+  def group_bitmap(self, group: int) -> bytes:
+    if self.static_rids is not None:
+      return b""
+    if group not in self.supported_groups() or not self.selector_min <= group <= self.selector_max:
+      return b""
+    if group not in self.selector_cache:
+      self.selector_cache[group] = self._request(group)
+    return self.selector_cache[group]
+
+  def supports(self, rid: int) -> bool:
+    if not 0 <= rid <= 0xFFFF:
+      raise ResolverError(f"RID out of range: {rid:#x}")
+    if self.static_rids is not None:
+      return rid in self.static_rids
+    group = rid & 0xFF00
+    groups = self.supported_groups()
+    if rid == group:
+      return group in groups
+    if group not in groups or not self.selector_min <= group <= self.selector_max:
+      return False
+    return _bitmap_has(self.group_bitmap(group), (rid & 0xFF) - 1)
+
+  def supported_rids(self) -> tuple[int, ...]:
+    if self.static_rids is not None:
+      return self.static_rids
+    out: list[int] = []
+    for group in self.supported_groups():
+      out.append(group)
+      if self.selector_min <= group <= self.selector_max:
+        out.extend(analyze_support_bitmap(group, self.group_bitmap(group), 0))
+    return tuple(dict.fromkeys(out))
+
+
+@dataclass
 class P6RidSupportResolver:
   """Lazy P6 RID support resolver recovered from CCmdSupportDataIdListP6."""
   client: Any
@@ -552,12 +678,23 @@ class P6RidSupportResolver:
     return tuple(dict.fromkeys(out))
 
 
-def rid_support_resolver(profile: Profile, category_id: int, client: Any) -> P6RidSupportResolver:
+def rid_support_resolver(profile: Profile, category_id: int, client: Any) -> P5RidSupportResolver | P6RidSupportResolver:
   """Instantiate Toyota's exact RID support executor when recovered."""
   mode = support_mode(profile, category_id)
+  if mode == "p5-standard":
+    return P5RidSupportResolver.from_profile(profile, category_id, client)
+  # P5 RID dispatch is not identical to P5 DID dispatch. Current low5 0x15
+  # (`p5-mazda` for DID support) does not query 0x1001 at all: Toyota seeds the
+  # enabled-RID cache from the category's type-71/type-77 rows. Keep the other
+  # P5 mode families fail-closed because their RID builders are distinct.
+  family = support_family(profile, category_id)
+  meta = category_metadata(profile, category_id) or {}
+  generation = registry.parse_int(meta.get("generation"), "RID support category generation")
+  if family == "p5" and (generation & 0x1F) == 0x15:
+    return P5RidSupportResolver.from_profile(profile, category_id, client)
   if mode == "p6-standard":
     return P6RidSupportResolver.from_profile(profile, client)
-  family = support_family(profile, category_id) or "unresolved"
+  family = family or "unresolved"
   raise ResolverError(
     f"Toyota category {category_id} selects support family {family}, mode {mode or 'unresolved'}; "
     + "that exact RID support-list executor is not yet recovered in this runtime")

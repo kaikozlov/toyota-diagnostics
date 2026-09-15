@@ -44,6 +44,91 @@ class TestBundledRegistry(unittest.TestCase):
       self.profile.lookup_utility("frc", "0x3001")
 
 
+class TestCurrentSimpleOperationUtility(unittest.TestCase):
+  @classmethod
+  def setUpClass(cls):
+    cls.profile = registry.ToyotaDatabase.load().profile("NA", 12704, bus=0)
+    cls.ecu = cls.profile.lookup_ecu(372)
+
+  def _script_support(self, scripted, *, advertise: bool = True):
+    endpoint = self.ecu.address
+    root = bytearray(32)
+    root[0x11 // 8] |= 0x80 >> (0x11 % 8)
+    members = bytearray(32)
+    if advertise:
+      members[(0x87 - 1) // 8] |= 0x80 >> ((0x87 - 1) % 8)
+    scripted.routine[(endpoint, 1, 0x1001)] = bytes(root)
+    scripted.routine[(endpoint, 1, 0x1100)] = bytes(members)
+
+  def test_bundled_simple_operation_materializes_exact_routine_plan(self):
+    plan = utility.plan_utility(self.profile, self.ecu, "Reset Memory")
+    self.assertIsInstance(plan, RoutineTestPlan)
+    self.assertTrue(plan.executable)
+    self.assertFalse(plan.parameterized)
+    self.assertEqual(plan.rid, 0x1187)
+    self.assertEqual(plan.start_option_prefix, b"")
+    self.assertEqual(plan.stop_option_prefix, b"")
+    self.assertEqual(plan.status_option_prefix, b"")
+
+  def test_bundled_p6_simple_operation_materializes_exact_routine_plan(self):
+    profile = registry.ToyotaDatabase.load().profile("NA", 12165, bus=0)
+    ecu = profile.lookup_ecu(6000)
+    plan = utility.plan_utility(profile, ecu, "Switch Specification Information")
+    self.assertIsInstance(plan, RoutineTestPlan)
+    self.assertTrue(plan.executable)
+    self.assertEqual(plan.rid, 0xDA03)
+    self.assertEqual(plan.status_control, 3)
+
+  def test_p6_simple_operation_checks_live_rid_support_before_mutation(self):
+    profile = registry.ToyotaDatabase.load().profile("NA", 12165, bus=0)
+    ecu = profile.lookup_ecu(6000)
+    scripted = support.ScriptedUds()
+    root = bytearray(32)
+    selector_index = 0xDA
+    root[selector_index // 8] |= 0x80 >> (selector_index % 8)
+    members = bytearray(32)
+    members[0x03 // 8] |= 0x80 >> (0x03 % 8)
+    scripted.routine[(ecu.address, 1, 0xD100)] = bytes(root)
+    scripted.routine[(ecu.address, 1, 0xD1DA)] = bytes(members)
+    plan = utility.plan_utility(profile, ecu, "Switch Specification Information")
+    with DiagnosticSession(profile, ecu, client_factory=scripted.factory) as session:
+      result = utility.run_utility(
+        session, plan, hold_s=0.001, execute=True, poll_interval_s=1.0, echo=lambda text: None)
+    self.assertTrue(result.executed)
+    routine_calls = [call for call in scripted.calls if call[1] == "routine"]
+    self.assertEqual([call[3] for call in routine_calls], [0xD100, 0xD1DA, 0xDA03, 0xDA03])
+
+  def test_simple_operation_dry_run_does_not_query_support(self):
+    scripted = support.ScriptedUds()
+    plan = utility.plan_utility(self.profile, self.ecu, "Reset Memory")
+    with DiagnosticSession(self.profile, self.ecu, client_factory=scripted.factory) as session:
+      result = utility.run_utility(session, plan, hold_s=0.001, execute=False, echo=lambda text: None)
+    self.assertFalse(result.executed)
+    self.assertEqual(scripted.calls, [])
+
+  def test_simple_operation_checks_live_rid_support_before_mutation(self):
+    scripted = support.ScriptedUds()
+    self._script_support(scripted)
+    plan = utility.plan_utility(self.profile, self.ecu, "Reset Memory")
+    with DiagnosticSession(self.profile, self.ecu, client_factory=scripted.factory) as session:
+      result = utility.run_utility(
+        session, plan, hold_s=0.001, execute=True, poll_interval_s=1.0, echo=lambda text: None)
+    self.assertTrue(result.executed)
+    routine_calls = [call for call in scripted.calls if call[1] == "routine"]
+    self.assertEqual([call[3] for call in routine_calls], [0x1001, 0x1100, 0x1187, 0x1187])
+    self.assertEqual([call[2] for call in routine_calls[-2:]], [1, 2])
+
+  def test_simple_operation_refuses_unadvertised_rid_before_mutation(self):
+    scripted = support.ScriptedUds()
+    self._script_support(scripted, advertise=False)
+    plan = utility.plan_utility(self.profile, self.ecu, "Reset Memory")
+    with (DiagnosticSession(self.profile, self.ecu, client_factory=scripted.factory) as session,
+          self.assertRaisesRegex(ExecutorError, "does not advertise utility RID 0x1187")):
+      utility.run_utility(
+        session, plan, hold_s=0.001, execute=True, poll_interval_s=1.0, echo=lambda text: None)
+    self.assertFalse(any(call[1] == "routine" and call[3] == 0x1187 for call in scripted.calls))
+
+
 class TestUtilityBackend(unittest.TestCase):
   def setUp(self):
     self.scripted = support.ScriptedUds()

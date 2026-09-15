@@ -2633,7 +2633,7 @@ def build_parser() -> argparse.ArgumentParser:
   p = util_sub.add_parser("run", help="run a concrete per-ECU utility row when one is recovered")
   p.add_argument("ecu")
   p.add_argument("item")
-  p.add_argument("--kind", choices=("direct", "routine"))
+  p.add_argument("--kind", choices=("direct", "routine", "simple_operation"))
   p.add_argument("--hold", type=float, default=1.0)
   p.add_argument("--poll-interval", type=float, default=0.5)
   p.add_argument("--option-record")
