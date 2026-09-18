@@ -2,7 +2,21 @@
 
 Standalone Toyota diagnostic tooling backed by clean metadata recovered from Toyota Techstream/GTS+. The reverse-engineering and metadata-generation source of truth lives in `ghidra_rh850_analysis`; this repository owns the reusable runtime, CLI, transport adapters, decoders, and tests. It intentionally does not ship Toyota DLL/DDB/EXE binaries.
 
-Install for offline use with `uv sync`. For direct Panda access, use `uv sync --extra live`. The CLI entry point is `toyota`; `python -m toyota_diag` is equivalent.
+## Running it
+
+**On a comma:** do not create a second Python environment for this repository. The comma already has the authoritative openpilot runtime, Panda bindings, compiled messaging stack, and the exact opendbc checkout used by the running software. From the checkout, run:
+
+```bash
+cd /data/toyota-diagnostics
+./toyota dtc scan
+./toyota dtc clear
+```
+
+The dependency-free launcher detects AGNOS before importing the CLI and re-execs `/usr/local/venv/bin/python` with this checkout plus `/data/openpilot` on `PYTHONPATH`. In other words, live diagnostics use openpilot's own dependencies rather than duplicating them in `/data/toyota-diagnostics/.venv`. **Do not use `uv run` on the comma**: `uv` may create/sync a project venv before the launcher ever starts. Use `./toyota ...` directly; `python -m toyota_diag ...` also goes through the selector when invoked from the checkout. Do not manually assemble `PYTHONPATH` or install missing openpilot dependencies into a local diagnostics venv.
+
+**On a workstation:** run `uv sync` for offline/catalog work, or `uv sync --extra live` for direct Panda access, then use `./toyota ...`. The launcher automatically enters the checkout's `.venv`; the installed `toyota` console script, `uv run toyota`, and `python -m toyota_diag` use the same selector as well.
+
+Live Panda ownership is separate from Python dependency selection. With `pandad` running, transmitting commands reuse openpilot's `can`/`sendcan` path only when the Panda is already in ELM327 diagnostic safety; otherwise stop openpilot/manager and rerun the same `./toyota ...` command so the CLI can take direct Panda ownership. Receive-only `can sniff` can reuse the running `pandad` path without changing Panda safety.
 
 The initial extraction came from `kaikozlov/kai-openpilot` branch `kai` at `7cde0135351f298b9a9d84344b5f685fde5a6005`.
 

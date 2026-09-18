@@ -11,7 +11,8 @@ This repository owns the standalone Toyota diagnostics runtime and CLI.
 
 ## Development
 
-- Install/sync with `uv sync --extra live` when live Panda support is needed; `uv sync` is sufficient for offline development.
+- Workstations: install/sync with `uv sync --extra live` when direct Panda support is needed; `uv sync` is sufficient for offline development.
+- Comma/AGNOS: **do not** build a second diagnostics virtualenv or install openpilot dependencies here. Run `./toyota ...`; the stdlib-only entrypoint re-execs into `/usr/local/venv` with `/data/openpilot` as the dependency/runtime authority.
 - Run tests with `uv run pytest`.
 - Prefer the smallest targeted test while iterating, then run the full suite before committing changes that affect shared runtime behavior.
 

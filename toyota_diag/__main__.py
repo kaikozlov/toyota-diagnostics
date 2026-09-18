@@ -1,4 +1,4 @@
-from toyota_diag.cli import main
+from toyota_diag.entrypoint import main
 
 
 if __name__ == "__main__":

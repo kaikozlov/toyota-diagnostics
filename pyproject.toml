@@ -17,7 +17,7 @@ live = [
 ]
 
 [project.scripts]
-toyota = "toyota_diag.cli:main"
+toyota = "toyota_diag.entrypoint:main"
 
 [dependency-groups]
 dev = [
