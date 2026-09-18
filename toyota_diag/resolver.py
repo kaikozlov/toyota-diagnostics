@@ -18,6 +18,7 @@ from toyota_diag.registry import Profile
 
 P5_SUPPORT_ROOT_DID = 0x0101
 READ_DATA_BY_IDENTIFIER = 0x22
+STANDARD_VIN_BUSES = (0, 1)
 
 
 class ResolverError(ValueError):
@@ -136,11 +137,13 @@ def resolve_profile_vin(profile: Profile, vin: str) -> dict[str, Any] | None:
   }
 
 
-def read_vehicle_vin(can_recv, can_send, bus: int, *, timeout: float = 0.1, retry: int = 2) -> dict[str, Any]:
-  """Run opendbc's ordinary VIN query once on the selected diagnostic bus."""
-  rx_address, rx_bus, vin = get_vin(can_recv, can_send, (bus,), timeout=timeout, retry=retry)
+def read_vehicle_vin(can_recv, can_send, bus: int | None, *, timeout: float = 0.1, retry: int = 2) -> dict[str, Any]:
+  """Run opendbc's ordinary VIN query on an explicit bus or its standard CAN buses."""
+  buses = STANDARD_VIN_BUSES if bus is None else (bus,)
+  rx_address, rx_bus, vin = get_vin(can_recv, can_send, buses, timeout=timeout, retry=retry)
   if vin == VIN_UNKNOWN or not is_valid_vin(vin):
-    raise ResolverError("Toyota vehicle resolution could not obtain a valid 17-character VIN")
+    detail = f" on bus {bus}" if bus is not None else f" on buses {','.join(str(value) for value in buses)}"
+    raise ResolverError(f"Toyota vehicle resolution could not obtain a valid 17-character VIN{detail}")
   return {"vin": vin, "rx_address": rx_address, "rx_bus": rx_bus}
 
 

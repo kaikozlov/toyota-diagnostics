@@ -41,12 +41,13 @@ LIVE_VEHICLE_CONTEXT_FUNCS = frozenset({
 
 
 def _profile(args) -> Profile:
+  requested_bus = getattr(args, "panda_bus", None)
   try:
     return registry.load_registry(
       args.registry,
       region=getattr(args, "region", None),
       vehicle=getattr(args, "vehicle_select", None),
-      bus=getattr(args, "panda_bus", None),
+      bus=DEFAULT_LOCAL_PANDA_BUS if requested_bus is None else requested_bus,
     )
   except registry.RegistryError as e:
     raise SystemExit(f"invalid registry {args.registry}: {e}") from e
@@ -72,7 +73,8 @@ def _resolve_live_vehicle_context(args, profile: Profile) -> Profile:
   try:
     panda = _connect_live(args, profile, live)
     can_recv, can_send = live.can_query_callbacks(panda)
-    vin_info = resolver.read_vehicle_vin(can_recv, can_send, profile.bus)
+    requested_bus = getattr(args, "panda_bus", None)
+    vin_info = resolver.read_vehicle_vin(can_recv, can_send, requested_bus)
     matches = profile.database.resolve_vin(
       profile.region or profile.database.default_region,
       vin_info["vin"],
@@ -101,7 +103,8 @@ def _resolve_live_vehicle_context(args, profile: Profile) -> Profile:
       f"Toyota VIN {vin_info['vin']} resolved {len(complete)} complete vehicle candidates ({names}); "
       + "use --vehicle TYPE_OR_NAME to select the intended Toyota DB vehicle"
     )
-  return profile.database.profile(profile.region, int(complete[0]["vehicle_type"]), bus=profile.bus)
+  resolved_bus = vin_info["rx_bus"] if requested_bus is None else profile.bus
+  return profile.database.profile(profile.region, int(complete[0]["vehicle_type"]), bus=resolved_bus)
 
 
 def _live_transport():
@@ -481,7 +484,7 @@ def cmd_vehicle_detect(args, profile: Profile) -> int:
   try:
     panda = _connect_live(args, profile, live)
     can_recv, can_send = live.can_query_callbacks(panda)
-    vin_info = resolver.read_vehicle_vin(can_recv, can_send, profile.bus)
+    vin_info = resolver.read_vehicle_vin(can_recv, can_send, getattr(args, "panda_bus", None))
   except Exception as e:
     raise SystemExit(f"vehicle detection failed: {e}") from e
   finally:
@@ -2276,8 +2279,8 @@ def build_parser() -> argparse.ArgumentParser:
     "--vehicle", dest="vehicle_select",
     help="Toyota DB vehicle type or OEM name; live vehicle-scoped commands auto-resolve from VIN when omitted",
   )
-  parser.add_argument("--bus", dest="panda_bus", type=int, default=DEFAULT_LOCAL_PANDA_BUS,
-                      help="installation-local logical diagnostic bus tag (Panda bus for Panda; default: 0; not Toyota DB metadata)")
+  parser.add_argument("--bus", dest="panda_bus", type=int, default=None,
+                      help="installation-local logical diagnostic bus tag (Panda bus for Panda; live VIN auto-detects bus 0/1 when omitted; other commands use 0)")
   parser.add_argument("--transport", dest="transport_backend", choices=("panda", "j2534"), default="panda",
                       help="live vehicle transport backend (default: panda)")
   parser.add_argument("--obd-multiplexing", action="store_true",

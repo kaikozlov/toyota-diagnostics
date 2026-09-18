@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 from opendbc.car.uds import MessageTimeoutError
 
@@ -10,6 +11,22 @@ class TestVehicleResolver(unittest.TestCase):
   @classmethod
   def setUpClass(cls):
     cls.profile = registry.load_registry(registry.LEGACY_CAMRY_REGISTRY)
+
+  def test_read_vehicle_vin_auto_scans_standard_buses(self):
+    can_recv = object()
+    can_send = object()
+    with mock.patch(
+        "toyota_diag.resolver.get_vin", return_value=(0x7E8, 1, "4T1DBADKXTU054668"),
+    ) as get_vin:
+      info = resolver.read_vehicle_vin(can_recv, can_send, None, timeout=0.25, retry=3)
+    self.assertEqual(info, {"vin": "4T1DBADKXTU054668", "rx_address": 0x7E8, "rx_bus": 1})
+    get_vin.assert_called_once_with(can_recv, can_send, (0, 1), timeout=0.25, retry=3)
+
+    with mock.patch(
+        "toyota_diag.resolver.get_vin", return_value=(0x7E8, 1, "4T1DBADKXTU054668"),
+    ) as get_vin:
+      resolver.read_vehicle_vin(can_recv, can_send, 1)
+    get_vin.assert_called_once_with(can_recv, can_send, (1,), timeout=0.1, retry=2)
 
   def test_current_camry_vin_decision_wildcards_and_branches(self):
     raw = self.profile.vehicle_resolution["vin_decision"]

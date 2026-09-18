@@ -995,6 +995,27 @@ class TestLiveCli(unittest.TestCase):
             "--vehicle", "12704", "health-check", "--compare", str(bad), "--json",
           ], use_default_registry=True)
 
+  def test_auto_vehicle_resolution_carries_detected_bus_into_profile(self):
+    panda = support.FakePanda()
+    vin_info = {"vin": "XXXXAXXKXSX123456", "rx_address": 0x7E8, "rx_bus": 1}
+
+    args = cli.build_parser().parse_args(["dtc", "scan"])
+    profile = cli._profile(args)
+    self.assertEqual(profile.bus, 0)
+    with mock.patch("toyota_diag.transport.connect", return_value=panda), mock.patch(
+        "toyota_diag.resolver.read_vehicle_vin", return_value=vin_info) as read_vin:
+      resolved = cli._resolve_live_vehicle_context(args, profile)
+    self.assertEqual((resolved.vehicle_type, resolved.bus), (12704, 1))
+    self.assertIsNone(read_vin.call_args.args[2])
+
+    args = cli.build_parser().parse_args(["--bus", "0", "dtc", "scan"])
+    profile = cli._profile(args)
+    with mock.patch("toyota_diag.transport.connect", return_value=panda), mock.patch(
+        "toyota_diag.resolver.read_vehicle_vin", return_value=vin_info) as read_vin:
+      resolved = cli._resolve_live_vehicle_context(args, profile)
+    self.assertEqual((resolved.vehicle_type, resolved.bus), (12704, 0))
+    self.assertEqual(read_vin.call_args.args[2], 0)
+
   def test_vehicle_detect_uses_toyota_vin_decision_not_f181_guard(self):
     scripted = support.ScriptedUds()
     panda = support.FakePanda()
@@ -1006,6 +1027,7 @@ class TestLiveCli(unittest.TestCase):
     self.assertIn("camry-2026-f33", output)
     self.assertIn("Toyota type 12704 Camry HV", output)
     read_vin.assert_called_once()
+    self.assertIsNone(read_vin.call_args.args[2])
     self.assertEqual(scripted.calls, [])
 
   def test_vehicle_mounted_uses_all_toyota_routes_without_local_endpoint_gate(self):
