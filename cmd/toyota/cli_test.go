@@ -42,6 +42,7 @@ INSERT INTO items VALUES(3,'NA',498,'did','0x1202','LTA Installation Availabilit
 INSERT INTO items VALUES(4,'NA',498,'dtc','U0131','Lost Communication with Power Steering','No Signal');
 INSERT INTO items VALUES(5,'NA',498,'active-test','0xA429','LTA Steering Vibration','routine executable');
 INSERT INTO items VALUES(6,'NA',0,'adu-signal','0x1B00','LTA main switch status','ADAS recorder');
+INSERT INTO items VALUES(7,'NA',0,'did','0x9999','Didactic example signal','');
 CREATE VIRTUAL TABLE items_fts USING fts5(name,detail,identifier,content='items',content_rowid='id',tokenize='unicode61',prefix='2 3 4');
 INSERT INTO items_fts(items_fts) VALUES('rebuild');
 CREATE TABLE item_payloads(item_id INTEGER PRIMARY KEY,data BLOB);`)
@@ -135,6 +136,18 @@ func TestUnknownWordsSearchInsteadOfDeadEnding(t *testing.T) {
 	}
 	if out := output(t, "frc", "steering"); !strings.Contains(out, "LTA Steering Vibration") || strings.Contains(out, "main switch") {
 		t.Fatalf("ECU + free text should search inside the ECU:\n%s", out)
+	}
+}
+
+func TestSearchNearCommandNameIsNotStolen(t *testing.T) {
+	cliFixture(t)
+	out := output(t, "didactic", "example")
+	if !strings.Contains(out, "Didactic example signal") || strings.Contains(out, "unknown command") {
+		t.Fatalf("a query close to 'did' should still search:\n%s", out)
+	}
+	var miss *catalog.NotFoundError
+	if err := failure(t, "serach", "lta"); !errors.As(err, &miss) || miss.What != "command" || miss.Suggestions[0] != "search" {
+		t.Fatalf("multi-word command typo should still correct: %v", err)
 	}
 }
 

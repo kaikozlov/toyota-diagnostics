@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -140,5 +141,113 @@ func TestLiteralSearchOptions(t *testing.T) {
 	opt, args, err := parse([]string{"search", "--", "--json"})
 	if err != nil || opt.json || opt.literalAt != 1 || !reflect.DeepEqual(args, []string{"search", "--json"}) {
 		t.Fatalf("%+v %v %v", opt, args, err)
+	}
+}
+
+func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
+	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
+	for _, args := range [][]string{{"--version"}, {"-V"}, {"version"}} {
+		out, err := capture(func() error { return run(args) })
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if !strings.HasPrefix(out, "toyota ") || strings.Contains(out, "v0.0.0-") {
+			t.Fatalf("%v: %q", args, out)
+		}
+	}
+	if _, _, err := parse([]string{"--version"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		args    []string
+		want    string
+		command string
+	}{
+		{[]string{"search"}, "search needs something to look for", "search"},
+		{[]string{"inspect"}, "inspect needs a record number", "inspect"},
+		{[]string{"inspect", "abc"}, "not a record number", "inspect"},
+		{[]string{"inspect", "frc", "0x1601", "extra"}, "record number or ECU IDENT", "inspect"},
+		{[]string{"browse", "--json"}, "browse is interactive", "browse"},
+		{[]string{"completion"}, "zsh, bash or fish", "completion"},
+		{[]string{"completion", "powershell"}, "unsupported shell", "completion"},
+		{[]string{"--json"}, "--json needs a command", ""},
+		{[]string{"serach", "lta"}, "unknown command", ""},
+	}
+	for _, tc := range cases {
+		err := run(tc.args)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		if tc.command != "" && !isUsage(err, tc.command) {
+			t.Fatalf("%v should be usage for %s: %v", tc.args, tc.command, err)
+		}
+		if strings.Contains(err.Error(), "runtime catalog not found") {
+			t.Fatalf("%v hid behind a missing catalog: %v", tc.args, err)
+		}
+	}
+
+	out, err := capture(func() error { return run([]string{"completion", "zsh"}) })
+	if err != nil || !strings.Contains(out, "#compdef toyota") {
+		t.Fatalf("completion zsh should work without a catalog: %q %v", out, err)
+	}
+
+	for _, args := range [][]string{{"help", "frc"}, {"frc", "--help"}, {"help", "nosuchcommand"}} {
+		out, err = capture(func() error { return run(args) })
+		if err != nil || !strings.Contains(out, "toyota ECU") {
+			t.Fatalf("%v should show generic ECU shorthand help: %q %v", args, out, err)
+		}
+	}
+	_, err = capture(func() error { return run([]string{"help", "serach"}) })
+	if err == nil || !strings.Contains(err.Error(), `unknown command "serach"`) {
+		t.Fatalf("help serach should correct a command typo: %v", err)
+	}
+
+	for _, args := range [][]string{{"--version", "search"}, {"version", "LTA"}, {"search", "--version"}} {
+		if err := run(args); err == nil || !strings.Contains(err.Error(), "version takes no arguments") {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	if err := run([]string{"--version", "--bogus"}); err == nil || !strings.Contains(err.Error(), "unknown option") {
+		t.Fatalf("--version --bogus: %v", err)
+	}
+
+	err = run([]string{"search", "LTA"})
+	if err == nil || !strings.Contains(err.Error(), "/does/not/exist") || !strings.Contains(err.Error(), "--db PATH") {
+		t.Fatalf("a missing --db path should name the file: %v", err)
+	}
+	t.Setenv("TOYOTA_CATALOG", "")
+	err = run([]string{"search", "LTA"})
+	if err == nil || !strings.Contains(err.Error(), "ghidra_rh850_analysis") || !strings.Contains(err.Error(), "--db PATH") {
+		t.Fatalf("a missing catalog should say how to create or point at one: %v", err)
+	}
+}
+
+func TestCatalogPathErrorsStayAccurate(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing.sqlite")
+	err := run([]string{"--db", missing, "search", "LTA"})
+	if err == nil || !strings.Contains(err.Error(), "catalog not found at") || !strings.Contains(err.Error(), missing) {
+		t.Fatalf("missing file: %v", err)
+	}
+	err = run([]string{"--db", dir, "search", "LTA"})
+	if err == nil || !strings.Contains(err.Error(), "is a directory") {
+		t.Fatalf("directory: %v", err)
+	}
+	hidden := filepath.Join(dir, "hidden")
+	if err := os.Mkdir(hidden, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(hidden, "catalog.sqlite")
+	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(hidden, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(hidden, 0o700) })
+	err = run([]string{"--db", blocked, "search", "LTA"})
+	if err == nil || strings.Contains(err.Error(), "catalog not found") || !strings.Contains(err.Error(), "cannot read catalog") {
+		t.Fatalf("permission should not look like a missing file: %v", err)
 	}
 }

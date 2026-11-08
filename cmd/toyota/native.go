@@ -53,6 +53,12 @@ func (a *app) dispatch(args []string) error {
 	}
 	rest := args[1:]
 	switch args[0] {
+	case "version":
+		if len(rest) != 0 {
+			return usagef("version", "version takes no arguments")
+		}
+		writeVersion(os.Stdout)
+		return nil
 	case "kinds":
 		if len(rest) != 0 {
 			return usagef("", "kinds takes no arguments")
@@ -104,11 +110,11 @@ func (a *app) search(args []string) error {
 }
 
 func (a *app) inspect(args []string) error {
-	if len(args) >= 2 {
-		return a.inECU(args[0], args[1:], false)
+	if len(args) == 2 {
+		return a.inECU(args[0], []string{args[1]}, false)
 	}
 	if len(args) != 1 {
-		return usagef("inspect", "inspect needs a record number")
+		return usagef("inspect", "inspect takes a record number or ECU IDENT")
 	}
 	id, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil || id <= 0 {
@@ -469,4 +475,90 @@ func (a *app) vehicleDetail(v catalog.Vehicle) error {
 	}
 	a.p.Vehicle(v, candidates)
 	return nil
+}
+
+// usageWithoutCatalog reports invocation mistakes that do not need the catalog,
+// so a missing database never hides a clearer error.
+func usageWithoutCatalog(opt options, rest []string) error {
+	if len(rest) == 0 {
+		if opt.json {
+			return usagef("", "--json needs a command, e.g. toyota search LTA --json")
+		}
+		return nil
+	}
+	switch rest[0] {
+	case "search":
+		if len(rest) == 1 {
+			return usagef("search", "search needs something to look for")
+		}
+	case "inspect":
+		switch len(rest) - 1 {
+		case 0:
+			return usagef("inspect", "inspect needs a record number")
+		case 1:
+			id, err := strconv.ParseInt(rest[1], 10, 64)
+			if err != nil || id <= 0 {
+				return usagef("inspect", "%q is not a record number; use the #number from a search row", rest[1])
+			}
+		case 2:
+			// toyota inspect ECU IDENT — resolved against the catalog later.
+		default:
+			return usagef("inspect", "inspect takes a record number or ECU IDENT")
+		}
+	case "browse":
+		if len(rest) != 1 {
+			return usagef("browse", "browse takes no arguments")
+		}
+		if opt.json {
+			return usagef("browse", "browse is interactive; use search --json for structured results")
+		}
+	case "completion":
+		if len(rest) != 2 {
+			return usagef("completion", "completion needs a shell: zsh, bash or fish")
+		}
+		switch rest[1] {
+		case "zsh", "bash", "fish":
+		default:
+			return usagef("completion", "unsupported shell %q; choose zsh, bash or fish", rest[1])
+		}
+	case "kinds":
+		if len(rest) != 1 {
+			return usagef("kinds", "kinds takes no arguments")
+		}
+	case "db":
+		if len(rest) > 2 {
+			return usagef("db", "db takes status or verify")
+		}
+		if len(rest) == 2 && rest[1] != "status" && rest[1] != "verify" {
+			return usagef("db", "unknown db command %q", rest[1])
+		}
+	case "version":
+		if len(rest) != 1 {
+			return usagef("version", "version takes no arguments")
+		}
+	}
+	return nil
+}
+
+// unknownCommandWithoutCatalog offers a command correction when there is no
+// catalog to search. Single-word invocations are left alone so they stay
+// search/ECU fallbacks once a catalog is available.
+func unknownCommandWithoutCatalog(rest []string) error {
+	if len(rest) < 2 {
+		return nil
+	}
+	if _, ok := nativeDocs[rest[0]]; ok {
+		return nil
+	}
+	if _, ok := liveDocs[rest[0]]; ok {
+		return nil
+	}
+	if hints := commandHints(rest[0]); len(hints) > 0 {
+		return &catalog.NotFoundError{What: "command", Query: rest[0], Suggestions: hints}
+	}
+	return nil
+}
+
+func commandHints(query string) []string {
+	return suggest.Closest(query, commandNames(), 2)
 }
