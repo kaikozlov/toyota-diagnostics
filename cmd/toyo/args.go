@@ -146,7 +146,7 @@ var errNoCatalog = errors.New("runtime catalog not found (build/catalog.sqlite);
 func isLiveVerb(s string) bool { return s == "monitor" || s == "read" || s == "watch" }
 
 // bareHelpRequest reports whether args is nothing but verb plus a help flag,
-// so help for bridged commands can render from the Go table.
+// so help for live commands can render from the Go table.
 func bareHelpRequest(args []string, verb string) bool {
 	sawVerb, sawHelp := false, false
 	for _, a := range args {

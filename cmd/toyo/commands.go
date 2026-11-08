@@ -112,13 +112,16 @@ var liveLinkOpts = []terminal.HelpEntry{
 	{Usage: "--vehicle TYPE|NAME", Summary: "vehicle scope; live commands resolve it from the VIN when omitted"},
 	{Usage: "--transport panda|j2534", Summary: "vehicle link backend (default panda)"},
 	{Usage: "--j2534-library PATH", Summary: "J2534 provider library, discovered when omitted"},
+	{Usage: "--j2534-device NAME", Summary: "J2534 device selector, or $TOYO_J2534_DEVICE"},
+	{Usage: "--j2534-baud N", Summary: "J2534 CAN bitrate (default 500000)"},
+	{Usage: "--obd-multiplexing", Summary: "direct Panda: remap logical bus 1 onto the OBD-II pins"},
 	regionOpt,
 }
 
 var monitorOutputOpts = terminal.HelpEntry{Usage: "--jsonl | --csv", Summary: "one JSON object per sample group, or one CSV row per signal"}
 
-// liveDocs gives the Python-owned commands a house-style help page. Deep
-// flags still answer from the runtime: `toyo CMD ARG --help` bridges.
+// liveDocs describes vehicle-link commands. The same table answers
+// `toyo help COMMAND` and usage errors for those verbs.
 var liveDocs = map[string]commandDoc{
 	"monitor": {
 		summary: "watch decoded Data List values, live",
@@ -177,6 +180,9 @@ var liveDocs = map[string]commandDoc{
 			{Usage: "--json", Summary: "structured output for scripts"},
 			{Usage: "--transport panda|j2534", Summary: "backend to report on (default panda)"},
 			{Usage: "--j2534-library PATH", Summary: "J2534 provider library, discovered when omitted"},
+			{Usage: "--j2534-device NAME", Summary: "J2534 device selector, or $TOYO_J2534_DEVICE"},
+			{Usage: "--j2534-baud N", Summary: "J2534 CAN bitrate (default 500000)"},
+			{Usage: "--obd-multiplexing", Summary: "direct Panda: remap logical bus 1 onto the OBD-II pins"},
 		},
 	},
 	"can": {
@@ -328,7 +334,7 @@ var liveDocs = map[string]commandDoc{
 // scan is an alias of health-check in the runtime parser.
 func init() { liveDocs["scan"] = liveDocs["health-check"] }
 
-// liveCommands are owned by the Python runtime and need a vehicle link.
+// liveCommands need a vehicle link and are handled by the Go runtime.
 var liveCommands = []string{
 	"monitor", "observe", "scan", "health-check", "transport", "can", "did", "rid",
 	"dtc", "uds", "ffd", "functional", "customize", "active-test", "utility",
@@ -388,8 +394,16 @@ func commandNames() []string {
 	return names
 }
 
-func usageLine(command string) string {
+func commandDocFor(command string) (commandDoc, bool) {
 	if doc, ok := nativeDocs[command]; ok {
+		return doc, true
+	}
+	doc, ok := liveDocs[command]
+	return doc, ok
+}
+
+func usageLine(command string) string {
+	if doc, ok := commandDocFor(command); ok {
 		for _, u := range doc.usage {
 			if strings.HasPrefix(u, "toyo "+command) {
 				return u
