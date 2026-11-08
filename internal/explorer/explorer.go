@@ -106,9 +106,10 @@ type model struct {
 	preview    string
 	previewTop int
 
-	detail    bool
-	viewport  viewport.Model
-	mouseDown hit
+	detail     bool
+	viewport   viewport.Model
+	mouseDown  hit
+	restoreKey string
 }
 
 func newModel(db *catalog.DB, region string) model {
@@ -176,14 +177,77 @@ func (m *model) loadFilters() {
 		if m.scope != nil && (kind == "ecu" || kind == "vehicle") {
 			continue
 		}
-		next = append(next, kindFilter{kind, compactLabel(terminal.KindLabel(kind), chipMaxWidth)})
+		next = append(next, kindFilter{kind, filterLabel(kind)})
 	}
+	uniquifyFilterLabels(next)
 	m.filters = next
 	m.filter = 0
 	for i, f := range m.filters {
 		if f.kind == prev {
 			m.filter = i
 			break
+		}
+	}
+}
+
+// filterLabel is the explorer chip/column name. KindLabel is shared with CLI
+// tables and collapses families (every customize-* is "custom"); chips must
+// stay distinct so Tab/click can target one kind.
+func filterLabel(kind string) string {
+	if kind == "" {
+		return "all"
+	}
+	for _, f := range preferredFilters {
+		if f.kind == kind {
+			return f.label
+		}
+	}
+	switch kind {
+	case "generic-ffd-signal":
+		return "generic-ffd"
+	case "ffd-rob":
+		return "ffd-rob"
+	case "rob-code":
+		return "rob-code"
+	case "rob-signal":
+		return "rob-signal"
+	case "data-list":
+		return "data-list"
+	case "active-test-group":
+		return "test-group"
+	case "active-test-source":
+		return "test-src"
+	case "active-test-support-data-definitions":
+		return "test-defs"
+	case "customize-group":
+		return "cust-group"
+	case "customize-item":
+		return "cust-item"
+	case "customize-probe":
+		return "cust-probe"
+	case "legacy-pid":
+		return "legacy-pid"
+	case "legacy-did":
+		return "legacy-did"
+	case "legacy-freeze-frame":
+		return "legacy-ff"
+	case "legacy-active-test":
+		return "legacy-test"
+	case "utility-family":
+		return "family"
+	default:
+		return kind
+	}
+}
+
+func uniquifyFilterLabels(filters []kindFilter) {
+	counts := map[string]int{}
+	for _, f := range filters {
+		counts[f.label]++
+	}
+	for i, f := range filters {
+		if f.kind != "" && counts[f.label] > 1 {
+			filters[i].label = f.kind
 		}
 	}
 }
@@ -346,7 +410,9 @@ func (m model) listWidth() int {
 	if !m.wide() {
 		return max(10, m.width-4)
 	}
-	return min(max(m.width*45/100, 52), 72)
+	// Grow with the window so the preview gutter sits near mid-screen instead
+	// of sticking around column 72 on a very wide terminal.
+	return max(52, min(m.width*45/100, m.width-24))
 }
 
 func (m model) previewWidth() int { return max(10, m.width-m.listWidth()-8) }
@@ -456,6 +522,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.rows, m.err, m.loading, m.index, m.previewTop = msg.rows, msg.err, false, 0, 0
+		if key := m.restoreKey; key != "" {
+			m.restoreKey = ""
+			for i, row := range m.rows {
+				if row.Kind == "ecu" && row.ECU == key {
+					m.index = i
+					break
+				}
+			}
+		}
 		m.dataKey, m.preview = "", ""
 		return m, m.loadPreview()
 	case previewResult:
@@ -617,6 +692,9 @@ func (m model) openSelection() (model, tea.Cmd) {
 }
 
 func (m model) leaveScope() (model, tea.Cmd) {
+	if m.scope != nil {
+		m.restoreKey = m.scope.Key
+	}
 	m.scope = nil
 	m.filter = 0
 	m.loadFilters()
@@ -646,6 +724,9 @@ func (m model) mouseRelease(ev tea.Mouse) (model, tea.Cmd) {
 }
 
 func (m model) mouseWheel(ev tea.Mouse) (model, tea.Cmd) {
+	// One row per event. Some terminals used to turn a notch into three
+	// arrows; with mouse reporting they may still deliver multiple wheel
+	// messages, so multiplying here would jump too far.
 	delta := 0
 	switch ev.Button {
 	case tea.MouseWheelUp:
@@ -949,8 +1030,9 @@ func (m model) row(it catalog.Item, selected bool, terms []string, showKind bool
 	b.WriteString(st(terminal.StyleAccent).Render(marker))
 	used := 2
 	if showKind && w >= 40 {
-		b.WriteString(cell(terminal.KindLabel(it.Kind), terminal.KindStyle(it.Kind), 7) + gap)
-		used += 9
+		kindW := 11
+		b.WriteString(cell(filterLabel(it.Kind), terminal.KindStyle(it.Kind), kindW) + gap)
+		used += kindW + 2
 	}
 	if m.scope == nil && w >= 56 {
 		owner, ownerW := it.ECU, 12

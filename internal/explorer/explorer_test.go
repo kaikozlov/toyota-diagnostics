@@ -42,13 +42,31 @@ INSERT INTO items VALUES(2,'NA',498,'dtc','U0131','Lost Communication with Power
 INSERT INTO items VALUES(3,'NA',80,'dtc','B1650','Airbag Occupant Classification','');
 INSERT INTO items VALUES(4,'NA',60,'did','0x6401','Driving Support Status','');
 INSERT INTO items VALUES(5,'NA',60,'active-test-support-data-definitions','ATSDD-01','PCS Support Data Definitions','');
+INSERT INTO items VALUES(6,'NA',60,'customize-group','CG-01','Air Conditioner Settings','');
+INSERT INTO items VALUES(7,'NA',60,'customize-item','CI-01','Auto Recirculation','');
+INSERT INTO items VALUES(8,'NA',60,'customize-probe','CP-01','Customize Probe','');
+INSERT INTO items VALUES(9,'NA',60,'legacy-pid','0x0C','Legacy PID','');
+INSERT INTO items VALUES(10,'NA',60,'legacy-did','0x0100','Legacy DID','');
+INSERT INTO items VALUES(11,'NA',60,'legacy-freeze-frame','LFF-01','Legacy Freeze Frame','');
+INSERT INTO items VALUES(12,'NA',60,'legacy-active-test','LAT-01','Legacy Active Test','');
+INSERT INTO items VALUES(13,'NA',60,'rob-code','RC-01','ROB Code','');
+INSERT INTO items VALUES(14,'NA',60,'rob-signal','RS-01','ROB Signal','');
+INSERT INTO items VALUES(15,'NA',60,'generic-ffd-signal','0x1593','Generic FFD','');
+INSERT INTO items VALUES(16,'NA',60,'group','GRP-01','Support Group','');
+INSERT INTO items VALUES(17,'NA',60,'active-test-group','ATG-01','Active Test Group','');
+INSERT INTO items VALUES(18,'NA',60,'ffd-signal','FFD-01','Freeze Frame Signal','');
+INSERT INTO items VALUES(19,'NA',60,'active-test-source','ATS-01','Active Test Source','');
 CREATE VIRTUAL TABLE items_fts USING fts5(name,detail,identifier,content='items',content_rowid='id',tokenize='unicode61',prefix='2 3 4');
 INSERT INTO items_fts(items_fts) VALUES('rebuild');
 CREATE TABLE item_payloads(item_id INTEGER PRIMARY KEY,data BLOB NOT NULL);`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for id, payload := range map[int]string{1: lta, 2: `{"code":"U013100","failure":"No Signal"}`, 3: `{"code":"B165000"}`, 4: `{"name":"Driving Support Status"}`, 5: `{"name":"PCS Support Data Definitions"}`} {
+	payloads := map[int]string{1: lta, 2: `{"code":"U013100","failure":"No Signal"}`, 3: `{"code":"B165000"}`, 4: `{"name":"Driving Support Status"}`, 5: `{"name":"PCS Support Data Definitions"}`}
+	for id := 6; id <= 19; id++ {
+		payloads[id] = `{}`
+	}
+	for id, payload := range payloads {
 		var buffer bytes.Buffer
 		writer := zlib.NewWriter(&buffer)
 		writer.Write([]byte(payload))
@@ -271,15 +289,15 @@ func TestSearchIsAsyncAndRejectsStaleResults(t *testing.T) {
 }
 
 func TestPreviewFollowsSelectionAndIgnoresLateAnswers(t *testing.T) {
-	m := typed(t, opened(t, 130, 30), "l")
-	m, cmd := press(m, tea.KeyDown)
-	_ = cmd
-	m, cmd = press(m, tea.KeyUp)
-	if cmd == nil {
-		t.Fatal("moving should request a preview")
+	m := typed(t, opened(t, 130, 30), "LTA")
+	if len(m.rows) != 1 || m.rows[0].Name != "LTA Control Condition" {
+		t.Fatalf("%+v", m.rows)
 	}
-	msg := cmd()
-	m, _ = update(m, msg)
+	cmd := m.loadPreview()
+	if cmd == nil {
+		t.Fatal("selection should load a preview")
+	}
+	m, _ = update(m, cmd())
 	if !strings.Contains(view(m), "OFF") {
 		t.Fatalf("wide layout should preview the record:\n%s", view(m))
 	}
@@ -553,5 +571,77 @@ func TestFiltersWrapInsteadOfOverflow(t *testing.T) {
 	plain := ansi.Strip(view(m))
 	if strings.Contains(plain, "active-test-support-data-definitions") {
 		t.Fatalf("long kind should be compacted:\n%s", plain)
+	}
+}
+
+func TestFilterLabelsDisambiguateCollapsedKindFamilies(t *testing.T) {
+	m := opened(t, 90, 24)
+	seen := map[string]string{}
+	for _, f := range m.filters {
+		if prev, ok := seen[f.label]; ok {
+			t.Fatalf("chip label %q used for both %q and %q", f.label, prev, f.kind)
+		}
+		seen[f.label] = f.kind
+	}
+	plain := ansi.Strip(view(m))
+	for _, stuck := range []string{"custom  custom", "legacy  legacy", "rob  rob"} {
+		if strings.Contains(strings.Join(strings.Fields(plain), "  "), stuck) {
+			t.Fatalf("collapsed family labels still visible: %q\n%s", stuck, plain)
+		}
+	}
+	want := map[string]string{
+		"customize-group":                      "cust-group",
+		"customize-item":                       "cust-item",
+		"customize-probe":                      "cust-probe",
+		"legacy-pid":                           "legacy-pid",
+		"legacy-did":                           "legacy-did",
+		"rob-code":                             "rob-code",
+		"rob-signal":                           "rob-signal",
+		"ffd-signal":                           "ffd",
+		"generic-ffd-signal":                   "generic-ffd",
+		"group":                                "group",
+		"active-test-group":                    "test-group",
+		"active-test-source":                   "test-src",
+		"active-test-support-data-definitions": "test-defs",
+	}
+	byKind := map[string]string{}
+	for _, f := range m.filters {
+		byKind[f.kind] = f.label
+	}
+	for kind, label := range want {
+		if byKind[kind] != label {
+			t.Fatalf("%s label=%q want %q (filters=%v)", kind, byKind[kind], label, byKind)
+		}
+	}
+}
+
+func TestEscBackRestoresECUSelection(t *testing.T) {
+	m := selectECU(t, opened(t, 90, 24), "frc")
+	if m.index == 0 {
+		t.Fatal("fixture must not place frc first, or restore would be invisible")
+	}
+	m, cmd := press(m, tea.KeyEnter)
+	m = settle(t, m, cmd)
+	if m.scope == nil || m.scope.Key != "frc" {
+		t.Fatal(m.scope)
+	}
+	m, cmd = press(m, tea.KeyEsc)
+	m = settle(t, m, cmd)
+	if m.scope != nil {
+		t.Fatal("expected to leave the ECU")
+	}
+	if m.rows[m.index].ECU != "frc" {
+		t.Fatalf("esc/back reset selection to %q (index %d)", m.rows[m.index].ECU, m.index)
+	}
+}
+
+func TestWideLayoutGutterTracksTerminalWidth(t *testing.T) {
+	small := opened(t, 120, 24)
+	wide := opened(t, 200, 24)
+	if small.listWidth() != 54 {
+		t.Fatalf("120-col list width=%d", small.listWidth())
+	}
+	if wide.listWidth() != 90 {
+		t.Fatalf("200-col list should grow with the window, width=%d", wide.listWidth())
 	}
 }
