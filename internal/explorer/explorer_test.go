@@ -862,3 +862,164 @@ func TestSingularCounts(t *testing.T) {
 		t.Fatalf("expected singular result count:\n%s", plain)
 	}
 }
+
+func TestBackRestoresMidWindowDirectoryOffset(t *testing.T) {
+	m := opened(t, 90, 24)
+	idx := -1
+	for i, row := range m.rows {
+		if row.ECU == "aaa20" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatal("missing aaa20")
+	}
+	h := m.bodyHeight()
+	offset := idx - h/2
+	endAlign := max(0, idx-h+1)
+	if offset <= 0 || offset == endAlign || offset+h >= len(m.rows) {
+		t.Fatalf("aaa20 is not a mid-window case: idx=%d h=%d offset=%d endAlign=%d rows=%d", idx, h, offset, endAlign, len(m.rows))
+	}
+	m.listOffset, m.index = offset, idx
+	slot := idx - m.listStart(h)
+	if slot < 2 || slot > h-3 {
+		t.Fatalf("selected row should sit mid-window, slot=%d h=%d", slot, h)
+	}
+	m, cmd := press(m, tea.KeyEnter)
+	if m.scope == nil || m.scope.Key != "aaa20" {
+		t.Fatalf("expected to open aaa20, scope=%v", m.scope)
+	}
+	m = settle(t, m, cmd)
+	if m.listOffset != 0 {
+		t.Fatalf("scoped list should start at top, offset=%d", m.listOffset)
+	}
+	m, cmd = press(m, tea.KeyEsc)
+	m = settle(t, m, cmd)
+	if m.scope != nil || m.index != idx || m.rows[m.index].ECU != "aaa20" {
+		t.Fatalf("back should restore aaa20, index=%d scope=%v", m.index, m.scope)
+	}
+	if m.listOffset != offset {
+		t.Fatalf("directory offset restored to %d, want mid-window %d (leave-time/end-align would be %d)", m.listOffset, offset, endAlign)
+	}
+}
+
+func TestResizeKeepsSelectionVisible(t *testing.T) {
+	m := opened(t, 200, 24)
+	h1 := m.bodyHeight()
+	if h1 < 6 {
+		t.Fatalf("tall window too short: %d", h1)
+	}
+	m.index = h1 - 2
+	m.listOffset = 0
+	if m.index >= len(m.rows) {
+		t.Fatalf("not enough rows: %d", len(m.rows))
+	}
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 12})
+	h2 := m.bodyHeight()
+	start := m.listStart(h2)
+	if m.index < start || m.index >= start+h2 {
+		t.Fatalf("selection %d offscreen after shrink (offset=%d height=%d)", m.index, start, h2)
+	}
+}
+
+func TestZeroResultsShownInTitle(t *testing.T) {
+	m := typed(t, opened(t, 90, 24), "zzz-no-such-record")
+	plain := ansi.Strip(view(m))
+	if !strings.Contains(plain, "0 results") {
+		t.Fatalf("expected 0 results in title:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Nothing matches") {
+		t.Fatalf("expected empty body message:\n%s", plain)
+	}
+}
+
+func TestMorePagerClickThroughRing(t *testing.T) {
+	for _, size := range [][2]int{{62, 19}, {20, 8}} {
+		m := opened(t, size[0], size[1])
+		want := map[string]bool{}
+		for _, f := range m.filters {
+			want[f.kind] = true
+		}
+		if len(want) < 3 {
+			t.Fatalf("%v too few filters: %v", size, filterKinds(m))
+		}
+		seen := map[string]bool{}
+		start := m.chipStart
+		for page := 0; page < len(m.filters)+3; page++ {
+			assertChipsAligned(t, m, size, page)
+			var pager *filterChip
+			for i, c := range m.chips {
+				if c.more {
+					pager = &m.chips[i]
+					continue
+				}
+				if c.index >= 0 && c.index < len(m.filters) {
+					seen[m.filters[c.index].kind] = true
+				}
+			}
+			if pager == nil {
+				if page == 0 && len(want) > len(seen) {
+					t.Fatalf("%v: expected a pager, chips=%+v filters=%v", size, m.chips, filterKinds(m))
+				}
+				break
+			}
+			if pager.label != "more" && pager.label != "first" {
+				t.Fatalf("%v page %d: confusing pager label %q", size, page, pager.label)
+			}
+			x := (pager.x0 + pager.x1) / 2
+			y := m.filterTop() + pager.line
+			if got := m.hitTest(x, y); got.action != hitMore {
+				t.Fatalf("%v page %d: pager hit %+v at %d,%d chip=%+v", size, page, got, x, y, *pager)
+			}
+			var cmd tea.Cmd
+			m, cmd = clickAt(m, x, y)
+			if cmd != nil {
+				t.Fatalf("%v page %d: paging should not load rows", size, page)
+			}
+			if pager.label == "first" {
+				if m.chipStart != 0 {
+					t.Fatalf("%v first should wrap to the start, chipStart=%d", size, m.chipStart)
+				}
+				break
+			}
+			if page > 0 && m.chipStart == start {
+				break
+			}
+		}
+		for kind := range want {
+			if !seen[kind] {
+				t.Fatalf("%v never reached kind %q; saw %v", size, kind, seen)
+			}
+		}
+	}
+}
+
+func assertChipsAligned(t *testing.T, m model, size [2]int, page int) {
+	t.Helper()
+	for i, a := range m.chips {
+		if a.x0 < 0 || a.x1 <= a.x0 || a.x1 > m.width {
+			t.Fatalf("%v page %d: chip %d out of bounds %+v width=%d", size, page, i, a, m.width)
+		}
+		for j, b := range m.chips {
+			if j <= i || a.line != b.line {
+				continue
+			}
+			if a.x0 < b.x1 && b.x0 < a.x1 {
+				t.Fatalf("%v page %d: overlap %+v vs %+v", size, page, a, b)
+			}
+		}
+		x := (a.x0 + a.x1) / 2
+		y := m.filterTop() + a.line
+		got := m.hitTest(x, y)
+		if a.more {
+			if got.action != hitMore {
+				t.Fatalf("%v page %d: pager paint/hit mismatch %+v -> %+v", size, page, a, got)
+			}
+			continue
+		}
+		if got != (hit{action: hitFilter, index: a.index}) {
+			t.Fatalf("%v page %d: chip paint/hit mismatch %+v -> %+v", size, page, a, got)
+		}
+	}
+}

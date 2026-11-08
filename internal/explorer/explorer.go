@@ -471,6 +471,7 @@ func (m *model) layout() {
 		m.input.Placeholder = "Search inside " + m.scope.Key + "…"
 	}
 	m.layoutFilters()
+	m.revealIndex()
 	m.renderPreview()
 }
 
@@ -480,7 +481,14 @@ type chipItem struct {
 	w     int
 }
 
-func moreChipLabel(n int) string { return "+" + strconv.Itoa(n) }
+func pagerChipLabel(forward bool) string {
+	if forward {
+		return "more"
+	}
+	return "first"
+}
+
+func pagerChipWidth() int { return ansi.StringWidth("first") }
 
 func packFilters(items []chipItem, start, width, maxLines, reserve int) ([]filterChip, int) {
 	var chips []filterChip
@@ -550,11 +558,11 @@ func (m *model) ensureFilterVisible() {
 	}
 	width := max(8, m.width)
 	maxLines := m.maxChipLines()
-	reserve := ansi.StringWidth(moreChipLabel(len(items)))
+	reserve := pagerChipWidth()
 	start := min(max(0, m.chipStart), len(items)-1)
 	for range items {
 		chips, consumed := packFilters(items, start, width, maxLines, reserve)
-		if consumed == len(items)-start {
+		if start == 0 && consumed == len(items) {
 			chips, consumed = packFilters(items, start, width, maxLines, 0)
 		}
 		if consumed <= 0 {
@@ -598,9 +606,9 @@ func (m *model) rebuildFilterChips() {
 	}
 	width := max(8, m.width)
 	start := min(max(0, m.chipStart), len(items)-1)
-	reserve := ansi.StringWidth(moreChipLabel(len(items)))
+	reserve := pagerChipWidth()
 	chips, consumed := packFilters(items, start, width, m.maxChipLines(), reserve)
-	if consumed == len(items)-start {
+	if start == 0 && consumed == len(items) {
 		chips, consumed = packFilters(items, start, width, m.maxChipLines(), 0)
 	}
 	m.chipStart = start
@@ -608,17 +616,14 @@ func (m *model) rebuildFilterChips() {
 }
 
 func (m *model) applyPackedChips(chips []filterChip, start, consumed int, items []chipItem) {
-	hidden := start + (len(items) - (start + consumed))
-	if hidden > 0 {
-		label := moreChipLabel(hidden)
-		w := ansi.StringWidth(label)
+	hiddenAfter := len(items) - (start + consumed)
+	if hiddenAfter > 0 || start > 0 {
+		label := pagerChipLabel(hiddenAfter > 0)
+		w := pagerChipWidth()
 		line, x := 0, 1
 		if len(chips) > 0 {
 			last := chips[len(chips)-1]
 			line, x = last.line, last.x1+2
-		}
-		if x+w > max(8, m.width) {
-			x = max(1, max(8, m.width)-w)
 		}
 		chips = append(chips, filterChip{index: -1, label: label, line: line, x0: x, x1: x + w, more: true})
 	}
@@ -686,8 +691,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.rows, m.err, m.loading, m.index, m.previewTop, m.listOffset = msg.rows, msg.err, false, 0, 0, 0
-		if key := m.restoreKey; key != "" {
-			offset := m.restoreOffset
+		// Restore the directory viewport only after leaving a scope. Applying
+		// it to the scoped listing would look for an ECU row that is not there
+		// and clear the snapshot saved at enter.
+		if m.scope == nil && m.restoreKey != "" {
+			key, offset := m.restoreKey, m.restoreOffset
 			m.restoreKey, m.restoreOffset = "", 0
 			for i, row := range m.rows {
 				if row.Kind == "ecu" && row.ECU == key {
@@ -848,6 +856,8 @@ func (m model) openSelection() (model, tea.Cmd) {
 			m.err = err
 			return m, nil
 		}
+		m.restoreKey = e.Key
+		m.restoreOffset = m.listOffset
 		m.scope = &e
 		m.input.SetValue("")
 		m.filter = 0
@@ -866,9 +876,8 @@ func (m model) openSelection() (model, tea.Cmd) {
 }
 
 func (m model) leaveScope() (model, tea.Cmd) {
-	if m.scope != nil {
+	if m.scope != nil && m.restoreKey == "" {
 		m.restoreKey = m.scope.Key
-		m.restoreOffset = m.listOffset
 	}
 	m.scope = nil
 	m.filter = 0
@@ -1083,7 +1092,7 @@ func (m model) status() string {
 		return ""
 	case m.loading && len(m.rows) == 0:
 		return "searching…"
-	case len(m.rows) == 0:
+	case len(m.rows) == 0 && m.query() == "":
 		return ""
 	}
 	n := len(m.rows)
