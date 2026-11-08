@@ -4,19 +4,78 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 )
 
+func (d *DB) hasTable(ctx context.Context, name string) (bool, error) {
+	var found string
+	err := d.db.QueryRowContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", name).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// MissingRuntimeMetadataError explains that a browse-only or incomplete
+// catalog cannot load a recovered runtime document.
+type MissingRuntimeMetadataError struct {
+	Path, Member, Detail string
+}
+
+func (e *MissingRuntimeMetadataError) Error() string {
+	if e.Detail != "" {
+		return e.Detail
+	}
+	return fmt.Sprintf("runtime metadata %q is not present in %s", e.Member, e.Path)
+}
+
+func (d *DB) missingRuntime(member, detail string) error {
+	return &MissingRuntimeMetadataError{Path: d.Path, Member: member, Detail: detail}
+}
+
+func (d *DB) runtimeStoreError(member string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		what := fmt.Sprintf("runtime metadata %q is not present in this catalog", member)
+		switch {
+		case member == "index.json":
+			what = "catalog is missing index.json runtime metadata (needed to resolve vehicles, routes, and session/support tables)"
+		case strings.HasPrefix(member, "supplement://"):
+			what = fmt.Sprintf("catalog is missing %s (needed for FFD recorder semantics)", member)
+		}
+		return d.missingRuntime(member, what+"; regenerate the SQLite catalog with `tools/gts bundle sqlite`")
+	}
+	return fmt.Errorf("runtime metadata %s: %w; regenerate the SQLite catalog with `tools/gts bundle sqlite`", member, err)
+}
+
+func (d *DB) requireRuntimeDocuments(ctx context.Context) error {
+	ok, err := d.hasTable(ctx, "runtime_documents")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return d.missingRuntime("", "this catalog is browse-only (no runtime_documents table); search and ECU browsing still work, but live commands, recovered plans, and runtime document decode need a catalog generated with `tools/gts bundle sqlite`")
+	}
+	return nil
+}
+
 // Document reads runtime metadata from the same catalog as search. Indexed
 // records are stored once and restored into their canonical source locations.
 func (d *DB) Document(ctx context.Context, member string) (map[string]any, error) {
+	if err := d.requireRuntimeDocuments(ctx); err != nil {
+		return nil, err
+	}
 	var data []byte
 	if err := d.db.QueryRowContext(ctx, "SELECT data FROM runtime_documents WHERE member=?", member).Scan(&data); err != nil {
-		return nil, fmt.Errorf("runtime metadata %s: %w; regenerate the SQLite catalog with tools/gts bundle sqlite", member, err)
+		return nil, d.runtimeStoreError(member, err)
 	}
 	raw, err := inflateDocument(data)
 	if err != nil {
@@ -31,7 +90,7 @@ func (d *DB) Document(ctx context.Context, member string) (map[string]any, error
 	}
 	rows, err := d.db.QueryContext(ctx, "SELECT s.pointer,p.data FROM item_sources s LEFT JOIN item_payloads p ON p.item_id=s.item_id WHERE s.member=? ORDER BY s.item_id", member)
 	if err != nil {
-		return nil, err
+		return nil, d.runtimeStoreError(member, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
