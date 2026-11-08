@@ -7,7 +7,7 @@ import json
 import sys
 from typing import Any
 
-from toyota_diag import active_test, customize, decode, discovery, dtc, executor, monitor, recorder, registry, resolver, snapshot, utility
+from toyota_diag import active_test, customize, decode, discovery, dtc, executor, monitor, recorder, registry, resolver, snapshot, term, utility
 from toyota_diag.registry import Profile
 from toyota_diag.session import DiagnosticSession, LifecycleError
 
@@ -502,14 +502,16 @@ def cmd_vehicle_detect(args, profile: Profile) -> int:
     if args.json:
       print(json.dumps(document, sort_keys=True))
     else:
-      print(f"VIN: {vin_info['vin']}  RX={vin_info['rx_address']:#x} bus={vin_info['rx_bus']} region={profile.region}")
+      print(term.title(term.bold(vin_info["vin"]),
+                       f"RX {vin_info['rx_address']:#x} · bus {vin_info['rx_bus']} · {profile.region}"))
       for row in matches:
         sets = ",".join(str(value) for value in row["install_set_ids"])
-        marker = "✓" if row.get("resolution_complete", True) else "…"
+        marker = term.accent("✓") if row.get("resolution_complete", True) else term.dim("…")
         stage = "" if row.get("resolution_complete", True) else f"; next={','.join(row.get('resolver_stages') or [])}"
-        print(f"{marker} Toyota type {row['vehicle_type']} {row.get('name') or '(unnamed)'}; install sets {sets}{stage}")
+        print(f"{term.GUTTER}{marker} Toyota type {row['vehicle_type']} {row.get('name') or '(unnamed)'} "
+              + term.dim(f"; install sets {sets}{stage}"))
       if not matches:
-        print("no Toyota DB vehicle matched the recovered VIN-decision rows")
+        print(term.GUTTER + term.dim("no Toyota DB vehicle matched the recovered VIN-decision rows"))
     return 0 if matches else 1
 
   match = resolver.resolve_profile_vin(profile, vin_info["vin"])
@@ -1323,16 +1325,18 @@ def cmd_transport_status(args, profile: Profile) -> int:
   if args.json:
     print(json.dumps(state, sort_keys=True))
   else:
-    print(f"backend: {state.get('backend', getattr(args, 'transport_backend', 'panda'))}")
-    print(f"mode:    {state['mode']}")
-    print(f"ready:   {'yes' if state['ready'] else 'no'}")
+    ready = "yes" if state["ready"] else "no"
+    print(term.title(term.bold("Transport"), f"{'ready' if state['ready'] else 'not ready'}"))
+    print(term.kv("Backend", state.get("backend", getattr(args, "transport_backend", "panda"))))
+    print(term.kv("Mode", state["mode"]))
+    print(term.kv("Ready", term.accent(ready) if state["ready"] else term.red(ready)))
     if state.get("library"):
-      print(f"library: {state['library']}")
+      print(term.kv("Library", state["library"]))
     if state.get("device_selector"):
-      print(f"device:  {state['device_selector']}")
+      print(term.kv("Device", state["device_selector"]))
     if "pandad_running" in state:
-      print(f"pandad:  {'running' if state['pandad_running'] else 'stopped'}")
-    print(f"detail:  {state['detail']}")
+      print(term.kv("Pandad", "running" if state["pandad_running"] else "stopped"))
+    print(term.kv("Detail", state["detail"]))
   return 0 if state["ready"] else 1
 
 
@@ -1342,13 +1346,14 @@ def cmd_transport_list(args, profile: Profile) -> int:
   if args.json:
     print(json.dumps(document, sort_keys=True))
     return 0
+  print(term.title(term.bold("Transports"), term.plural(len(document["backends"]), "backend", "backends")))
   for backend in document["backends"]:
-    print(f"{backend['name']}: {backend['kind']}")
+    print(term.bold(backend["name"]) + "  " + term.dim(backend["kind"]))
     for provider in backend.get("providers", []):
-      mark = "✓" if provider.get("loadable") else "-"
-      print(f"  {mark} {provider['name']}  {provider['library']}  [{provider['source']}]")
+      mark = term.accent("✓") if provider.get("loadable") else term.dim("-")
+      print(f"{term.GUTTER}{mark} {provider['name']}  {term.dim(provider['library'])}  {term.dim('[' + provider['source'] + ']')}")
       if provider.get("error"):
-        print(f"    {provider['error']}")
+        print(f"{term.GUTTER}  {term.red(provider['error'])}")
   return 0
 
 
@@ -1464,11 +1469,16 @@ def cmd_dtc_scan(args, profile: Profile) -> int:
       "ecus": ecus,
     }, sort_keys=True))
   else:
-    print(f"responding ECUs: {len(responding)}; fault-status records: {len(faults)}")
+    print(term.title(term.bold("DTC scan"),
+                     f"{len(responding)} responding · {term.plural(len(faults), 'fault record', 'fault records')}"))
     for target, code, _ in faults:
       ecu = target if isinstance(target, registry.EcuSpec) else profile.lookup_ecu(target)
       for info in profile.describe_dtc(ecu, code):
-        print(f"  {ecu.name} {code}: {info.get('description') or ''} — {info.get('failure') or ''}")
+        failure = info.get("failure") or ""
+        print(f"{term.GUTTER}{ecu.name}  {term.blue(code)}  {info.get('description') or ''}"
+              + (f" — {failure}" if failure else ""))
+    if not faults:
+      print(term.GUTTER + term.dim("no fault-status records"))
   return 1 if faults else 0
 
 

@@ -1,12 +1,15 @@
-// Package catalog reads the indexed, lossless SQLite projection of GTS+.
+// Package catalog reads the indexed SQLite catalog of GTS+ records.
 package catalog
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -14,9 +17,11 @@ import (
 	"unicode"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/kaikozlov/toyota-diagnostics/internal/suggest"
 )
 
-const schema = "toyota-diagnostics-sqlite-v1"
+const schema = "toyota-diagnostics-sqlite-v2"
 
 type DB struct {
 	db   *sql.DB
@@ -24,6 +29,7 @@ type DB struct {
 }
 
 type Item struct {
+	ID         int64  `json:"id"`
 	Kind       string `json:"kind"`
 	Region     string `json:"region"`
 	CategoryID int    `json:"category_id"`
@@ -32,6 +38,11 @@ type Item struct {
 	Identifier string `json:"identifier"`
 	Name       string `json:"name"`
 	Detail     string `json:"detail"`
+}
+
+type ItemDetail struct {
+	Item
+	Payload json.RawMessage `json:"payload"`
 }
 
 type ECU struct {
@@ -44,6 +55,7 @@ type ECU struct {
 	SupportMode   string         `json:"support_mode"`
 	CatalogMember string         `json:"catalog_member,omitempty"`
 	Counts        map[string]int `json:"counts"`
+	ItemsByKind   map[string]int `json:"items_by_kind,omitempty"`
 }
 
 type Vehicle struct {
@@ -135,18 +147,34 @@ func (d *DB) Stats(ctx context.Context) (Stats, error) {
 		return s, fmt.Errorf("invalid member_count %q", members)
 	}
 	for _, row := range []struct {
-		query string
+		table string
 		dst   *int
-	}{
-		{"SELECT count(*) FROM items", &s.Items},
-		{"SELECT count(*) FROM vehicles", &s.Vehicles},
-		{"SELECT count(*) FROM ecus", &s.ECUs},
-	} {
-		if err := d.db.QueryRowContext(ctx, row.query).Scan(row.dst); err != nil {
+	}{{"items", &s.Items}, {"vehicles", &s.Vehicles}, {"ecus", &s.ECUs}} {
+		n, err := d.rowCount(ctx, row.table)
+		if err != nil {
 			return s, err
 		}
+		*row.dst = n
 	}
 	return s, nil
+}
+
+// rowCount reads the exact count recorded by ANALYZE when the catalog was
+// generated; the file is immutable, so it cannot go stale. Counting 200k rows
+// takes a third of a second, which is a long time for a status command.
+func (d *DB) rowCount(ctx context.Context, table string) (int, error) {
+	var stat string
+	err := d.db.QueryRowContext(ctx, `SELECT stat FROM sqlite_stat1 WHERE tbl=? LIMIT 1`, table).Scan(&stat)
+	if err == nil {
+		if n, convErr := strconv.Atoi(strings.Fields(stat)[0]); convErr == nil && n >= 0 {
+			return n, nil
+		}
+	}
+	var n int
+	if err := d.db.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 func (d *DB) Verify(ctx context.Context) error {
@@ -177,20 +205,34 @@ func ftsQuery(query string) string {
 	terms := make([]string, 0, len(words))
 	for _, word := range words {
 		// Prefix matching allows LTA, steer, and multiword queries as typed.
-		if len([]rune(word)) <= 1 {
-			continue
-		}
 		terms = append(terms, `"`+strings.ToLower(word)+`"*`)
 	}
 	return strings.Join(terms, " AND ")
 }
 
 func (d *DB) Search(ctx context.Context, region, query string, limit int) ([]Item, error) {
+	return d.search(ctx, region, 0, "", query, limit)
+}
+
+// SearchECU is Search confined to one ECU category.
+func (d *DB) SearchECU(ctx context.Context, e ECU, query string, limit int) ([]Item, error) {
+	return d.search(ctx, e.Region, e.CategoryID, "", query, limit)
+}
+
+// SearchKind is Search confined to one record kind, optionally within an ECU
+// (category 0 means every ECU).
+func (d *DB) SearchKind(ctx context.Context, region string, category int, kind, query string, limit int) ([]Item, error) {
+	return d.search(ctx, region, category, kind, query, limit)
+}
+
+// search runs the ranked full-text query; category 0 means every ECU and an
+// empty kind means every kind.
+func (d *DB) search(ctx context.Context, region string, category int, kind, query string, limit int) ([]Item, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("limit must be positive")
 	}
-	if limit > 1000 {
-		limit = 1000
+	if limit > 5000 {
+		limit = 5000
 	}
 	region, err := Region(region)
 	if err != nil {
@@ -198,23 +240,23 @@ func (d *DB) Search(ctx context.Context, region, query string, limit int) ([]Ite
 	}
 	match := ftsQuery(query)
 	if match == "" {
-		return nil, nil
+		return []Item{}, nil
 	}
 	// All fields in the source item remain addressable by kind, region and ECU.
 	rows, err := d.db.QueryContext(ctx, `
-SELECT i.kind, i.region, i.category_id, coalesce(e.key,''), coalesce(e.name,''),
+SELECT i.id, i.kind, i.region, i.category_id, coalesce(e.key,''), coalesce(e.name,''),
        i.identifier, i.name, i.detail
 FROM items_fts
 JOIN items i ON i.id=items_fts.rowid
 LEFT JOIN ecus e ON e.region=i.region AND e.category_id=i.category_id
-WHERE items_fts MATCH ? AND i.region=?
+WHERE items_fts MATCH ? AND i.region=? AND (?=0 OR i.category_id=?) AND (?='' OR i.kind=?)
 ORDER BY CASE WHEN lower(e.key)=lower(?) AND i.kind='ecu' THEN -2
               WHEN lower(e.key)=lower(?) THEN -1
               WHEN lower(i.name)=lower(?) THEN 0
               WHEN lower(i.identifier)=lower(?) THEN 1 ELSE 2 END,
          bm25(items_fts, 10.0, 1.0, 3.0),
          i.kind, i.category_id, i.identifier, i.id
-LIMIT ?`, match, region, query, query, query, query, limit)
+LIMIT ?`, match, region, category, category, kind, kind, query, query, query, query, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +264,7 @@ LIMIT ?`, match, region, query, query, query, query, limit)
 	out := make([]Item, 0)
 	for rows.Next() {
 		var r Item
-		if err := rows.Scan(&r.Kind, &r.Region, &r.CategoryID, &r.ECU, &r.ECUName, &r.Identifier, &r.Name, &r.Detail); err != nil {
+		if err := rows.Scan(&r.ID, &r.Kind, &r.Region, &r.CategoryID, &r.ECU, &r.ECUName, &r.Identifier, &r.Name, &r.Detail); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -246,8 +288,23 @@ func scanECU(rows *sql.Rows) (ECU, error) {
 	}
 	e.SupportMode = mode.String
 	e.CatalogMember = member.String
-	if err := json.Unmarshal([]byte(counts), &e.Counts); err != nil {
+	var rawCounts map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(counts), &rawCounts); err != nil {
 		return e, err
+	}
+	e.Counts = make(map[string]int)
+	for key, raw := range rawCounts {
+		if key == "items_by_kind" {
+			if err := json.Unmarshal(raw, &e.ItemsByKind); err != nil {
+				return e, err
+			}
+			continue
+		}
+		var count int
+		if err := json.Unmarshal(raw, &count); err != nil {
+			return e, err
+		}
+		e.Counts[key] = count
 	}
 	return e, nil
 }
@@ -255,6 +312,13 @@ func scanECU(rows *sql.Rows) (ECU, error) {
 const selectECUs = `SELECT region,category_id,key,name,database_name,generation,support_mode,catalog_member,counts FROM ecus`
 
 func (d *DB) ECUs(ctx context.Context, region, query string, limit int) ([]ECU, error) {
+	return d.ListECUs(ctx, region, query, false, limit)
+}
+
+// ListECUs matches by key, name or category. An exact key always leads, and
+// ECUs with a decoded catalog precede the declaration-only ones, which are
+// numerous and rarely what a person is looking for.
+func (d *DB) ListECUs(ctx context.Context, region, query string, decodedOnly bool, limit int) ([]ECU, error) {
 	region, err := Region(region)
 	if err != nil {
 		return nil, err
@@ -265,8 +329,11 @@ func (d *DB) ECUs(ctx context.Context, region, query string, limit int) ([]ECU, 
 	pattern := "%" + escapeLike(query) + "%"
 	rows, err := d.db.QueryContext(ctx, selectECUs+` WHERE region=? AND
   (key LIKE ? ESCAPE '\' OR name LIKE ? ESCAPE '\' OR cast(category_id as text)=?)
-ORDER BY CASE WHEN lower(key)=lower(?) THEN 0 ELSE 1 END, category_id LIMIT ?`,
-		region, pattern, pattern, query, query, limit)
+  AND (?=0 OR catalog_member IS NOT NULL)
+ORDER BY CASE WHEN lower(key)=lower(?) THEN 0 ELSE 1 END,
+         CASE WHEN catalog_member IS NULL THEN 1 ELSE 0 END,
+         key COLLATE NOCASE, category_id LIMIT ?`,
+		region, pattern, pattern, query, decodedOnly, query, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -282,13 +349,94 @@ ORDER BY CASE WHEN lower(key)=lower(?) THEN 0 ELSE 1 END, category_id LIMIT ?`,
 	return out, rows.Err()
 }
 
+// NotFoundError reports a lookup that matched nothing, with near misses.
+type NotFoundError struct {
+	What        string
+	Query       string
+	Suggestions []string
+}
+
+func (e *NotFoundError) Error() string {
+	switch e.What {
+	case "":
+		return fmt.Sprintf("nothing matches %q", e.Query)
+	case "command":
+		return fmt.Sprintf("unknown command %q", e.Query)
+	}
+	return fmt.Sprintf("no %s matches %q", e.What, e.Query)
+}
+
+// AmbiguousError reports a lookup that matched several records equally well.
+type AmbiguousError struct {
+	What    string
+	Query   string
+	Matches []ECU
+}
+
+func (e *AmbiguousError) Error() string {
+	return fmt.Sprintf("ambiguous %s %q: %s", e.What, e.Query, joinECUNames(e.Matches, 8))
+}
+
+// ECUNames lists every ECU key and display name, for spelling suggestions.
+func (d *DB) ECUNames(ctx context.Context, region string) ([]string, error) {
+	region, err := Region(region)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.db.QueryContext(ctx, `SELECT key, name FROM ecus WHERE region=? ORDER BY catalog_member IS NULL, key`, region)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var key, name string
+		if err := rows.Scan(&key, &name); err != nil {
+			return nil, err
+		}
+		out = append(out, key, name)
+	}
+	return out, rows.Err()
+}
+
+// suggestECUs proposes ECU keys for a misspelled key or display name.
+func (d *DB) suggestECUs(ctx context.Context, region, query string) []string {
+	pairs, err := d.ECUNames(ctx, region)
+	if err != nil {
+		return nil
+	}
+	keyOf := map[string]string{}
+	pool := make([]string, 0, len(pairs))
+	for i := 0; i+1 < len(pairs); i += 2 {
+		key, name := pairs[i], pairs[i+1]
+		keyOf[key] = key
+		if _, ok := keyOf[name]; !ok {
+			keyOf[name] = key
+		}
+		pool = append(pool, key, name)
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, hit := range suggest.Closest(query, pool, 12) {
+		key := keyOf[hit]
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, key)
+		}
+		if len(out) == 4 {
+			break
+		}
+	}
+	return out
+}
+
 func (d *DB) ECU(ctx context.Context, region, query string) (ECU, error) {
 	ecus, err := d.ECUs(ctx, region, query, 200)
 	if err != nil {
 		return ECU{}, err
 	}
 	if len(ecus) == 0 {
-		return ECU{}, fmt.Errorf("no ECU matches %q", query)
+		return ECU{}, &NotFoundError{What: "ECU", Query: query, Suggestions: d.suggestECUs(ctx, region, query)}
 	}
 	// A stable key or category number takes precedence over ambiguous OEM
 	// display names such as "EPS" shared by many Toyota generations.
@@ -310,7 +458,7 @@ func (d *DB) ECU(ctx context.Context, region, query string) (ECU, error) {
 		ecus = exact
 	}
 	if len(ecus) != 1 {
-		return ECU{}, fmt.Errorf("ambiguous ECU %q: %s", query, joinECUNames(ecus, 8))
+		return ECU{}, &AmbiguousError{What: "ECU", Query: query, Matches: ecus}
 	}
 	return ecus[0], nil
 }
@@ -333,13 +481,26 @@ func escapeLike(s string) string {
 	return strings.ReplaceAll(s, "_", "\\_")
 }
 
+// ECUItems lists one family of an ECU's records. Without a query they come
+// in identifier order. With one, words match from the start ("steer" finds
+// "Steering") and the best match leads; only when that finds nothing does a
+// plain substring match run, so "volt" still finds "Undervoltage".
 func (d *DB) ECUItems(ctx context.Context, e ECU, kind, query string, limit int) ([]Item, error) {
 	if limit <= 0 || limit > 5000 {
 		limit = 5000
 	}
+	if strings.TrimSpace(query) != "" {
+		ranked, err := d.search(ctx, e.Region, e.CategoryID, kind, query, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(ranked) > 0 {
+			return ranked, nil
+		}
+	}
 	pattern := "%" + escapeLike(query) + "%"
 	rows, err := d.db.QueryContext(ctx, `
-SELECT kind,region,category_id,identifier,name,detail FROM items
+SELECT id,kind,region,category_id,identifier,name,detail FROM items
 WHERE region=? AND category_id=? AND kind=? AND
 (identifier LIKE ? ESCAPE '\' OR name LIKE ? ESCAPE '\' OR detail LIKE ? ESCAPE '\')
 ORDER BY identifier COLLATE NOCASE, id LIMIT ?`,
@@ -351,7 +512,86 @@ ORDER BY identifier COLLATE NOCASE, id LIMIT ?`,
 	out := make([]Item, 0)
 	for rows.Next() {
 		var it Item
-		if err := rows.Scan(&it.Kind, &it.Region, &it.CategoryID, &it.Identifier, &it.Name, &it.Detail); err != nil {
+		if err := rows.Scan(&it.ID, &it.Kind, &it.Region, &it.CategoryID, &it.Identifier, &it.Name, &it.Detail); err != nil {
+			return nil, err
+		}
+		it.ECU, it.ECUName = e.Key, e.Name
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// ItemsByIdentifier finds an ECU's records by DID, DTC or test identifier.
+// Hex is forgiving: 0x1601, 1601 and 0X1601 are the same identifier.
+func (d *DB) ItemsByIdentifier(ctx context.Context, e ECU, ident string) ([]Item, error) {
+	norm := func(s string) string { return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(s)), "0x") }
+	want := norm(ident)
+	if want == "" {
+		return nil, nil
+	}
+	rows, err := d.db.QueryContext(ctx, `
+SELECT id,kind,region,category_id,identifier,name,detail FROM items
+WHERE region=? AND category_id=? AND kind NOT IN ('ecu','vehicle')
+  AND lower(replace(identifier,'0x',''))=?
+ORDER BY kind, id`, e.Region, e.CategoryID, want)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Item, 0)
+	for rows.Next() {
+		var it Item
+		if err := rows.Scan(&it.ID, &it.Kind, &it.Region, &it.CategoryID, &it.Identifier, &it.Name, &it.Detail); err != nil {
+			return nil, err
+		}
+		it.ECU, it.ECUName = e.Key, e.Name
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// VehicleGroup collapses Toyota's per-generation vehicle types that share an
+// OEM name; the type IDs remain the precise handles.
+type VehicleGroup struct {
+	Name  string `json:"name"`
+	Types []int  `json:"vehicle_types"`
+}
+
+// GroupVehicles preserves the order of first appearance.
+func GroupVehicles(vehicles []Vehicle) []VehicleGroup {
+	index := map[string]int{}
+	var out []VehicleGroup
+	for _, v := range vehicles {
+		key := strings.ToLower(v.Name)
+		i, ok := index[key]
+		if !ok {
+			i = len(out)
+			index[key] = i
+			out = append(out, VehicleGroup{Name: v.Name})
+		}
+		out[i].Types = append(out[i].Types, v.Type)
+	}
+	return out
+}
+
+// ECURecords lists an ECU's records without a search term: one kind, or all
+// kinds (grouped by kind, then identifier) when kind is empty.
+func (d *DB) ECURecords(ctx context.Context, e ECU, kind string, limit int) ([]Item, error) {
+	if limit <= 0 || limit > 5000 {
+		limit = 5000
+	}
+	rows, err := d.db.QueryContext(ctx, `
+SELECT id,kind,region,category_id,identifier,name,detail FROM items
+WHERE region=? AND category_id=? AND kind NOT IN ('ecu','vehicle') AND (?='' OR kind=?)
+ORDER BY kind, identifier COLLATE NOCASE, id LIMIT ?`, e.Region, e.CategoryID, kind, kind, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Item, 0)
+	for rows.Next() {
+		var it Item
+		if err := rows.Scan(&it.ID, &it.Kind, &it.Region, &it.CategoryID, &it.Identifier, &it.Name, &it.Detail); err != nil {
 			return nil, err
 		}
 		it.ECU, it.ECUName = e.Key, e.Name
@@ -428,4 +668,55 @@ ORDER BY v.category_id, v.route_selector, v.install_set_id`, v.Region, v.Type)
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+// VehicleECUCounts maps each vehicle type to how many distinct ECUs its
+// install sets declare, in one pass.
+func (d *DB) VehicleECUCounts(ctx context.Context, region string) (map[int]int, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT vehicle_type, count(DISTINCT category_id) FROM vehicle_ecus WHERE region=? GROUP BY vehicle_type`, region)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int]int{}
+	for rows.Next() {
+		var vt, n int
+		if err := rows.Scan(&vt, &n); err != nil {
+			return nil, err
+		}
+		out[vt] = n
+	}
+	return out, rows.Err()
+}
+
+// Item retrieves the source record behind a search result. IDs belong to the
+// current catalog; callers should not carry them across catalog replacements.
+func (d *DB) Item(ctx context.Context, id int64) (ItemDetail, error) {
+	var result ItemDetail
+	var compressed []byte
+	err := d.db.QueryRowContext(ctx, `SELECT i.id,i.kind,i.region,i.category_id,
+ coalesce(e.key,''),coalesce(e.name,''),i.identifier,i.name,i.detail,p.data
+ FROM items i JOIN item_payloads p ON p.item_id=i.id LEFT JOIN ecus e ON e.region=i.region AND e.category_id=i.category_id
+ WHERE i.id=?`, id).Scan(&result.ID, &result.Kind, &result.Region, &result.CategoryID,
+		&result.ECU, &result.ECUName, &result.Identifier, &result.Name, &result.Detail, &compressed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, fmt.Errorf("no catalog item %d", id)
+	}
+	if err != nil {
+		return result, err
+	}
+	reader, err := zlib.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return result, fmt.Errorf("invalid payload for catalog item %d: %w", id, err)
+	}
+	defer reader.Close()
+	payload, err := io.ReadAll(reader)
+	if err != nil {
+		return result, fmt.Errorf("read catalog item %d: %w", id, err)
+	}
+	if !json.Valid(payload) {
+		return result, fmt.Errorf("invalid payload for catalog item %d", id)
+	}
+	result.Payload = json.RawMessage(payload)
+	return result, nil
 }

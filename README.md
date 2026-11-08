@@ -14,10 +14,29 @@ tools/gts bundle sqlite --out ../toyota-diagnostics/build/catalog.sqlite
 
 cd ../toyota-diagnostics
 ./toyota search LTA
+./toyota inspect 12345 --json   # item ID from search results
 ./toyota frc data "LTA Control"
 ./toyota vehicle 12704
 ./toyota monitor frc LTA
 ```
+
+Everything offline is instant and reads the same way:
+
+```bash
+toyota                          # explorer: browse ECUs, search as you type, preview records
+toyota search LTA               # every signal, trouble code, Active Test, ECU and vehicle
+toyota frc                      # one ECU at a glance (key, name or category number)
+toyota frc data steer           # its Data List, best match first
+toyota frc 0x1601               # decode one DID, DTC or Active Test by identifier
+toyota frc LTA control          # free text searches just that ECU
+toyota vehicle Camry            # variants of a model; `toyota vehicle 10041` for one type
+```
+
+A bare word that is not an ECU or command searches instead of failing, and typos get corrections (`toyota frcc` suggests `frc`). Long listings open in `$PAGER` (`less -FRX` by default; `TOYOTA_PAGER=cat` or `PAGER=cat` disables it). Colour follows `NO_COLOR`, `CLICOLOR_FORCE` and `TOYOTA_THEME=light|dark`; `TOYOTA_REGION` sets the default region. `toyota completion zsh|bash|fish` installs tab completion that knows your ECUs.
+
+Search rows end with a record number; `toyota inspect N` shows that record, and `--json` emits its metadata and payload. Record numbers belong to the generated catalog and can change when it is regenerated, so prefer `toyota ECU IDENT` in anything you keep. Human output decodes records for their kind (bit layout, scaling, value tables, DTC code/failure byte); `--json` always carries the complete source record.
+
+The explorer opens on the ECUs that have decoded catalogs. `enter` on an ECU steps into it (`esc` or backspace steps out), `tab` cycles record kinds, `ctrl+r` cycles regions, and terminals at least 110 columns wide preview the highlighted record beside the list.
 
 The root launcher builds `build/toyota` on first use when Go is available. The SQLite file and binary are generated artifacts under `build/`, not tracked source. `TOYOTA_CATALOG` or `--db` selects another runtime database.
 
@@ -35,20 +54,19 @@ Offline discovery works without Panda access. The CLI is ECU-first now, so you c
 
 ```bash
 toyota search LTA
-toyota ecu list
-toyota ecu frc
+toyota ecu                         # ECUs that have decoded catalogs; --all adds declared-only ones
+toyota ecu brake                   # find ECUs by key or name
 toyota frc                         # shorthand for `ecu frc`
-toyota ecu frc data "LTA Control"
-toyota frc data "LTA Control"      # shorthand keeps ECU context
+toyota frc data "LTA Control"
+toyota frc dtcs U0131
+toyota frc tests                   # Active Tests (also: active-tests)
+toyota frc plugins
+toyota frc 0x1601                  # decode a DID; several signals sharing it show as a bit map
 toyota frc monitor "LTA Control"      # live ECU-first shorthand
 toyota frc read 0x1601                 # shorthand for `did read frc ...`
-toyota ecu frc dtcs U0131
-toyota ecu frc active-tests
-toyota ecu frc plugins
 toyota utility list
 toyota utility plan single_routine_active_test
 toyota vehicle
-toyota vehicle list
 toyota can topology
 toyota did decode eps 0x1037 0001
 toyota active-test plan frc 0xA429
@@ -57,6 +75,8 @@ toyota search "Arbitration result Lateral ID"
 toyota ffd data "pinion angle"
 toyota ffd robs "Hands Free"
 ```
+
+`toyota help` is the front door and `toyota help COMMAND` has examples; both work without a catalog. Offline output is a stable contract only through `--json` (`search` returns an array; ECU families return `{ecu, items, shown}`; an identifier returns `{ecu, records}`; `vehicle` lists every type ungrouped); the human layout is free to evolve.
 
 `search` spans ECU/category names, Data List signals, DTCs, Active Tests, v4 function/plugin bindings, recovered generic utility-family metadata, and the separate PCS Data Viewer TSS3 Operation-FFD signal/trigger namespace. This matters because recorder-only Toyota names such as `Arbitration result_lateral ID` (`0x5285`) and `Arbitration result Pinion angle` (`0x57DE`) do not exist in the ordinary P5 Data Monitor DDB. `ecu ... functions` shows the recovered type-26/27 function/detail hierarchy even where Toyota's function names remain unrecovered; `ecu ... plugins` shows the role → DLL binding and only labels semantic kinds recovered for the exact plugin identity. Offline catalog browsing (`ecu list/info/functions/plugins/data/dtcs/active-tests`, `did list`, and `dtc catalog/decode`) accepts `--json`, matching the machine-readable live/planning surfaces without importing Panda. ECU lookup errors include close-match suggestions. The original verb-first `ecu info`, `did list`, `dtc catalog`, etc. remain supported.
 

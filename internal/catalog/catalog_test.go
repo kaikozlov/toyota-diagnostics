@@ -1,9 +1,12 @@
 package catalog
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,7 +24,7 @@ func fixture(t *testing.T) *DB {
 	defer db.Close()
 	schema := `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-INSERT INTO meta VALUES ('schema','toyota-diagnostics-sqlite-v1'),('source_schema','toyota-diagnostics-bundle-v4'),('release','test'),('default_region','NA'),('member_count','2');
+INSERT INTO meta VALUES ('schema','toyota-diagnostics-sqlite-v2'),('source_schema','toyota-diagnostics-bundle-v4'),('release','test'),('default_region','NA'),('member_count','2');
 CREATE TABLE ecus (region TEXT,category_id INTEGER,key TEXT,name TEXT,database_name TEXT,generation INTEGER,support_mode TEXT,catalog_member TEXT,counts TEXT);
 INSERT INTO ecus VALUES('NA',498,'frc','Front Recognition Camera 2','FRC_P5.ddb',20,'p5-standard','catalogs/NA/498.json','{"dids":1,"signals":2}');
 INSERT INTO ecus VALUES('NA',405,'eps','Power Steering','EMPS_P5.ddb',20,'p5-standard',null,'{}');
@@ -31,16 +34,32 @@ CREATE TABLE vehicle_ecus (region TEXT, vehicle_type INTEGER, install_set_id INT
 INSERT INTO vehicle_ecus VALUES('NA',12704,8119,498,18,0,'498:18',1938,0,'iso15765-phase-family');
 INSERT INTO vehicles VALUES('NA',12704,'Camry HV','[8119,8120]');
 INSERT INTO vehicles VALUES('NA',12999,'Camry','[3]');
-CREATE TABLE items (id INTEGER PRIMARY KEY,region TEXT,category_id INTEGER,kind TEXT,identifier TEXT,name TEXT,detail TEXT);
-INSERT INTO items VALUES(1,'NA',498,'did','0x1601','LTA Control Condition','');
-INSERT INTO items VALUES(2,'NA',498,'did','0x1601','LTA Switch Condition Flag','');
-INSERT INTO items VALUES(3,'NA',498,'ffd-signal','0x5285','Arbitration result_lateral ID','TSS3 Operation FFD');
-INSERT INTO items VALUES(4,'NA',0,'adu-signal','0x1593','Arbitration result Lateral ID','ADAS recorder');
+CREATE TABLE items (id INTEGER PRIMARY KEY,region TEXT,category_id INTEGER,kind TEXT,identifier TEXT,name TEXT,detail TEXT,payload TEXT);
+INSERT INTO items VALUES(1,'NA',498,'did','0x1601','LTA Control Condition','','{"name":"LTA Control Condition","bit_start":3,"unit":"deg"}');
+INSERT INTO items VALUES(2,'NA',498,'did','0x1601','LTA Switch Condition Flag','','{}');
+INSERT INTO items VALUES(3,'NA',498,'ffd-signal','0x5285','Arbitration result_lateral ID','TSS3 Operation FFD','{}');
+INSERT INTO items VALUES(4,'NA',0,'adu-signal','0x1593','Arbitration result Lateral ID','ADAS recorder','{}');
 CREATE VIRTUAL TABLE items_fts USING fts5(name,detail,identifier,content='items',content_rowid='id',tokenize='unicode61',prefix='2 3 4');
 INSERT INTO items_fts(items_fts) VALUES('rebuild');
 `
 	if _, err := db.Exec(schema); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TABLE item_payloads(item_id INTEGER PRIMARY KEY,data BLOB)"); err != nil {
+		t.Fatal(err)
+	}
+	for id, payload := range map[int]string{1: `{"name":"LTA Control Condition","bit_start":3,"unit":"deg"}`, 2: `{}`, 3: `{}`, 4: `{}`} {
+		var buffer bytes.Buffer
+		writer := zlib.NewWriter(&buffer)
+		if _, err := writer.Write([]byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO item_payloads VALUES (?,?)", id, buffer.Bytes()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	d, err := Open(path)
 	if err != nil {
@@ -137,5 +156,158 @@ func TestInvalidSQLiteSchema(t *testing.T) {
 	db.Close()
 	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "schema") {
 		t.Fatal(err)
+	}
+}
+
+func TestSourceRecordLookup(t *testing.T) {
+	d := fixture(t)
+	item, err := d.Item(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.ID != 1 || item.Identifier != "0x1601" || !strings.Contains(string(item.Payload), `"bit_start":3`) {
+		t.Fatalf("%+v", item)
+	}
+	if _, err := d.Item(context.Background(), 999); err == nil {
+		t.Fatal("missing item accepted")
+	}
+	rows, err := d.Search(context.Background(), "NA", "LTA", 20)
+	if err != nil || len(rows) != 2 || rows[0].ID == 0 {
+		t.Fatal(rows, err)
+	}
+}
+func TestSingleCharacterAndEmptyQueries(t *testing.T) {
+	d := fixture(t)
+	if ftsQuery("x") != `"x"*` {
+		t.Fatal("single-letter search discarded")
+	}
+	rows, err := d.Search(context.Background(), "NA", "---", 20)
+	if err != nil || rows == nil || len(rows) != 0 {
+		t.Fatal(rows, err)
+	}
+}
+
+func TestIdentifierLookupIsForgivingAboutHex(t *testing.T) {
+	d := fixture(t)
+	ctx := context.Background()
+	frc, err := d.ECU(ctx, "NA", "frc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ident := range []string{"0x1601", "1601", "0X1601", " 0x1601 "} {
+		items, err := d.ItemsByIdentifier(ctx, frc, ident)
+		if err != nil || len(items) != 2 || items[0].ECU != "frc" {
+			t.Fatalf("%q: %v %v", ident, items, err)
+		}
+	}
+	if items, _ := d.ItemsByIdentifier(ctx, frc, "0x9999"); len(items) != 0 {
+		t.Fatal(items)
+	}
+	if items, _ := d.ItemsByIdentifier(ctx, frc, ""); len(items) != 0 {
+		t.Fatal("empty identifier matched", items)
+	}
+}
+
+func TestMissingECUComesWithSuggestions(t *testing.T) {
+	d := fixture(t)
+	_, err := d.ECU(context.Background(), "NA", "frcc")
+	var miss *NotFoundError
+	if !errors.As(err, &miss) {
+		t.Fatalf("want NotFoundError, got %v", err)
+	}
+	if len(miss.Suggestions) == 0 || miss.Suggestions[0] != "frc" {
+		t.Fatalf("suggestions: %v", miss.Suggestions)
+	}
+	if !strings.Contains(err.Error(), `no ECU matches "frcc"`) {
+		t.Fatal(err)
+	}
+}
+
+func TestAmbiguousECUCarriesCandidates(t *testing.T) {
+	d := fixture(t)
+	_, err := d.ECU(context.Background(), "NA", "EPS")
+	// Key "eps" wins over the shared display name, so this resolves.
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.ECU(context.Background(), "NA", "Steering")
+	var amb *AmbiguousError
+	if err != nil && !errors.As(err, &amb) {
+		t.Fatalf("unexpected error type: %v", err)
+	}
+}
+
+func TestListECUsLeadsWithDecodedCatalogs(t *testing.T) {
+	d := fixture(t)
+	ctx := context.Background()
+	all, err := d.ListECUs(ctx, "NA", "", false, 10)
+	if err != nil || len(all) != 3 || all[0].CatalogMember == "" {
+		t.Fatalf("decoded ECUs should lead: %+v %v", all, err)
+	}
+	decoded, err := d.ListECUs(ctx, "NA", "", true, 10)
+	if err != nil || len(decoded) != 1 || decoded[0].Key != "frc" {
+		t.Fatalf("%+v %v", decoded, err)
+	}
+}
+
+func TestSearchScopesByECUAndKind(t *testing.T) {
+	d := fixture(t)
+	ctx := context.Background()
+	frc, _ := d.ECU(ctx, "NA", "frc")
+	scoped, err := d.SearchECU(ctx, frc, "lta", 10)
+	if err != nil || len(scoped) != 2 {
+		t.Fatalf("%v %v", scoped, err)
+	}
+	others, err := d.SearchKind(ctx, "NA", 0, "adu-signal", "lateral", 10)
+	if err != nil || len(others) != 1 || others[0].Kind != "adu-signal" {
+		t.Fatalf("%v %v", others, err)
+	}
+	none, err := d.SearchKind(ctx, "NA", 0, "dtc", "lta", 10)
+	if err != nil || len(none) != 0 {
+		t.Fatalf("%v %v", none, err)
+	}
+	records, err := d.ECURecords(ctx, frc, "", 10)
+	if err != nil || len(records) != 3 {
+		t.Fatalf("%v %v", records, err)
+	}
+	onlyDID, err := d.ECURecords(ctx, frc, "did", 10)
+	if err != nil || len(onlyDID) != 2 {
+		t.Fatalf("%v %v", onlyDID, err)
+	}
+}
+
+func TestRankedECUItemSearchFallsBackToSubstring(t *testing.T) {
+	d := fixture(t)
+	ctx := context.Background()
+	frc, _ := d.ECU(ctx, "NA", "frc")
+	prefix, err := d.ECUItems(ctx, frc, "did", "cont", 10)
+	if err != nil || len(prefix) != 1 {
+		t.Fatalf("prefix search: %v %v", prefix, err)
+	}
+	// "ondition" starts no word; only the substring fallback finds it.
+	sub, err := d.ECUItems(ctx, frc, "did", "ondition", 10)
+	if err != nil || len(sub) != 2 {
+		t.Fatalf("substring fallback: %v %v", sub, err)
+	}
+	all, err := d.ECUItems(ctx, frc, "did", "", 10)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("no query lists everything: %v %v", all, err)
+	}
+}
+
+func TestGroupVehiclesKeepsOrderAndCollapsesNames(t *testing.T) {
+	groups := GroupVehicles([]Vehicle{
+		{Name: "Camry", Type: 1}, {Name: "Prius", Type: 2}, {Name: "camry", Type: 3}, {Name: "Camry", Type: 4},
+	})
+	if len(groups) != 2 || groups[0].Name != "Camry" || len(groups[0].Types) != 3 || groups[1].Name != "Prius" {
+		t.Fatalf("%+v", groups)
+	}
+}
+
+func TestVehicleECUCounts(t *testing.T) {
+	d := fixture(t)
+	counts, err := d.VehicleECUCounts(context.Background(), "NA")
+	if err != nil || counts[12704] != 1 {
+		t.Fatalf("%v %v", counts, err)
 	}
 }

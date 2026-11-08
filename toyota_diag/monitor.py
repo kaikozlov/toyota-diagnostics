@@ -7,6 +7,8 @@ import sys
 import time
 from typing import Any, TextIO
 
+
+from toyota_diag import term
 from toyota_diag.discovery import flatten_signal_record
 
 
@@ -33,25 +35,30 @@ def render_table(ecu_name: str, sample: int, elapsed: float, values: list[dict[s
   if changed and previous is not None:
     rows = [row for row in rows if previous.get(_row_key(row)) != _row_state(row)]
 
-  lines = [f"{ecu_name}  sample={sample}  +{elapsed:.3f}s"]
+  lines = [term.title(term.bold(ecu_name), f"sample {sample} · +{elapsed:.3f}s")]
   if not rows:
-    lines.append("  (no changes)")
+    lines.append(term.GUTTER + term.dim("(no changes)"))
     return "\n".join(lines), state
   signal_width = max(18, min(46, max(len(str(row.get("signal") or "")) for row in rows)))
   ecus = {str(row.get("ecu") or "") for row in rows}
   multi_ecu = len(ecus) > 1
+  ecu_width = max(5, min(16, max(len(ecu) for ecu in ecus))) if multi_ecu else 0
+  header = f"{'DID':<8} {'Signal':<{signal_width}} Value"
   if multi_ecu:
-    ecu_width = max(5, min(16, max(len(ecu) for ecu in ecus)))
-    lines.append(f"{'ECU':<{ecu_width}} {'DID':<8} {'Signal':<{signal_width}} {'Value':<22} Unit")
-    lines.append(f"{'-' * min(ecu_width, 12):<{ecu_width}} {'-' * 6:<8} {'-' * min(signal_width, 24):<{signal_width}} {'-' * 18:<22} {'-' * 8}")
-  else:
-    lines.append(f"{'DID':<8} {'Signal':<{signal_width}} {'Value':<22} Unit")
-    lines.append(f"{'-' * 6:<8} {'-' * min(signal_width, 24):<{signal_width}} {'-' * 18:<22} {'-' * 8}")
+    header = f"{'ECU':<{ecu_width}} " + header
+  lines.append(term.GUTTER + term.dim(header))
   for row in rows:
     did = f"0x{int(row['did']):04X}" if row.get("did") is not None else "-"
-    value = f"ERR: {row['error']}" if row.get("error") else _cell(row.get("value"))
-    prefix = f"{str(row.get('ecu') or ''):<{ecu_width}} " if multi_ecu else ""
-    lines.append(f"{prefix}{did:<8} {str(row.get('signal') or ''):<{signal_width}} {value:<22} {_cell(row.get('unit'))}")
+    signal = str(row.get("signal") or "")
+    if row.get("error"):
+      value = term.red(f"ERR: {row['error']}".ljust(22))
+    else:
+      value = _cell(row.get("value")).ljust(22)
+    line = term.GUTTER
+    if multi_ecu:
+      line += term.dim(str(row.get("ecu") or "").ljust(ecu_width)) + " "
+    line += term.blue(did.ljust(8)) + " " + signal.ljust(signal_width) + " " + value + " " + term.dim(_cell(row.get("unit")))
+    lines.append(line.rstrip())
   return "\n".join(lines), state
 
 

@@ -1,0 +1,316 @@
+package main
+
+import (
+	"bytes"
+	"compress/zlib"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	_ "modernc.org/sqlite"
+
+	"github.com/kaikozlov/toyota-diagnostics/internal/catalog"
+)
+
+// cliFixture builds a small catalog and points the CLI at it.
+func cliFixture(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "catalog.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO meta VALUES ('schema','toyota-diagnostics-sqlite-v2'),('source_schema','toyota-diagnostics-bundle-v4'),('release','test'),('default_region','NA'),('member_count','2');
+CREATE TABLE ecus (region TEXT,category_id INTEGER,key TEXT,name TEXT,database_name TEXT,generation INTEGER,support_mode TEXT,catalog_member TEXT,counts TEXT);
+INSERT INTO ecus VALUES('NA',498,'frc','Front Recognition Camera 2','FRC_P5.ddb',20,'p5-standard','catalogs/NA/498.json','{"dids":2,"signals":3,"dtcs":1,"active_tests":1}');
+INSERT INTO ecus VALUES('NA',405,'eps','Power Steering','EMPS_P5.ddb',20,'p5-standard',null,'{}');
+INSERT INTO ecus VALUES('NA',317,'eps_317','EPS','EPS_P4.ddb',4,'p4',null,'{}');
+CREATE TABLE vehicles (region TEXT,vehicle_type INTEGER,name TEXT,install_set_ids TEXT);
+INSERT INTO vehicles VALUES('NA',12704,'Camry','[8119]'),('NA',12705,'Camry','[8120]'),('NA',12999,'Prius','[3]'),('NA',9999,'','[4]');
+CREATE TABLE vehicle_ecus (region TEXT, vehicle_type INTEGER, install_set_id INTEGER, category_id INTEGER, route_selector INTEGER, connection_frame_id INTEGER, route_key TEXT, request_address INTEGER, address_extension INTEGER, transport_kind TEXT);
+INSERT INTO vehicle_ecus VALUES('NA',12704,8119,498,18,0,'498:18',1938,0,'iso15765-phase-family');
+CREATE TABLE items (id INTEGER PRIMARY KEY,region TEXT,category_id INTEGER,kind TEXT,identifier TEXT,name TEXT,detail TEXT);
+INSERT INTO items VALUES(1,'NA',498,'did','0x1601','LTA Control Condition','');
+INSERT INTO items VALUES(2,'NA',498,'did','0x1601','LTA Switch Condition Flag','');
+INSERT INTO items VALUES(3,'NA',498,'did','0x1202','LTA Installation Availability','');
+INSERT INTO items VALUES(4,'NA',498,'dtc','U0131','Lost Communication with Power Steering','No Signal');
+INSERT INTO items VALUES(5,'NA',498,'active-test','0xA429','LTA Steering Vibration','routine executable');
+INSERT INTO items VALUES(6,'NA',0,'adu-signal','0x1B00','LTA main switch status','ADAS recorder');
+CREATE VIRTUAL TABLE items_fts USING fts5(name,detail,identifier,content='items',content_rowid='id',tokenize='unicode61',prefix='2 3 4');
+INSERT INTO items_fts(items_fts) VALUES('rebuild');
+CREATE TABLE item_payloads(item_id INTEGER PRIMARY KEY,data BLOB);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloads := map[int]string{
+		1: `{"decoder":"p5-linear-msb0-v1","bit_start":8,"bit_end":15,"patterns":{"0":"OFF","1":"ON"}}`,
+		2: `{"decoder":"p5-linear-msb0-v1","bit_start":0,"bit_end":7,"unit":"flag"}`,
+		3: `{"decoder":"p5-linear-msb0-v1","bit_start":13,"bit_end":13,"patterns":{"0":"Not Installed","1":"Installed"}}`,
+		4: `{"code":"U013100","failure":"No Signal"}`, 5: `{"kind":"routine","execution":"executable"}`, 6: `{}`,
+	}
+	for id, payload := range payloads {
+		var buf bytes.Buffer
+		w := zlib.NewWriter(&buf)
+		w.Write([]byte(payload))
+		w.Close()
+		if _, err := db.Exec("INSERT INTO item_payloads VALUES(?,?)", id, buf.Bytes()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("TOYOTA_CATALOG", path)
+	t.Setenv("TOYOTA_REGION", "")
+}
+
+func output(t *testing.T, args ...string) string {
+	t.Helper()
+	out, err := capture(func() error { return run(args) })
+	if err != nil {
+		t.Fatalf("toyota %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return out
+}
+
+func failure(t *testing.T, args ...string) error {
+	t.Helper()
+	_, err := capture(func() error { return run(args) })
+	if err == nil {
+		t.Fatalf("toyota %s should fail", strings.Join(args, " "))
+	}
+	return err
+}
+
+func TestECUShorthandAndExplicitFormsAgree(t *testing.T) {
+	cliFixture(t)
+	want := output(t, "frc", "data")
+	for _, args := range [][]string{{"ecu", "frc", "data"}, {"ecu", "data", "frc"}, {"FRC", "signals"}, {"498", "dids"}} {
+		if got := output(t, args...); got != want {
+			t.Errorf("%v differs from toyota frc data:\n%s\nvs\n%s", args, got, want)
+		}
+	}
+	if !strings.Contains(want, "0x1601") || strings.Contains(want, "U0131") {
+		t.Fatal(want)
+	}
+}
+
+func TestFamilyAliases(t *testing.T) {
+	cliFixture(t)
+	for alias, want := range map[string]string{"dtcs": "U0131", "dtc": "U0131", "codes": "U0131", "tests": "LTA Steering Vibration", "active-tests": "LTA Steering Vibration"} {
+		if out := output(t, "frc", alias); !strings.Contains(out, want) {
+			t.Errorf("frc %s lacks %q:\n%s", alias, want, out)
+		}
+	}
+}
+
+func TestIdentifierDecodesInPlace(t *testing.T) {
+	cliFixture(t)
+	single := output(t, "frc", "0x1202")
+	for _, want := range []string{"LTA Installation Availability", "bit 13", "Not Installed"} {
+		if !strings.Contains(single, want) {
+			t.Errorf("missing %q\n%s", want, single)
+		}
+	}
+	if again := output(t, "frc", "1202"); again != single {
+		t.Error("hex prefix should not matter")
+	}
+	group := output(t, "frc", "0x1601")
+	if !strings.Contains(group, "2 signals") || strings.Index(group, "0–7") > strings.Index(group, "8–15") {
+		t.Fatalf("signals sharing a DID should list in bit order:\n%s", group)
+	}
+	if out := output(t, "inspect", "frc", "0x1202"); out != single {
+		t.Error("inspect ECU IDENT should equal the shorthand")
+	}
+}
+
+func TestUnknownWordsSearchInsteadOfDeadEnding(t *testing.T) {
+	cliFixture(t)
+	out := output(t, "lta")
+	if !strings.Contains(out, "search") || !strings.Contains(out, "LTA Control Condition") {
+		t.Fatalf("a bare word that is not an ECU should search:\n%s", out)
+	}
+	if out := output(t, "frc", "steering"); !strings.Contains(out, "LTA Steering Vibration") || strings.Contains(out, "main switch") {
+		t.Fatalf("ECU + free text should search inside the ECU:\n%s", out)
+	}
+}
+
+func TestMistakesGetCorrections(t *testing.T) {
+	cliFixture(t)
+	var miss *catalog.NotFoundError
+	if err := failure(t, "frcc"); !errors.As(err, &miss) || len(miss.Suggestions) == 0 || miss.Suggestions[0] != "frc" {
+		t.Fatalf("typo of an ECU: %v", err)
+	}
+	if err := failure(t, "frcc", "data"); !errors.As(err, &miss) || miss.What != "ECU" {
+		t.Fatalf("typo with an action should blame the ECU: %v", err)
+	}
+	if err := failure(t, "serach", "lta"); !errors.As(err, &miss) || miss.What != "command" || miss.Suggestions[0] != "search" {
+		t.Fatalf("typo of a command: %v", err)
+	}
+	if err := failure(t, "inspect", "abc"); !isUsage(err, "inspect") {
+		t.Fatalf("usage mistakes should exit 2 with the command named: %v", err)
+	}
+	if err := failure(t, "search"); !isUsage(err, "search") {
+		t.Fatal(err)
+	}
+}
+
+func isUsage(err error, command string) bool {
+	var u *usageError
+	return errors.As(err, &u) && u.command == command
+}
+
+func TestECUListLeadsWithDecodedAndSaysWhatIsHidden(t *testing.T) {
+	cliFixture(t)
+	out := output(t, "ecu")
+	if !strings.Contains(out, "frc") || strings.Contains(out, "eps_317") || !strings.Contains(out, "2 more ECUs without decoded catalogs") {
+		t.Fatalf("%s", out)
+	}
+	if all := output(t, "ecu", "--all"); !strings.Contains(all, "eps_317") {
+		t.Fatalf("--all should include declared-only ECUs:\n%s", all)
+	}
+	if named := output(t, "ecu", "steering"); !strings.Contains(named, "eps") {
+		t.Fatalf("a query falls back to declared ECUs when no decoded one matches:\n%s", named)
+	}
+}
+
+func TestVehiclesGroupByName(t *testing.T) {
+	cliFixture(t)
+	list := output(t, "vehicle")
+	if !strings.Contains(list, "Camry") || !strings.Contains(list, "2 variants") || !strings.Contains(list, "(unnamed)") {
+		t.Fatal(list)
+	}
+	if strings.Count(list, "Camry") != 1 {
+		t.Fatalf("a model should appear once:\n%s", list)
+	}
+	variants := output(t, "vehicle", "Camry")
+	if !strings.Contains(variants, "12704") || !strings.Contains(variants, "12705") || !strings.Contains(variants, "1 ECU") {
+		t.Fatal(variants)
+	}
+	detail := output(t, "vehicle", "12704")
+	if !strings.Contains(detail, "frc") || !strings.Contains(detail, "0x792") {
+		t.Fatal(detail)
+	}
+	if single := output(t, "vehicle", "Prius"); !strings.Contains(single, "type 12999") {
+		t.Fatalf("a model with one variant opens directly:\n%s", single)
+	}
+}
+
+func TestJSONContractsAreUnchangedByPresentation(t *testing.T) {
+	cliFixture(t)
+	var items []catalog.Item
+	if err := json.Unmarshal([]byte(output(t, "search", "lta", "--json")), &items); err != nil || len(items) != 5 {
+		t.Fatalf("search --json is a bare array: %v %d", err, len(items))
+	}
+	var envelope struct {
+		ECU   catalog.ECU    `json:"ecu"`
+		Items []catalog.Item `json:"items"`
+		Shown int            `json:"shown"`
+	}
+	if err := json.Unmarshal([]byte(output(t, "frc", "data", "--json")), &envelope); err != nil || envelope.ECU.Key != "frc" || envelope.Shown != 3 {
+		t.Fatalf("%v %+v", err, envelope)
+	}
+	var vehicles []catalog.Vehicle
+	if err := json.Unmarshal([]byte(output(t, "vehicle", "--json")), &vehicles); err != nil || len(vehicles) != 4 {
+		t.Fatalf("vehicle --json lists every type, ungrouped: %v %d", err, len(vehicles))
+	}
+	var one struct {
+		Vehicle    catalog.Vehicle      `json:"vehicle"`
+		Candidates []catalog.VehicleECU `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(output(t, "vehicle", "12704", "--json")), &one); err != nil || len(one.Candidates) != 1 {
+		t.Fatalf("%v %+v", err, one)
+	}
+	var multi struct {
+		Records []catalog.ItemDetail `json:"records"`
+	}
+	if err := json.Unmarshal([]byte(output(t, "frc", "0x1601", "--json")), &multi); err != nil || len(multi.Records) != 2 {
+		t.Fatalf("%v %+v", err, multi)
+	}
+}
+
+func TestLimitSaysWhenThereIsMore(t *testing.T) {
+	cliFixture(t)
+	out := output(t, "search", "lta", "--limit", "2")
+	if !strings.Contains(out, "first 2") || !strings.Contains(out, "--limit N shows more") {
+		t.Fatal(out)
+	}
+	var items []catalog.Item
+	if err := json.Unmarshal([]byte(output(t, "search", "lta", "--limit", "2", "--json")), &items); err != nil || len(items) != 2 {
+		t.Fatalf("JSON must honour the limit exactly: %v %d", err, len(items))
+	}
+}
+
+func TestCompletionKnowsTheCatalog(t *testing.T) {
+	cliFixture(t)
+	lines := func(args ...string) []string {
+		return strings.Fields(strings.ReplaceAll(strings.ReplaceAll(output(t, append([]string{"__complete"}, args...)...), "\t", " "), "\n", "\n"))
+	}
+	first := func(args ...string) string { return strings.Join(lines(args...), " ") }
+	if got := first("fr"); !strings.Contains(got, "frc") {
+		t.Fatalf("ECU keys complete at the top level: %q", got)
+	}
+	if got := first(""); !strings.Contains(got, "search") || !strings.Contains(got, "monitor") {
+		t.Fatalf("commands complete: %q", got)
+	}
+	if got := first("frc", "d"); !strings.Contains(got, "data") || !strings.Contains(got, "dtcs") || strings.Contains(got, "tests") {
+		t.Fatalf("actions complete after an ECU: %q", got)
+	}
+	if got := first("--region", ""); !strings.Contains(got, "NA") || !strings.Contains(got, "EU") {
+		t.Fatalf("%q", got)
+	}
+	if got := first("ecu", "info", "f"); !strings.Contains(got, "frc") {
+		t.Fatalf("%q", got)
+	}
+	if got := first("vehicle", "ca"); !strings.Contains(got, "Camry") {
+		t.Fatalf("%q", got)
+	}
+	if got := first("-"); !strings.Contains(got, "--json") {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestCompletionScriptsAreEmitted(t *testing.T) {
+	cliFixture(t)
+	for shell, marker := range map[string]string{"zsh": "#compdef toyota", "bash": "complete -F _toyota toyota", "fish": "complete -c toyota"} {
+		if out := output(t, "completion", shell); !strings.Contains(out, marker) || !strings.Contains(out, "__complete") {
+			t.Errorf("%s script is wrong:\n%s", shell, out)
+		}
+	}
+	if err := failure(t, "completion", "powershell"); !isUsage(err, "completion") {
+		t.Fatal(err)
+	}
+}
+
+func TestHelpIsPerCommandAndNeverNeedsACatalog(t *testing.T) {
+	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
+	overviewText := output(t, "help")
+	for _, want := range []string{"Explore", "Live", "toyota search TERM", "toyota monitor ECU"} {
+		if !strings.Contains(overviewText, want) {
+			t.Errorf("overview lacks %q\n%s", want, overviewText)
+		}
+	}
+	for name := range nativeDocs {
+		out := output(t, "help", name)
+		if !strings.Contains(out, "toyota") || !strings.Contains(out, nativeDocs[name].summary) {
+			t.Errorf("help %s:\n%s", name, out)
+		}
+	}
+	if out := output(t, "frc", "--help"); !strings.Contains(out, "toyota ECU") {
+		t.Fatalf("ECU shorthand help:\n%s", out)
+	}
+}
+
+func TestEveryCommandWordIsRoutable(t *testing.T) {
+	for _, name := range commandNames() {
+		if name == "help" || nativeDocs[name].summary != "" {
+			continue
+		}
+		if !shouldBridge([]string{name}) {
+			t.Errorf("%q is advertised as a command but nothing handles it", name)
+		}
+	}
+}

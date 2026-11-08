@@ -19,7 +19,7 @@ from typing import Any
 
 from opendbc.car.uds import MessageTimeoutError, NegativeResponseError
 
-from toyota_diag import decode, dtc, recorder, registry, resolver, transport
+from toyota_diag import decode, dtc, recorder, registry, resolver, term, transport
 from toyota_diag.executor import SESSION_REQUIREMENT_EXTENDED
 from toyota_diag.session import DiagnosticSession
 
@@ -940,17 +940,18 @@ def compare(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
 
 
 def render_diff(document: dict[str, Any]) -> str:
+
   summary = document["summary"]
   lines = [
-    "Health Check changes",
-    (
-      f"ECUs changed: {summary['changed_ecus']}  mount: {summary['mount_state_changes']}  "
-      f"dtc: {summary['dtc_changes']}  ffd: {summary.get('freeze_frame_changes', 0)}  "
-      f"rob: {summary.get('rob_changes', 0)}  identity: {summary['identity_changes']}"
+    term.title(term.bold("Health Check changes")),
+    term.GUTTER + term.dim(
+      f"{summary['changed_ecus']} ECUs changed · mount {summary['mount_state_changes']} · "
+      f"dtc {summary['dtc_changes']} · ffd {summary.get('freeze_frame_changes', 0)} · "
+      f"rob {summary.get('rob_changes', 0)} · identity {summary['identity_changes']}"
     ),
   ]
   if not document["changes"]:
-    lines.append("no changes")
+    lines.append(term.GUTTER + term.dim("no changes"))
     return "\n".join(lines)
   for row in document["changes"]:
     endpoint = f"0x{row['address']:X}" + (f"/0x{row['sub_addr']:02X}" if row.get("sub_addr") is not None else "")
@@ -1001,15 +1002,19 @@ def render_diff(document: dict[str, Any]) -> str:
 
 
 def render(document: dict[str, Any]) -> str:
+
   summary = document["summary"]
   lines = [
-    f"{document['vehicle']} Health Check",
-    f"Toyota type {document['vehicle_type']}  region={document.get('region')}  logical bus={document.get('logical_bus')}",
-    (
-      f"Installed candidates: {summary['install_candidates']}  responding: {summary['mount_responding']}  "
-      f"DTC responders: {summary['dtc_positive_ecus']}  faults: {summary['fault_status_records']}  "
-      f"FFD records: {summary.get('freeze_frame_records', 0)}  FFD signals: {summary.get('freeze_frame_decoded_signals', 0)}  "
-      f"RoB records: {summary.get('rob_records', 0)}  RoB signals: {summary.get('rob_decoded_signals', 0)}"
+    term.title(
+      term.bold(f"Health Check · {document['vehicle']}"),
+      f"type {document['vehicle_type']} · {document.get('region')} · bus {document.get('logical_bus')}",
+    ),
+    term.GUTTER + term.dim(
+      f"{summary['install_candidates']} installed candidates · {summary['mount_responding']} responding · "
+      f"{summary['dtc_positive_ecus']} DTC responders · "
+      f"{term.plural(summary['fault_status_records'], 'fault', 'faults')} · "
+      f"{summary.get('freeze_frame_records', 0)} FFD records · {summary.get('freeze_frame_decoded_signals', 0)} FFD signals · "
+      f"{summary.get('rob_records', 0)} RoB records · {summary.get('rob_decoded_signals', 0)} RoB signals"
     ),
     "",
   ]
@@ -1017,14 +1022,19 @@ def render(document: dict[str, Any]) -> str:
     mount = row.get("mount") or {}
     live_state = mount.get("live_state") or "unresolved"
     dtc_result = row["dtc"]
-    mark = "!" if dtc_result["fault_count"] else ("✓" if live_state == "responding" else "-")
+    if dtc_result["fault_count"]:
+      mark = term.red("!")
+    elif live_state == "responding":
+      mark = term.accent("✓")
+    else:
+      mark = term.dim("-")
     endpoint = f"0x{row['address']:X}" + (f"/0x{row['sub_addr']:02X}" if row.get("sub_addr") is not None else "")
     ident = row.get("identity") or {}
     ident_text = ident.get("ascii") or (ident.get("data_hex") if ident.get("state") == "positive" else None)
-    suffix = f"  {ident_text}" if ident_text else ""
+    meta = f"cat={row['category_id']:<5} mount={live_state:<17}"
     lines.append(
-      f"{mark} {row['name']:<38} {endpoint:<14} cat={row['category_id']:<5} "
-      f"mount={live_state:<17} dtc={dtc_result['state']}{suffix}"
+      f"{term.GUTTER}{mark} {row['name']:<38} {term.blue(endpoint.ljust(14))} {term.dim(meta)} dtc={dtc_result['state']}"
+      + (f"  {term.dim(ident_text)}" if ident_text else "")
     )
     for fault in dtc_result["records"]:
       if not fault["fault_status"]:
@@ -1032,8 +1042,11 @@ def render(document: dict[str, Any]) -> str:
       description = fault["descriptions"][0] if fault["descriptions"] else {}
       name = description.get("description") or fault["code"]
       failure = description.get("failure")
-      lines.append(f"    {fault['code']} status=0x{fault['status']:02X} {name}" + (f" — {failure}" if failure else ""))
+      status = f"status=0x{fault['status']:02X}"
+      lines.append(
+        f"    {term.red(fault['code'])} {term.dim(status)} {name}" + (f" — {failure}" if failure else "")
+      )
   pending = [key for key, value in document["coverage"].items() if value == "not_implemented"]
   if pending:
-    lines.extend(("", "GTS+ Health Check parity still pending: " + ", ".join(pending)))
+    lines.extend(("", term.GUTTER + term.dim("GTS+ Health Check parity still pending: " + ", ".join(pending))))
   return "\n".join(lines)
