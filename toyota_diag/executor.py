@@ -551,7 +551,9 @@ def _direct_selected_bit_mask(row: dict[str, Any], runtime_length: int) -> bytes
   if bit_start < 0 or bit_end < bit_start or bit_end >= runtime_length * 8:
     raise ExecutorError(
       f"direct control bits {bit_start}..{bit_end} do not fit runtime length {runtime_length}")
-  mask = bytearray(bit_end // 8 + 1)
+  # Current DataMonitor P5/P6 sends an N-byte mask for modes 1/4,
+  # including the leading/trailing zero bytes outside the selected range.
+  mask = bytearray(runtime_length)
   for bit in range(bit_start, bit_end + 1):
     mask[bit // 8] |= 1 << (7 - (bit & 7))
   return bytes(mask)
@@ -589,8 +591,9 @@ def _direct_type67_mask(row: dict[str, Any], runtime_length: int) -> bytes:
       if control_bit_1based <= 0:
         raise ExecutorError("type-67 control-enable bit is not 1-based positive")
       enabled_bits.append(control_bit_1based - 1)
+  # An unmatched mode-0 span yields L=0 in the native composer.
   if not enabled_bits:
-    raise ExecutorError("mode-0 direct control selected no type-67 control-enable bits")
+    return b""
   mask = bytearray(max(enabled_bits) // 8 + 1)
   for bit in enabled_bits:
     mask[bit // 8] |= 1 << (7 - (bit & 7))
@@ -725,7 +728,7 @@ def pack_direct_raw_value(row: dict[str, Any], runtime_length: int, raw_value: i
 
 
 def direct_control_enable_masks(row: dict[str, Any], runtime_length: int) -> tuple[bytes, bytes]:
-  """Materialize current GTS+ start/stop control-enable masks for a direct P5 test."""
+  """Materialize current-main GTS+ P5/P6 direct-control mask bytes."""
   try:
     encoding_mode = registry.parse_int(row["encoding_mode"], "direct encoding_mode")
   except (KeyError, registry.RegistryError) as e:
@@ -735,21 +738,26 @@ def direct_control_enable_masks(row: dict[str, Any], runtime_length: int) -> tup
     raise ExecutorError("direct Active Test has no exported control-enable-mask strategy")
   expected = {
     0: ("type67_rows_for_selected_byte_span", "type67_rows_for_selected_byte_span"),
-    1: ("none", "selected_bit_range"),
+    1: ("selected_bit_range_or_alternate", "selected_bit_range_or_alternate"),
     3: ("none", "none"),
-    4: ("none", "selected_bit_range"),
+    4: ("selected_bit_range", "selected_bit_range"),
     6: ("none", "none"),
   }.get(encoding_mode)
   if expected is None:
     raise ExecutorError(f"direct encoding mode {encoding_mode} has no recovered mask materializer")
   actual = (strategy.get("start"), strategy.get("stop"))
-  if actual != expected:
+  # The bundled v2 catalog predates the current-main DataMonitor trace.
+  # Its masks are recomputed using the newer recovered composer; accept its
+  # prior descriptor only for the same validated mode/bit geometry.
+  legacy = ("none", "selected_bit_range")
+  if actual != expected and not (encoding_mode in {1, 4} and actual == legacy):
     raise ExecutorError(f"direct mask strategy {actual!r} does not match recovered mode-{encoding_mode} strategy {expected!r}")
   if encoding_mode == 0:
     mask = _direct_type67_mask(row, runtime_length)
     return mask, mask
   if encoding_mode in {1, 4}:
-    return b"", _direct_selected_bit_mask(row, runtime_length)
+    mask = _direct_selected_bit_mask(row, runtime_length)
+    return mask, mask
   return b"", b""
 
 

@@ -662,7 +662,7 @@ class TestLiveCli(unittest.TestCase):
       ("read_did", 0xF186),
       ("session", 1), ("session", 3),
       ("read_did", 0x2801),
-      ("io_control", 0x2801, 3, b"\x00\x01", b""),
+      ("io_control", 0x2801, 3, b"\x00\x01", b"\x00\x01"),
       ("io_control", 0x2801, 0, b"", b"\x00\x01"),
       ("session", 1),
     ])
@@ -695,7 +695,7 @@ class TestLiveCli(unittest.TestCase):
       ("read_did", 0xF186),
       ("session", 1), ("session", 3),
       ("read_did", 0x2801),
-      ("io_control", 0x2801, 3, b"\x00\x01", b""),
+      ("io_control", 0x2801, 3, b"\x00\x01", b"\x00\x01"),
       ("io_control", 0x2801, 0, b"", b"\x00\x01"),
       ("session", 1),
     ])

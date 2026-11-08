@@ -341,14 +341,14 @@ class TestPlanResolution(unittest.TestCase):
       "bit_start": 15, "bit_end": 15, "encoding_mode": 1,
       "control_enable_mask": {"start": "none", "stop": "selected_bit_range"},
     }
-    self.assertEqual(direct_control_enable_masks(mode1, 4), (b"", b"\x00\x01"))
-    self.assertEqual(direct_control_enable_mask(mode1, 4), b"\x00\x01")
+    self.assertEqual(direct_control_enable_masks(mode1, 4), (b"\x00\x01\x00\x00", b"\x00\x01\x00\x00"))
+    self.assertEqual(direct_control_enable_mask(mode1, 4), b"\x00\x01\x00\x00")
 
     mode4 = {
       "bit_start": 6, "bit_end": 9, "encoding_mode": 4,
       "control_enable_mask": {"start": "none", "stop": "selected_bit_range"},
     }
-    self.assertEqual(direct_control_enable_masks(mode4, 4), (b"", b"\x03\xc0"))
+    self.assertEqual(direct_control_enable_masks(mode4, 4), (b"\x03\xc0\x00\x00", b"\x03\xc0\x00\x00"))
 
     mode3 = {
       "bit_start": 0, "bit_end": 7, "encoding_mode": 3,
@@ -362,6 +362,11 @@ class TestPlanResolution(unittest.TestCase):
     self.assertEqual(direct_control_enable_masks(shared, 2), (b"\x80", b"\x80"))
     shared_second = profile.lookup_active_test("engine", "78")
     self.assertEqual(direct_control_enable_masks(shared_second, 2), (b"\x40", b"\x40"))
+    unmatched = dict(shared, bit_start=8, bit_end=15, data_id_for_act_records=[{
+      "control_enable_bit_1based": 1, "data_byte_offset": 0,
+      "data_byte_length": 1, "encoding_mode": 0,
+    }])
+    self.assertEqual(direct_control_enable_masks(unmatched, 2), (b"", b""))
 
     too_short = dict(mode1, bit_end=16)
     with self.assertRaisesRegex(ExecutorError, "do not fit"):
