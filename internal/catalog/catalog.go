@@ -198,7 +198,8 @@ func Region(text string) (string, error) {
 
 // FTS5 query construction accepts only ordinary Unicode alphanumerics, so
 // query punctuation cannot be interpreted as MATCH syntax. Each token is a
-// quoted prefix term; hex DID-like tokens also match with or without "0x".
+// quoted prefix term. A bare hex-like token also matches 0x… identifiers;
+// an explicit 0x prefix stays in the hex domain and does not match decimal IDs.
 func ftsQuery(query string) string {
 	words := strings.FieldsFunc(query, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
@@ -213,15 +214,15 @@ func ftsQuery(query string) string {
 func ftsTerm(word string) string {
 	word = strings.ToLower(word)
 	quoted := func(s string) string { return `"` + s + `"*` }
+	explicit := strings.HasPrefix(word, "0x")
 	bare, ok := hexBare(word)
 	if !ok {
 		return quoted(word)
 	}
-	with := "0x" + bare
-	if word == with {
-		return "(" + quoted(word) + " OR " + quoted(bare) + ")"
+	if explicit {
+		return quoted(word)
 	}
-	return "(" + quoted(word) + " OR " + quoted(with) + ")"
+	return "(" + quoted(word) + " OR " + quoted("0x"+bare) + ")"
 }
 
 // normalizeIdent folds hex DID spellings so 0x1601, 1601 and 0X1601 agree.
@@ -247,26 +248,31 @@ func hexBare(s string) (string, bool) {
 	return s, true
 }
 
-// queryIdent is the hex DID in q if there is exactly one, even when
-// punctuation surrounded it ("(0x1601)"). Conflicting hex tokens cancel.
-func queryIdent(q string) string {
-	if bare, ok := hexBare(q); ok {
-		return bare
+// queryIdentForm is the hex digit string in q if there is exactly one such
+// token, even when punctuation surrounded it ("(0x1601)"). explicit is true
+// when that token was written with a 0x prefix. Conflicting hex tokens cancel.
+func queryIdentForm(q string) (bare string, explicit bool) {
+	trimmed := strings.TrimSpace(q)
+	if b, ok := hexBare(trimmed); ok {
+		return b, strings.HasPrefix(strings.ToLower(trimmed), "0x")
 	}
 	found := ""
 	for _, word := range strings.FieldsFunc(q, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	}) {
-		bare, ok := hexBare(word)
+		b, ok := hexBare(word)
 		if !ok {
 			continue
 		}
-		if found != "" && found != bare {
-			return ""
+		if found != "" && found != b {
+			return "", false
 		}
-		found = bare
+		found = b
+		if strings.HasPrefix(strings.ToLower(word), "0x") {
+			explicit = true
+		}
 	}
-	return found
+	return found, explicit
 }
 
 func (d *DB) Search(ctx context.Context, region, query string, limit int) ([]Item, error) {
@@ -301,14 +307,24 @@ func (d *DB) search(ctx context.Context, region string, category int, kind, quer
 	if match == "" {
 		return []Item{}, nil
 	}
-	ident := queryIdent(query)
-	identPrefix := ""
-	if ident != "" {
-		identPrefix = ident + "%"
+	bare, explicit := queryIdentForm(query)
+	hexExact, hexPrefix, decExact := "", "", ""
+	if bare != "" {
+		hexExact = "0x" + bare
+		hexPrefix = hexExact + "%"
+		if !explicit {
+			decExact = bare
+		}
 	}
-	// Exact IDs lead prefix-of-identifier hits, which lead prose BM25
-	// (name 10, detail 1, identifier 3). An exact display name stays a
-	// literal match above ECU-key boosts. Ties stay stable.
+	// Ranking is a single policy, not stacked special cases:
+	//  0 navigational ECU (kind=ecu and key, category id, or full ECU name)
+	//  1 exact identifier in the query's number domain (explicit 0x stays
+	//    hex-only; a bare token may match either 0x160 or decimal 160)
+	//  2 prefix of a hex (0x…) identifier
+	//  3 exact item name
+	//  4 other records belonging to an ECU whose key equals the query
+	//  5 BM25 over name (10), detail (1), identifier (3)
+	// Ties stay stable.
 	rows, err := d.db.QueryContext(ctx, `
 SELECT i.id, i.kind, i.region, i.category_id, coalesce(e.key,''), coalesce(e.name,''),
        i.identifier, i.name, i.detail
@@ -316,16 +332,23 @@ FROM items_fts
 JOIN items i ON i.id=items_fts.rowid
 LEFT JOIN ecus e ON e.region=i.region AND e.category_id=i.category_id
 WHERE items_fts MATCH ? AND i.region=? AND (?=0 OR i.category_id=?) AND (?='' OR i.kind=?)
-ORDER BY CASE WHEN ? != '' AND replace(lower(i.identifier),'0x','') = ? THEN 0
-              WHEN lower(i.identifier)=lower(?) THEN 0
-              WHEN lower(i.name)=lower(?) THEN 1
-              WHEN ? != '' AND replace(lower(i.identifier),'0x','') LIKE ? THEN 2
-              WHEN lower(e.key)=lower(?) AND i.kind='ecu' THEN 3
+ORDER BY CASE WHEN i.kind='ecu' AND (lower(e.key)=lower(?) OR cast(e.category_id as text)=? OR lower(e.name)=lower(?)) THEN 0
+              WHEN ? != '' AND lower(i.identifier)=? THEN 1
+              WHEN ? != '' AND lower(i.identifier)=? THEN 1
+              WHEN lower(i.identifier)=lower(?) THEN 1
+              WHEN ? != '' AND lower(i.identifier) LIKE ? THEN 2
+              WHEN lower(i.name)=lower(?) THEN 3
               WHEN lower(e.key)=lower(?) THEN 4
               ELSE 5 END,
          bm25(items_fts, 10.0, 1.0, 3.0),
          i.kind, i.category_id, i.identifier, i.id
-LIMIT ?`, match, region, category, category, kind, kind, ident, ident, query, query, ident, identPrefix, query, query, limit)
+LIMIT ?`, match, region, category, category, kind, kind,
+		query, query, query,
+		hexExact, hexExact,
+		decExact, decExact,
+		query,
+		hexPrefix, hexPrefix,
+		query, query, limit)
 	if err != nil {
 		return nil, err
 	}
