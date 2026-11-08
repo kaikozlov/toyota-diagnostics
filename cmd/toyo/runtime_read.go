@@ -275,18 +275,60 @@ func (r *runtimeApp) support(ecu diagnostic.EcuSpec, c diagnostic.RequestClient,
 	}
 	return s, nil
 }
-func (r *runtimeApp) monitorCommand(a []string) error {
+
+type samplingTarget struct {
+	ecu      diagnostic.EcuSpec
+	queries  []didQuery
+	session  *diagnostic.Session
+	nextKeep time.Time
+}
+
+func (t *samplingTarget) keepaliveIfDue(ctx context.Context, now time.Time) error {
+	life := t.session.Lifecycle
+	if life == nil || life.Keepalive == nil || now.Before(t.nextKeep) {
+		return nil
+	}
+	if err := t.session.Keepalive(ctx); err != nil {
+		return err
+	}
+	t.nextKeep = now.Add(life.Keepalive.Interval)
+	return nil
+}
+
+func (r *runtimeApp) closeSamplingSessions() error {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), 2*time.Second)
+	defer cancel()
+	var err error
+	for i := len(r.sessions) - 1; i >= 0; i-- {
+		if e := r.sessions[i].Close(cleanup); e != nil {
+			err = errors.Join(err, fmt.Errorf("session cleanup: %w", e))
+		}
+	}
+	return err
+}
+
+func (r *runtimeApp) startSamplingSession(ecu diagnostic.EcuSpec) (*diagnostic.Session, error) {
+	s, err := r.session(ecu)
+	if err != nil {
+		return nil, err
+	}
+	if s.Lifecycle != nil {
+		if err := s.EnterExtended(r.ctx); err != nil {
+			return s, err
+		}
+	}
+	return s, nil
+}
+
+func (r *runtimeApp) monitorCommand(a []string) (err error) {
 	if len(a) < 2 {
 		return usagef(a[0], "provide an ECU and DID/name")
 	}
 	if err := r.ensureVehicle(); err != nil {
 		return err
 	}
-	type target struct {
-		ecu     diagnostic.EcuSpec
-		queries []didQuery
-		client  *transport.Client
-	}
+	defer func() { err = errors.Join(err, r.closeSamplingSessions()) }()
+	type target = samplingTarget
 	var targets []target
 	add := func(ref string, queries []string) error {
 		ecu, e := r.ecu(ref)
@@ -297,11 +339,13 @@ func (r *runtimeApp) monitorCommand(a []string) error {
 		if e != nil {
 			return e
 		}
-		c, e := r.client(ecu)
-		if e != nil {
-			return e
+		for i := range targets {
+			if targets[i].ecu.Key == ecu.Key {
+				targets[i].queries = append(targets[i].queries, q...)
+				return nil
+			}
 		}
-		targets = append(targets, target{ecu, q, c})
+		targets = append(targets, target{ecu: ecu, queries: q})
 		return nil
 	}
 	if a[0] == "observe" {
@@ -331,6 +375,16 @@ func (r *runtimeApp) monitorCommand(a []string) error {
 			return e
 		}
 	}
+	for i := range targets {
+		s, e := r.startSamplingSession(targets[i].ecu)
+		if e != nil {
+			return e
+		}
+		targets[i].session = s
+		if s.Lifecycle != nil && s.Lifecycle.Keepalive != nil {
+			targets[i].nextKeep = time.Now().Add(s.Lifecycle.Keepalive.Interval)
+		}
+	}
 	interval, e := r.opt.duration("interval", 250*time.Millisecond)
 	if e != nil {
 		return e
@@ -340,11 +394,20 @@ func (r *runtimeApp) monitorCommand(a []string) error {
 		return e
 	}
 	read := func(ctx context.Context) ([]map[string]any, error) {
+		now := time.Now()
+		for i := range targets {
+			if e := targets[i].keepaliveIfDue(ctx, now); e != nil {
+				return nil, e
+			}
+		}
 		values := []map[string]any{}
 		for _, t := range targets {
 			for _, q := range t.queries {
-				data, e := diagnostic.ReadDID(ctx, t.client, uint16(q.id))
+				data, e := diagnostic.ReadDID(ctx, t.session.Client, uint16(q.id))
 				if e != nil {
+					if ctx.Err() != nil {
+						return nil, e
+					}
 					values = append(values, map[string]any{"ecu": map[string]any{"key": t.ecu.Key}, "did": q.id, "signals": []map[string]any{{"name": "(read)", "error": e.Error()}}})
 					continue
 				}
