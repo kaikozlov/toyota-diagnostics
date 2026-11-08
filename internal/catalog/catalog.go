@@ -24,8 +24,9 @@ import (
 const schema = "toyota-diagnostics-sqlite-v2"
 
 type DB struct {
-	db   *sql.DB
-	Path string
+	db     *sql.DB
+	Path   string
+	bundle *Bundle
 }
 
 type Item struct {
@@ -115,7 +116,17 @@ func Open(path string) (*DB, error) {
 	return d, nil
 }
 
-func (d *DB) Close() error { return d.db.Close() }
+func (d *DB) Close() error {
+	var err error
+	if d.bundle != nil {
+		err = d.bundle.Close()
+		d.bundle = nil
+	}
+	if d.db != nil {
+		err = errors.Join(err, d.db.Close())
+	}
+	return err
+}
 
 func (d *DB) Meta(ctx context.Context, key string) (string, error) {
 	var value string

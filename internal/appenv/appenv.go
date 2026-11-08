@@ -15,6 +15,7 @@ func First(keys ...string) string {
 }
 
 func Catalog() string      { return First("TOYO_CATALOG", "TOYOTA_CATALOG") }
+func Bundle() string       { return First("TOYO_BUNDLE", "TOYOTA_BUNDLE", "TOYOTA_CANONICAL_BUNDLE") }
 func Region() string       { return First("TOYO_REGION", "TOYOTA_REGION") }
 func Theme() string        { return First("TOYO_THEME", "TOYOTA_THEME") }
 func Pager() string        { return First("TOYO_PAGER", "TOYOTA_PAGER") }

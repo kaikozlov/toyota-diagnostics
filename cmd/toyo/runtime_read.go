@@ -321,8 +321,23 @@ func (r *runtimeApp) startSamplingSession(ecu diagnostic.EcuSpec) (*diagnostic.S
 }
 
 func (r *runtimeApp) monitorCommand(a []string) (err error) {
-	if len(a) < 2 {
-		return usagef(a[0], "provide an ECU and DID/name")
+	if a[0] == "observe" {
+		if len(a) < 2 {
+			return usagef(a[0], "provide at least one ECU:DID_OR_TERM")
+		}
+	} else if len(a) < 3 {
+		return usagef("monitor", "monitor needs an ECU and at least one DID/name")
+	}
+	interval, e := r.opt.duration("interval", 250*time.Millisecond)
+	if e != nil {
+		return e
+	}
+	count, e := runtimeInt(r.opt.value("count", "0"))
+	if e != nil || count < 0 {
+		if e != nil {
+			return e
+		}
+		return fmt.Errorf("invalid integer %q", r.opt.value("count", "0"))
 	}
 	if err := r.ensureVehicle(); err != nil {
 		return err
@@ -368,9 +383,6 @@ func (r *runtimeApp) monitorCommand(a []string) (err error) {
 			}
 		}
 	} else {
-		if len(a) < 3 {
-			return usagef("monitor", "monitor needs an ECU and at least one DID/name")
-		}
 		if e := add(a[1], a[2:]); e != nil {
 			return e
 		}
@@ -384,14 +396,6 @@ func (r *runtimeApp) monitorCommand(a []string) (err error) {
 		if s.Lifecycle != nil && s.Lifecycle.Keepalive != nil {
 			targets[i].nextKeep = time.Now().Add(s.Lifecycle.Keepalive.Interval)
 		}
-	}
-	interval, e := r.opt.duration("interval", 250*time.Millisecond)
-	if e != nil {
-		return e
-	}
-	count, e := runtimeInt(r.opt.value("count", "0"))
-	if e != nil {
-		return e
 	}
 	read := func(ctx context.Context) ([]map[string]any, error) {
 		now := time.Now()

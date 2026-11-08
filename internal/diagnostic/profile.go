@@ -69,7 +69,7 @@ func NewProfile(ctx context.Context, db *catalog.DB, region, vehicle string, bus
 	if bus < 0 || bus > 3 {
 		return nil, fmt.Errorf("Panda diagnostic bus must be 0..3, got %d", bus)
 	}
-	index, e := db.Document(ctx, "index.json")
+	index, e := db.Index(ctx)
 	if e != nil {
 		return nil, e
 	}

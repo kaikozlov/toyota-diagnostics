@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestBrowseOnlyCatalogOpensAndExplainsMissingRuntime(t *testing.T) {
+func TestBrowseOnlyCatalogOpensAndExplainsMissingDocuments(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "browse.sqlite")
 	raw, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -34,10 +34,22 @@ CREATE TABLE items (id INTEGER PRIMARY KEY,region TEXT,category_id INTEGER,kind 
 	if err != nil || len(ecus) != 1 || ecus[0].Key != "frc" {
 		t.Fatalf("browse lookup failed: %v %+v", err, ecus)
 	}
-	_, err = db.Document(context.Background(), "index.json")
+	index, err := db.Index(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := index["regions"].(map[string]any)["NA"].(map[string]any)["selected_categories"].(map[string]any)["498"].(map[string]any)
+	if cat["catalog_member"] != "" {
+		t.Fatalf("browse-only ECU should not invent a catalog member: %#v", cat)
+	}
+	_, err = db.Document(context.Background(), "catalogs/NA/498.json")
 	var missing *MissingRuntimeMetadataError
-	if !errors.As(err, &missing) || !strings.Contains(err.Error(), "browse-only") || strings.Contains(err.Error(), "no such table") {
-		t.Fatalf("want actionable browse-only error, got %v", err)
+	if !errors.As(err, &missing) || strings.Contains(err.Error(), "no such table") {
+		t.Fatalf("want actionable missing catalog document error, got %v", err)
+	}
+	_, err = db.Document(context.Background(), "supplement://pcs_data_viewer_tss3_managed_semantics.json")
+	if !errors.As(err, &missing) || !strings.Contains(err.Error(), "FFD") || !strings.Contains(err.Error(), "supplement://") {
+		t.Fatalf("want FFD supplement error, got %v", err)
 	}
 }
 
@@ -47,7 +59,7 @@ func TestRuntimeDocumentErrorsAreActionable(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 	_, err := db.Document(ctx, "index.json")
-	if err == nil || !strings.Contains(err.Error(), "index.json") || strings.Contains(err.Error(), "no rows") {
+	if err == nil || !strings.Contains(err.Error(), "browse-only") || strings.Contains(err.Error(), "no rows") {
 		t.Fatalf("%v", err)
 	}
 	_, err = db.Document(ctx, "supplement://pcs_data_viewer_tss3_managed_semantics.json")

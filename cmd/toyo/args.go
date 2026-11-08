@@ -15,6 +15,7 @@ import (
 type options struct {
 	db        string
 	dbSet     bool
+	bundle    string
 	region    string
 	json      bool
 	help      bool
@@ -39,7 +40,7 @@ func usagef(command, format string, args ...any) error {
 }
 
 func parse(args []string) (options, []string, error) {
-	opt := options{db: appenv.Catalog(), region: "NA", limit: 50, literalAt: -1}
+	opt := options{db: appenv.Catalog(), bundle: appenv.Bundle(), region: "NA", limit: 50, literalAt: -1}
 	if r := appenv.Region(); r != "" {
 		opt.region = r
 	}
@@ -58,7 +59,7 @@ func parse(args []string) (options, []string, error) {
 			key = token
 		}
 		switch key {
-		case "--db", "--region", "--limit":
+		case "--db", "--bundle", "--region", "--limit":
 			if !strings.Contains(token, "=") {
 				i++
 				if i >= len(args) {
@@ -70,6 +71,8 @@ func parse(args []string) (options, []string, error) {
 			case "--db":
 				opt.db = value
 				opt.dbSet = true
+			case "--bundle":
+				opt.bundle = value
 			case "--region":
 				opt.region = value
 			case "--limit":

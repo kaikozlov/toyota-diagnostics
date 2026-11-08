@@ -230,6 +230,11 @@ func runRuntime(opt options, args []string) (resultErr error) {
 		return err
 	}
 	defer r.db.Close()
+	if opt.bundle != "" {
+		if err = r.db.AttachBundle(opt.bundle); err != nil {
+			return err
+		}
+	}
 	if ro.value("vehicle", "") == "" && len(rest) >= 2 && rest[0] == "active-test" && (rest[1] == "list" || rest[1] == "groups") {
 		region, e := catalog.Region(opt.region)
 		if e != nil {

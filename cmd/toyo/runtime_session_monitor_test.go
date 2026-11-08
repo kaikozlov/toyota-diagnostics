@@ -229,3 +229,34 @@ func TestMonitorObserveWatchSessionLifecycle(t *testing.T) {
 		}
 	})
 }
+
+func TestMonitorRejectsInvalidFlagsBeforeSessionTraffic(t *testing.T) {
+	for _, tc := range []struct {
+		flag  string
+		value string
+	}{
+		{"interval", "-1"},
+		{"interval", "nope"},
+		{"count", "nope"},
+	} {
+		r := samplingApp(t, defaultLifecycle(nil))
+		bus := &sessionCAN{reply: positiveUDS}
+		r.transport = bus
+		r.opt.values[tc.flag] = []string{tc.value}
+		err := r.monitorCommand([]string{"monitor", "eps", "0x1601"})
+		if err == nil {
+			t.Fatalf("%s=%s accepted", tc.flag, tc.value)
+		}
+		if len(bus.sent) != 0 {
+			t.Fatalf("%s=%s sent session traffic before validation: %v", tc.flag, tc.value, bus.sent)
+		}
+		r = samplingApp(t, defaultLifecycle(nil))
+		bus = &sessionCAN{reply: positiveUDS}
+		r.transport = bus
+		r.opt.values[tc.flag] = []string{tc.value}
+		err = r.didCommand([]string{"did", "watch", "eps", "0x1601"})
+		if err == nil || len(bus.sent) != 0 {
+			t.Fatalf("did watch %s=%s sent %v err %v", tc.flag, tc.value, bus.sent, err)
+		}
+	}
+}
