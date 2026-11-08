@@ -32,8 +32,8 @@ var regions = []string{"NA", "EU", "JP"}
 
 type kindFilter struct{ kind, label string }
 
-// preferredFilters is the display order for well-known families. Only kinds
-// that exist in the current scope are shown.
+// preferredFilters is the display order for well-known families. Chips list
+// kinds present in the current scope (catalog or ECU), not search-hit facets.
 var preferredFilters = []kindFilter{
 	{"did", "data"}, {"dtc", "dtc"}, {"active-test", "test"}, {"ecu", "ecu"},
 	{"vehicle", "vehicle"}, {"function", "func"}, {"plugin", "plugin"}, {"utility", "utility"},
@@ -67,6 +67,7 @@ type filterChip struct {
 	index        int
 	label        string
 	line, x0, x1 int
+	more         bool
 }
 
 type hitAction int
@@ -77,6 +78,7 @@ const (
 	hitRow
 	hitPreview
 	hitBack
+	hitMore
 )
 
 type hit struct {
@@ -106,10 +108,13 @@ type model struct {
 	preview    string
 	previewTop int
 
-	detail     bool
-	viewport   viewport.Model
-	mouseDown  hit
-	restoreKey string
+	detail        bool
+	viewport      viewport.Model
+	mouseDown     hit
+	restoreKey    string
+	restoreOffset int
+	listOffset    int
+	chipStart     int
 }
 
 func newModel(db *catalog.DB, region string) model {
@@ -182,6 +187,7 @@ func (m *model) loadFilters() {
 	uniquifyFilterLabels(next)
 	m.filters = next
 	m.filter = 0
+	m.chipStart = 0
 	for i, f := range m.filters {
 		if f.kind == prev {
 			m.filter = i
@@ -380,6 +386,34 @@ func vehiclePreview(ctx context.Context, db *catalog.DB, it catalog.Item) previe
 
 func (m model) wide() bool { return m.width >= previewWidth }
 
+func (m model) maxChipLines() int {
+	if m.height <= 20 {
+		return 1
+	}
+	return 2
+}
+
+func (m model) listStart(h int) int {
+	if len(m.rows) == 0 {
+		return 0
+	}
+	return max(0, min(m.listOffset, max(0, len(m.rows)-h)))
+}
+
+func (m *model) revealIndex() {
+	h := m.bodyHeight()
+	if len(m.rows) == 0 {
+		m.listOffset = 0
+		return
+	}
+	m.listOffset = m.listStart(h)
+	if m.index < m.listOffset {
+		m.listOffset = m.index
+	} else if m.index >= m.listOffset+h {
+		m.listOffset = max(0, m.index-h+1)
+	}
+}
+
 func (m model) filterLineCount() int {
 	if n := len(m.filterLines()); n > 0 {
 		return n
@@ -440,25 +474,155 @@ func (m *model) layout() {
 	m.renderPreview()
 }
 
-func (m *model) layoutFilters() {
-	width := max(8, m.width)
-	inner := max(1, width-2)
-	m.chips = m.chips[:0]
+type chipItem struct {
+	index int
+	label string
+	w     int
+}
+
+func moreChipLabel(n int) string { return "+" + strconv.Itoa(n) }
+
+func packFilters(items []chipItem, start, width, maxLines, reserve int) ([]filterChip, int) {
+	var chips []filterChip
+	if start < 0 {
+		start = 0
+	}
 	line, x := 0, 1
-	for i, f := range m.filters {
-		label := compactLabel(f.label, min(chipMaxWidth, inner))
-		w := ansi.StringWidth(label)
-		if x > 1 && x+w > width {
+	i := start
+	for i < len(items) {
+		label, w := items[i].label, items[i].w
+		limit := width
+		if reserve > 0 && line == maxLines-1 {
+			limit = width - reserve - 2
+			if limit < 2 {
+				limit = width
+			}
+		}
+		if x > 1 && x+w > limit {
 			line++
 			x = 1
+			if line >= maxLines {
+				break
+			}
+			if reserve > 0 && line == maxLines-1 {
+				limit = width - reserve - 2
+				if limit < 2 {
+					limit = width
+				}
+			}
 		}
-		if x+w > width {
-			label = compactLabel(label, max(1, width-x))
+		if x+w > limit {
+			label = compactLabel(label, max(1, limit-x))
 			w = ansi.StringWidth(label)
 		}
-		m.chips = append(m.chips, filterChip{index: i, label: label, line: line, x0: x, x1: x + w})
+		chips = append(chips, filterChip{index: items[i].index, label: label, line: line, x0: x, x1: x + w})
 		x += w + 2
+		i++
 	}
+	return chips, i - start
+}
+
+func (m *model) layoutFilters() {
+	m.ensureFilterVisible()
+}
+
+func (m *model) pageFilterChips() {
+	end := m.chipStart
+	for _, c := range m.chips {
+		if !c.more && c.index+1 > end {
+			end = c.index + 1
+		}
+	}
+	if end >= len(m.filters) {
+		m.chipStart = 0
+	} else {
+		m.chipStart = end
+	}
+	m.rebuildFilterChips()
+}
+
+func (m *model) ensureFilterVisible() {
+	items := m.chipItems()
+	if len(items) == 0 {
+		m.chips = nil
+		m.chipStart = 0
+		return
+	}
+	width := max(8, m.width)
+	maxLines := m.maxChipLines()
+	reserve := ansi.StringWidth(moreChipLabel(len(items)))
+	start := min(max(0, m.chipStart), len(items)-1)
+	for range items {
+		chips, consumed := packFilters(items, start, width, maxLines, reserve)
+		if consumed == len(items)-start {
+			chips, consumed = packFilters(items, start, width, maxLines, 0)
+		}
+		if consumed <= 0 {
+			start = m.filter
+			continue
+		}
+		if m.filter >= start && m.filter < start+consumed {
+			m.chipStart = start
+			m.applyPackedChips(chips, start, consumed, items)
+			return
+		}
+		if m.filter < start {
+			start = m.filter
+			continue
+		}
+		start += consumed
+		if start > m.filter {
+			start = m.filter
+		}
+	}
+	m.chipStart = min(max(0, m.filter), len(items)-1)
+	m.rebuildFilterChips()
+}
+
+func (m *model) chipItems() []chipItem {
+	width := max(8, m.width)
+	inner := max(1, width-2)
+	items := make([]chipItem, len(m.filters))
+	for i, f := range m.filters {
+		label := compactLabel(f.label, min(chipMaxWidth, inner))
+		items[i] = chipItem{index: i, label: label, w: ansi.StringWidth(label)}
+	}
+	return items
+}
+
+func (m *model) rebuildFilterChips() {
+	items := m.chipItems()
+	if len(items) == 0 {
+		m.chips = nil
+		return
+	}
+	width := max(8, m.width)
+	start := min(max(0, m.chipStart), len(items)-1)
+	reserve := ansi.StringWidth(moreChipLabel(len(items)))
+	chips, consumed := packFilters(items, start, width, m.maxChipLines(), reserve)
+	if consumed == len(items)-start {
+		chips, consumed = packFilters(items, start, width, m.maxChipLines(), 0)
+	}
+	m.chipStart = start
+	m.applyPackedChips(chips, start, consumed, items)
+}
+
+func (m *model) applyPackedChips(chips []filterChip, start, consumed int, items []chipItem) {
+	hidden := start + (len(items) - (start + consumed))
+	if hidden > 0 {
+		label := moreChipLabel(hidden)
+		w := ansi.StringWidth(label)
+		line, x := 0, 1
+		if len(chips) > 0 {
+			last := chips[len(chips)-1]
+			line, x = last.line, last.x1+2
+		}
+		if x+w > max(8, m.width) {
+			x = max(1, max(8, m.width)-w)
+		}
+		chips = append(chips, filterChip{index: -1, label: label, line: line, x0: x, x1: x + w, more: true})
+	}
+	m.chips = chips
 }
 
 func (m *model) renderPreview() {
@@ -521,16 +685,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.revision != m.revision {
 			return m, nil
 		}
-		m.rows, m.err, m.loading, m.index, m.previewTop = msg.rows, msg.err, false, 0, 0
+		m.rows, m.err, m.loading, m.index, m.previewTop, m.listOffset = msg.rows, msg.err, false, 0, 0, 0
 		if key := m.restoreKey; key != "" {
-			m.restoreKey = ""
+			offset := m.restoreOffset
+			m.restoreKey, m.restoreOffset = "", 0
 			for i, row := range m.rows {
 				if row.Kind == "ecu" && row.ECU == key {
 					m.index = i
+					m.listOffset = offset
 					break
 				}
 			}
 		}
+		m.revealIndex()
 		m.dataKey, m.preview = "", ""
 		return m, m.loadPreview()
 	case previewResult:
@@ -570,6 +737,7 @@ func (m model) moveTo(next int) (model, tea.Cmd) {
 		return m, nil
 	}
 	m.index, m.previewTop = next, 0
+	m.revealIndex()
 	m.dataKey, m.preview = "", ""
 	return m, m.loadPreview()
 }
@@ -580,6 +748,7 @@ func (m model) shiftFilter(delta int) (model, tea.Cmd) {
 	}
 	n := len(m.filters)
 	m.filter = (m.filter + delta%n + n) % n
+	m.ensureFilterVisible()
 	return m.refresh(false)
 }
 
@@ -607,6 +776,11 @@ func (m model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.refresh(false)
 		case m.scope != nil:
 			return m.leaveScope()
+		case m.filter != 0:
+			m.filter = 0
+			m.chipStart = 0
+			m.ensureFilterVisible()
+			return m.refresh(false)
 		}
 		return m, tea.Quit
 	case "up", "ctrl+p":
@@ -694,6 +868,7 @@ func (m model) openSelection() (model, tea.Cmd) {
 func (m model) leaveScope() (model, tea.Cmd) {
 	if m.scope != nil {
 		m.restoreKey = m.scope.Key
+		m.restoreOffset = m.listOffset
 	}
 	m.scope = nil
 	m.filter = 0
@@ -772,6 +947,9 @@ func (m model) activate(h hit) (model, tea.Cmd) {
 		if m.scope != nil {
 			return m.leaveScope()
 		}
+	case hitMore:
+		m.pageFilterChips()
+		return m, nil
 	}
 	return m, nil
 }
@@ -790,6 +968,9 @@ func (m model) hitTest(x, y int) hit {
 		line := y - m.filterTop()
 		for _, c := range m.chips {
 			if c.line == line && x >= c.x0 && x < c.x1 {
+				if c.more {
+					return hit{action: hitMore}
+				}
 				return hit{action: hitFilter, index: c.index}
 			}
 		}
@@ -804,8 +985,7 @@ func (m model) hitTest(x, y int) hit {
 			return hit{}
 		}
 		h := m.bodyHeight()
-		start := max(0, m.index-h/2)
-		start = max(0, min(start, len(m.rows)-h))
+		start := m.listStart(h)
 		row := start + (y - bodyTop)
 		if row >= 0 && row < len(m.rows) {
 			return hit{action: hitRow, index: row}
@@ -839,8 +1019,7 @@ func (m model) View() tea.View {
 
 func (m model) view() string {
 	var b strings.Builder
-	title := terminal.StyleAccent.Render("toyota") + "  " + terminal.StyleDim.Render(m.region)
-	b.WriteString(" " + title + "\n\n")
+	b.WriteString(m.titleBar() + "\n\n")
 	if m.detail {
 		b.WriteString(m.viewport.View() + "\n")
 		b.WriteString("\n" + terminal.StyleDim.Render(fmt.Sprintf("  %3.0f%%   ↑↓ pgup pgdn scroll   esc back", m.viewport.ScrollPercent()*100)))
@@ -853,8 +1032,21 @@ func (m model) view() string {
 	b.WriteString(" " + prompt + m.input.View() + "\n")
 	b.WriteString(m.tabs() + "\n\n")
 	b.WriteString(m.body())
-	b.WriteString("\n" + m.hints())
+	b.WriteString(m.hints())
 	return b.String()
+}
+
+func (m model) titleBar() string {
+	left := " " + terminal.StyleAccent.Render("toyota") + "  " + terminal.StyleDim.Render(m.region)
+	status := m.status()
+	if status == "" {
+		return left
+	}
+	pad := m.width - ansi.StringWidth(left) - ansi.StringWidth(status) - 1
+	if pad < 2 {
+		return left
+	}
+	return left + strings.Repeat(" ", pad) + terminal.StyleDim.Render(status)
 }
 
 func (m model) tabs() string {
@@ -882,13 +1074,6 @@ func (m model) tabs() string {
 		}
 		lines[i] = line.String()
 	}
-	if status := m.status(); status != "" {
-		last := n - 1
-		room := m.width - ansi.StringWidth(lines[last]) - ansi.StringWidth(status) - 2
-		if room >= 2 {
-			lines[last] += strings.Repeat(" ", room) + terminal.StyleDim.Render(status)
-		}
-	}
 	return strings.Join(lines, "\n")
 }
 
@@ -901,9 +1086,10 @@ func (m model) status() string {
 	case len(m.rows) == 0:
 		return ""
 	}
-	n := fmt.Sprintf("%d", len(m.rows))
-	if len(m.rows) >= resultLimit {
-		n = fmt.Sprintf("first %d", resultLimit)
+	n := len(m.rows)
+	prefix := strconv.Itoa(n)
+	if n >= resultLimit {
+		prefix = fmt.Sprintf("first %d", resultLimit)
 	}
 	kind := ""
 	if m.filter >= 0 && m.filter < len(m.filters) {
@@ -911,13 +1097,20 @@ func (m model) status() string {
 	}
 	switch {
 	case m.query() == "" && m.scope == nil && (kind == "" || kind == "ecu"):
-		return n + " ECUs with decoded catalogs"
+		return prefix + " " + plural(n, "ECU") + " with decoded catalogs"
 	case m.query() == "" && m.scope == nil && kind == "vehicle":
-		return n + " models"
+		return prefix + " " + plural(n, "model")
 	case m.query() == "":
-		return n + " records"
+		return prefix + " " + plural(n, "record")
 	}
-	return n + " results"
+	return prefix + " " + plural(n, "result")
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return word
+	}
+	return word + "s"
 }
 
 func (m model) hints() string {
@@ -927,6 +1120,8 @@ func (m model) hints() string {
 		leave = "esc clear"
 	case m.scope != nil:
 		leave = "esc back"
+	case m.filter != 0:
+		leave = "esc all"
 	}
 	for _, text := range []string{
 		" ↑↓ move   ←→ filter   tab filter   enter open   click select   ctrl+r region   " + leave,
@@ -997,8 +1192,7 @@ func (m model) listLines(h int) []string {
 		lines[0] = "  " + m.emptyMessage()
 		return lines
 	}
-	start := max(0, m.index-h/2)
-	start = max(0, min(start, len(m.rows)-h))
+	start := m.listStart(h)
 	terms := terminal.Terms(m.query())
 	// The kind column only earns its width when kinds are mixed.
 	mixed := m.filter == 0 && (m.scope != nil || m.query() != "")

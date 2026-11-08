@@ -36,7 +36,7 @@ A bare word that is not an ECU or command searches instead of failing, and typos
 
 Search rows end with a record number; `toyota inspect N` shows that record, and `--json` emits its metadata and payload. Record numbers belong to the generated catalog and can change when it is regenerated, so prefer `toyota ECU IDENT` in anything you keep. Human output decodes records for their kind (bit layout, scaling, value tables, DTC code/failure byte); `--json` always carries the complete source record.
 
-The explorer opens on the ECUs that have decoded catalogs. `enter` on an ECU steps into it (`esc` or backspace steps out), filter chips show kinds that exist in the current view (arrow keys, tab, or a click select one), `ctrl+r` cycles regions, and terminals at least 110 columns wide preview the highlighted record beside the list.
+The explorer opens on the ECUs that have decoded catalogs. `enter` on an ECU steps into it (`esc` or backspace steps out). Filter chips list the record kinds present in the current scope — the whole catalog at the root, or one ECU after you open it — and stay put during a search even if a kind has no hits. Arrow keys, tab, or a click select a kind; a `+N` chip pages any that do not fit. `ctrl+r` cycles regions, and terminals at least 110 columns wide preview the highlighted record beside the list.
 
 The root launcher builds `build/toyota` on first use when Go is available. The SQLite file and binary are generated artifacts under `build/`, not tracked source. `TOYOTA_CATALOG` or `--db` selects another runtime database.
 

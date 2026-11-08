@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"compress/zlib"
 	"database/sql"
+	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -33,6 +35,36 @@ INSERT INTO ecus VALUES('NA',405,'eps','Power Steering','EMPS_P5.ddb',20,'p5-sta
 INSERT INTO ecus VALUES('NA',80,'airbag','SRS Airbag','AIRBAG_P5.ddb',20,'p5-standard','catalogs/NA/80.json','{"dtcs":1}');
 INSERT INTO ecus VALUES('NA',999,'blank','Empty Catalog Member','BLANK_P5.ddb',20,'p5-standard','catalogs/NA/999.json','{}');
 INSERT INTO ecus VALUES('NA',60,'ds','Driving Support','DS_P5.ddb',20,'p5-standard','catalogs/NA/60.json','{"signals":1}');
+INSERT INTO ecus VALUES('NA',400,'aaa00','Pad ECU 00','PAD_P5.ddb',20,'p5-standard','catalogs/NA/400.json','{}');
+INSERT INTO ecus VALUES('NA',401,'aaa01','Pad ECU 01','PAD_P5.ddb',20,'p5-standard','catalogs/NA/401.json','{}');
+INSERT INTO ecus VALUES('NA',402,'aaa02','Pad ECU 02','PAD_P5.ddb',20,'p5-standard','catalogs/NA/402.json','{}');
+INSERT INTO ecus VALUES('NA',403,'aaa03','Pad ECU 03','PAD_P5.ddb',20,'p5-standard','catalogs/NA/403.json','{}');
+INSERT INTO ecus VALUES('NA',404,'aaa04','Pad ECU 04','PAD_P5.ddb',20,'p5-standard','catalogs/NA/404.json','{}');
+INSERT INTO ecus VALUES('NA',405,'aaa05','Pad ECU 05','PAD_P5.ddb',20,'p5-standard','catalogs/NA/405.json','{}');
+INSERT INTO ecus VALUES('NA',406,'aaa06','Pad ECU 06','PAD_P5.ddb',20,'p5-standard','catalogs/NA/406.json','{}');
+INSERT INTO ecus VALUES('NA',407,'aaa07','Pad ECU 07','PAD_P5.ddb',20,'p5-standard','catalogs/NA/407.json','{}');
+INSERT INTO ecus VALUES('NA',408,'aaa08','Pad ECU 08','PAD_P5.ddb',20,'p5-standard','catalogs/NA/408.json','{}');
+INSERT INTO ecus VALUES('NA',409,'aaa09','Pad ECU 09','PAD_P5.ddb',20,'p5-standard','catalogs/NA/409.json','{}');
+INSERT INTO ecus VALUES('NA',410,'aaa10','Pad ECU 10','PAD_P5.ddb',20,'p5-standard','catalogs/NA/410.json','{}');
+INSERT INTO ecus VALUES('NA',411,'aaa11','Pad ECU 11','PAD_P5.ddb',20,'p5-standard','catalogs/NA/411.json','{}');
+INSERT INTO ecus VALUES('NA',412,'aaa12','Pad ECU 12','PAD_P5.ddb',20,'p5-standard','catalogs/NA/412.json','{}');
+INSERT INTO ecus VALUES('NA',413,'aaa13','Pad ECU 13','PAD_P5.ddb',20,'p5-standard','catalogs/NA/413.json','{}');
+INSERT INTO ecus VALUES('NA',414,'aaa14','Pad ECU 14','PAD_P5.ddb',20,'p5-standard','catalogs/NA/414.json','{}');
+INSERT INTO ecus VALUES('NA',415,'aaa15','Pad ECU 15','PAD_P5.ddb',20,'p5-standard','catalogs/NA/415.json','{}');
+INSERT INTO ecus VALUES('NA',416,'aaa16','Pad ECU 16','PAD_P5.ddb',20,'p5-standard','catalogs/NA/416.json','{}');
+INSERT INTO ecus VALUES('NA',417,'aaa17','Pad ECU 17','PAD_P5.ddb',20,'p5-standard','catalogs/NA/417.json','{}');
+INSERT INTO ecus VALUES('NA',418,'aaa18','Pad ECU 18','PAD_P5.ddb',20,'p5-standard','catalogs/NA/418.json','{}');
+INSERT INTO ecus VALUES('NA',419,'aaa19','Pad ECU 19','PAD_P5.ddb',20,'p5-standard','catalogs/NA/419.json','{}');
+INSERT INTO ecus VALUES('NA',420,'aaa20','Pad ECU 20','PAD_P5.ddb',20,'p5-standard','catalogs/NA/420.json','{}');
+INSERT INTO ecus VALUES('NA',421,'aaa21','Pad ECU 21','PAD_P5.ddb',20,'p5-standard','catalogs/NA/421.json','{}');
+INSERT INTO ecus VALUES('NA',422,'aaa22','Pad ECU 22','PAD_P5.ddb',20,'p5-standard','catalogs/NA/422.json','{}');
+INSERT INTO ecus VALUES('NA',423,'aaa23','Pad ECU 23','PAD_P5.ddb',20,'p5-standard','catalogs/NA/423.json','{}');
+INSERT INTO ecus VALUES('NA',424,'aaa24','Pad ECU 24','PAD_P5.ddb',20,'p5-standard','catalogs/NA/424.json','{}');
+INSERT INTO ecus VALUES('NA',425,'aaa25','Pad ECU 25','PAD_P5.ddb',20,'p5-standard','catalogs/NA/425.json','{}');
+INSERT INTO ecus VALUES('NA',426,'aaa26','Pad ECU 26','PAD_P5.ddb',20,'p5-standard','catalogs/NA/426.json','{}');
+INSERT INTO ecus VALUES('NA',427,'aaa27','Pad ECU 27','PAD_P5.ddb',20,'p5-standard','catalogs/NA/427.json','{}');
+INSERT INTO ecus VALUES('NA',428,'aaa28','Pad ECU 28','PAD_P5.ddb',20,'p5-standard','catalogs/NA/428.json','{}');
+INSERT INTO ecus VALUES('NA',429,'aaa29','Pad ECU 29','PAD_P5.ddb',20,'p5-standard','catalogs/NA/429.json','{}');
 CREATE TABLE vehicles (region TEXT,vehicle_type INTEGER,name TEXT,install_set_ids TEXT);
 INSERT INTO vehicles VALUES('NA',12704,'Camry HV','[1]');
 CREATE TABLE vehicle_ecus (region TEXT, vehicle_type INTEGER, install_set_id INTEGER, category_id INTEGER, route_selector INTEGER, connection_frame_id INTEGER, route_key TEXT, request_address INTEGER, address_extension INTEGER, transport_kind TEXT);
@@ -161,7 +193,7 @@ func TestOpensOnDecodedECUDirectory(t *testing.T) {
 	if seen["eps"] {
 		t.Fatalf("declaration-only ECU should stay hidden: %+v", m.rows)
 	}
-	if view := view(m); !strings.Contains(view, "Front Recognition Camera 2") {
+	if view := view(m); !strings.Contains(view, "Pad ECU") && !strings.Contains(view, "Front Recognition Camera 2") {
 		t.Fatal(view)
 	}
 	if strings.Contains(view(m), "GTS+") || strings.Contains(view(m), "2026") {
@@ -328,8 +360,14 @@ func TestLayoutNeverOverflowsTheTerminal(t *testing.T) {
 				}
 			}
 			lines := strings.Split(view(m), "\n")
-			if len(lines) > size[1]+1 {
+			if len(lines) > size[1] {
 				t.Errorf("%v %s: %d lines for height %d", size, mode, len(lines), size[1])
+			}
+			if mode == "list" {
+				last := ansi.Strip(lines[len(lines)-1])
+				if !strings.Contains(last, "esc") {
+					t.Errorf("%v list view dropped hints: %q", size, last)
+				}
 			}
 			for _, line := range lines {
 				if w := ansi.StringWidth(line); w > size[0] {
@@ -436,6 +474,9 @@ func TestMouseClickFilterAndPressReleaseSemantics(t *testing.T) {
 	m := opened(t, 90, 24)
 	var data, dtc filterChip
 	for _, c := range m.chips {
+		if c.more || c.index < 0 || c.index >= len(m.filters) {
+			continue
+		}
 		switch m.filters[c.index].kind {
 		case "did":
 			data = c
@@ -477,24 +518,13 @@ func TestMouseRowSelectWheelAndOpen(t *testing.T) {
 	if len(m.rows) < 2 {
 		t.Fatal(m.rows)
 	}
-	target := -1
-	for i, row := range m.rows {
-		if row.ECU == "frc" {
-			target = i
-			break
-		}
-	}
-	h := m.hitTest(4, m.bodyTop()+target)
-	if h.action != hitRow || h.index != target {
-		// first visible row is index 0 when index is 0 and list is short
-		h = hit{action: hitRow, index: target}
-	}
-	y := m.bodyTop()
-	// Find the screen row for the target using the same windowing as the list.
 	height := m.bodyHeight()
-	start := max(0, m.index-height/2)
-	start = max(0, min(start, len(m.rows)-height))
-	y += target - start
+	target := min(len(m.rows)-1, height-2)
+	if target <= 0 {
+		t.Fatalf("need a lower visible row, height=%d rows=%d", height, len(m.rows))
+	}
+	y := m.bodyTop() + (target - m.listStart(height))
+	want := m.rows[target].ECU
 	if m.hitTest(4, y) != (hit{action: hitRow, index: target}) {
 		t.Fatalf("row hit %d,%d = %+v want row %d", 4, y, m.hitTest(4, y), target)
 	}
@@ -506,8 +536,8 @@ func TestMouseRowSelectWheelAndOpen(t *testing.T) {
 		m, _ = update(m, cmd())
 	}
 	m, cmd = clickAt(m, 4, y)
-	if m.scope == nil || m.scope.Key != "frc" {
-		t.Fatal("second click on the selected ECU should open it")
+	if m.scope == nil || m.scope.Key != want {
+		t.Fatalf("second click should open %s, scope=%v", want, m.scope)
 	}
 	m = settle(t, m, cmd)
 
@@ -552,21 +582,27 @@ func TestRegionCycleAndSearchNoResults(t *testing.T) {
 }
 
 func TestFiltersWrapInsteadOfOverflow(t *testing.T) {
-	m := opened(t, 40, 16)
+	m := opened(t, 90, 24)
 	if len(m.chips) < 2 {
 		t.Fatal(m.chips)
 	}
-	wrapped := false
+	wrapped, more := false, false
 	for _, c := range m.chips {
 		if c.line > 0 {
 			wrapped = true
+		}
+		if c.more {
+			more = true
 		}
 		if c.x1 > m.width {
 			t.Fatalf("chip exceeds width: %+v width=%d", c, m.width)
 		}
 	}
-	if !wrapped {
-		t.Fatalf("expected wrapped chips at width 40: %+v", m.chips)
+	if !wrapped && !more {
+		t.Fatalf("expected wrapped chips or +N overflow: %+v", m.chips)
+	}
+	if m.filterLineCount() > m.maxChipLines() {
+		t.Fatalf("filter rows %d exceed cap %d", m.filterLineCount(), m.maxChipLines())
 	}
 	plain := ansi.Strip(view(m))
 	if strings.Contains(plain, "active-test-support-data-definitions") {
@@ -643,5 +679,186 @@ func TestWideLayoutGutterTracksTerminalWidth(t *testing.T) {
 	}
 	if wide.listWidth() != 90 {
 		t.Fatalf("200-col list should grow with the window, width=%d", wide.listWidth())
+	}
+}
+
+func assertFitsWithHints(t *testing.T, m model, label string) {
+	t.Helper()
+	raw := strings.Split(m.view(), "\n")
+	if len(raw) > m.height {
+		t.Fatalf("%s: raw view is %d lines for height %d\n%s", label, len(raw), m.height, m.view())
+	}
+	shown := strings.Split(view(m), "\n")
+	if len(shown) > m.height {
+		t.Fatalf("%s: clipped view is %d lines for height %d", label, len(shown), m.height)
+	}
+	last := ansi.Strip(shown[len(shown)-1])
+	if !strings.Contains(last, "esc") {
+		t.Fatalf("%s: last line is not hints: %q", label, last)
+	}
+}
+
+func TestViewFitsAndShowsHints(t *testing.T) {
+	for _, size := range [][2]int{{90, 24}, {120, 24}, {62, 19}, {200, 24}} {
+		root := opened(t, size[0], size[1])
+		assertFitsWithHints(t, root, fmt.Sprintf("%v root", size))
+		if size[0] == 62 {
+			if root.filterLineCount() > 1 {
+				t.Fatalf("62x19 should keep filters to one row, got %d", root.filterLineCount())
+			}
+			if !strings.Contains(ansi.Strip(view(root)), "ECU") {
+				t.Fatalf("62x19 should still show the count on the title: %s", view(root))
+			}
+		}
+
+		scoped := selectECU(t, opened(t, size[0], size[1]), "frc")
+		var cmd tea.Cmd
+		scoped, cmd = press(scoped, tea.KeyEnter)
+		scoped = settle(t, scoped, cmd)
+		assertFitsWithHints(t, scoped, fmt.Sprintf("%v scoped", size))
+
+		search := typed(t, opened(t, size[0], size[1]), "LTA")
+		assertFitsWithHints(t, search, fmt.Sprintf("%v search", size))
+	}
+}
+
+func TestClickLowerRowKeepsViewportAndSecondClickOpens(t *testing.T) {
+	m := opened(t, 90, 24)
+	rows := make([]catalog.Item, 40)
+	for i := range rows {
+		rows[i] = catalog.Item{ID: 1, Kind: "did", Region: "NA", Identifier: strconv.Itoa(i), Name: "Row " + strconv.Itoa(i)}
+	}
+	m.rows, m.index, m.listOffset = rows, 0, 0
+	h := m.bodyHeight()
+	if len(rows) <= h || h < 6 {
+		t.Fatalf("need rows>bodyHeight, bodyHeight=%d rows=%d", h, len(rows))
+	}
+	vis := h - 2
+	y := m.bodyTop() + vis
+	offset := m.listOffset
+	if got := m.hitTest(4, y); got != (hit{action: hitRow, index: vis}) {
+		t.Fatalf("expected row %d at y=%d, got %+v", vis, y, got)
+	}
+	m, cmd := clickAt(m, 4, y)
+	if m.index != vis {
+		t.Fatalf("click selected %d, want %d", m.index, vis)
+	}
+	if m.listOffset != offset {
+		t.Fatalf("click jumped viewport %d -> %d", offset, m.listOffset)
+	}
+	if m.hitTest(4, y) != (hit{action: hitRow, index: vis}) {
+		t.Fatalf("same cell no longer hits %d: %+v", vis, m.hitTest(4, y))
+	}
+	if cmd != nil {
+		m, _ = update(m, cmd())
+	}
+	m, cmd = clickAt(m, 4, y)
+	if !m.detail {
+		t.Fatal("second click on the same cell should open the row")
+	}
+	if cmd != nil {
+		m, _ = update(m, cmd())
+	}
+}
+
+func TestClickLowerRowAfterBackStaysStable(t *testing.T) {
+	m := opened(t, 90, 24)
+	if len(m.rows) <= m.bodyHeight() {
+		t.Fatalf("fixture should list more ECUs than the viewport: rows=%d height=%d", len(m.rows), m.bodyHeight())
+	}
+	frcAt, blankAt := -1, -1
+	for i, row := range m.rows {
+		switch row.ECU {
+		case "frc":
+			frcAt = i
+		case "blank":
+			blankAt = i
+		}
+	}
+	h := m.bodyHeight()
+	m.listOffset = max(0, len(m.rows)-h)
+	m.index = frcAt
+	m.revealIndex()
+	yFrc := m.bodyTop() + (frcAt - m.listStart(h))
+	if m.hitTest(4, yFrc).index != frcAt {
+		t.Fatalf("frc not under y=%d", yFrc)
+	}
+	m, cmd := press(m, tea.KeyEnter)
+	if m.scope == nil || m.scope.Key != "frc" {
+		t.Fatalf("expected to open frc, scope=%v", m.scope)
+	}
+	m = settle(t, m, cmd)
+	m, cmd = press(m, tea.KeyEsc)
+	m = settle(t, m, cmd)
+	if m.scope != nil || m.rows[m.index].ECU != "frc" {
+		t.Fatalf("back should restore frc, index=%d scope=%v", m.index, m.scope)
+	}
+	if m.hitTest(4, yFrc).index != frcAt {
+		t.Fatalf("after back, frc moved; hit=%+v", m.hitTest(4, yFrc))
+	}
+	yBlank := m.bodyTop() + (blankAt - m.listStart(m.bodyHeight()))
+	offset := m.listOffset
+	m, cmd = clickAt(m, 4, yBlank)
+	if m.index != blankAt {
+		t.Fatalf("click selected %s want blank", m.rows[m.index].ECU)
+	}
+	if m.listOffset != offset {
+		t.Fatalf("click after back jumped viewport %d -> %d", offset, m.listOffset)
+	}
+	if cmd != nil {
+		m, _ = update(m, cmd())
+	}
+	m, cmd = clickAt(m, 4, yBlank)
+	if m.scope == nil || m.scope.Key != "blank" {
+		t.Fatal("second click should open blank")
+	}
+	if cmd != nil {
+		m = settle(t, m, cmd)
+	}
+}
+
+func TestEscResetsFilterBeforeQuit(t *testing.T) {
+	quits := func(cmd tea.Cmd) bool {
+		if cmd == nil {
+			return false
+		}
+		_, ok := cmd().(tea.QuitMsg)
+		return ok
+	}
+	m := opened(t, 90, 24)
+	m, cmd := press(m, tea.KeyTab)
+	m = settle(t, m, cmd)
+	if m.filters[m.filter].kind == "" {
+		t.Fatal("expected a kind filter")
+	}
+	if !strings.Contains(ansi.Strip(m.hints()), "esc all") {
+		t.Fatalf("hint should say esc all: %q", ansi.Strip(m.hints()))
+	}
+	m, cmd = press(m, tea.KeyEsc)
+	if quits(cmd) {
+		t.Fatal("esc should reset the filter, not quit")
+	}
+	if cmd != nil {
+		m = settle(t, m, cmd)
+	}
+	if m.filter != 0 {
+		t.Fatalf("filter=%v", m.filters[m.filter])
+	}
+	if !strings.Contains(ansi.Strip(m.hints()), "esc quit") {
+		t.Fatalf("hint should return to esc quit: %q", ansi.Strip(m.hints()))
+	}
+	if _, cmd = press(m, tea.KeyEsc); !quits(cmd) {
+		t.Fatal("second esc at root should quit")
+	}
+}
+
+func TestSingularCounts(t *testing.T) {
+	m := typed(t, opened(t, 90, 24), "LTA")
+	plain := ansi.Strip(view(m))
+	if strings.Contains(plain, "1 records") || strings.Contains(plain, "1 results") {
+		t.Fatalf("plural grammar leak:\n%s", plain)
+	}
+	if !strings.Contains(plain, "1 result") {
+		t.Fatalf("expected singular result count:\n%s", plain)
 	}
 }
