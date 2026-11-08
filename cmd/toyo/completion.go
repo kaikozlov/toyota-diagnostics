@@ -90,7 +90,7 @@ func (a *app) complete(args []string) error {
 	for i := 0; i < len(words); i++ {
 		w := words[i]
 		switch {
-		case w == "--region" || w == "--limit" || w == "--db":
+		case w == "--region" || w == "--limit" || w == "--db" || w == "--bundle":
 			if i == len(words)-1 {
 				pending = w
 			} else {
@@ -106,9 +106,9 @@ func (a *app) complete(args []string) error {
 	switch {
 	case prev == "--region":
 		out = []candidate{{"NA", "North America"}, {"EU", "Europe"}, {"JP", "Japan"}}
-	case prev == "--limit" || prev == "--db":
+	case prev == "--limit" || prev == "--db" || prev == "--bundle":
 	case strings.HasPrefix(cur, "-"):
-		out = []candidate{{"--region", "NA, EU or JP"}, {"--limit", "rows to show"}, {"--json", "structured output"}, {"--all", "include undecoded ECUs"}, {"--db", "alternate catalog"}, {"--version", "print the CLI version"}, {"--help", "show help"}}
+		out = []candidate{{"--region", "NA, EU or JP"}, {"--limit", "rows to show"}, {"--json", "structured output"}, {"--all", "include undecoded ECUs"}, {"--db", "alternate catalog"}, {"--bundle", "source bundle zip or directory"}, {"--version", "print the CLI version"}, {"--help", "show help"}}
 	default:
 		out = a.candidates(positional)
 	}

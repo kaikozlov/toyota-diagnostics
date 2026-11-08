@@ -381,7 +381,7 @@ func TestEveryCommandWordIsRoutable(t *testing.T) {
 		if name == "help" || nativeDocs[name].summary != "" {
 			continue
 		}
-		if !shouldBridge([]string{name}) {
+		if !runtimeCommand([]string{name}) {
 			t.Errorf("%q is advertised as a command but nothing handles it", name)
 		}
 	}

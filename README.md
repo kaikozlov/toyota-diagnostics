@@ -9,9 +9,10 @@ does not ship Toyota DLL, DDB, or EXE files, and it does not ship the SQLite
 catalog. You generate that catalog from the sibling `ghidra_rh850_analysis`
 tree.
 
-Offline catalog work is local. It needs no car, no Panda, and no Python. Live
-commands use the same CLI when you want to talk to a vehicle; those are
-optional and need extra setup plus hardware.
+Offline catalog work is local. It needs no car, no Panda, and no Python.
+Catalog browsing, decoding, planning, and live diagnostics all run in Go
+over the same SQLite catalog. Python is used only by the private raw-CAN
+Panda adapter; J2534 is native Go.
 
 ## Run it
 
@@ -26,8 +27,12 @@ tools/gts bundle sqlite --out ../toyota-diagnostics/build/catalog.sqlite
 ```
 
 If the catalog lives somewhere else, pass `--db PATH` or set `TOYO_CATALOG`.
-`TOYO_REGION` selects `NA`, `EU`, or `JP`. The older `TOYOTA_*` names for
-these settings still work.
+SQLite-only live use has explicit `--vehicle`, exported request addresses,
+inferred RX (`TX+8`), and no session/support tables. A matching `--bundle`
+or `TOYO_BUNDLE` (same schema and release) overlays those lost fields,
+including recovered response/legislated addresses on matching route keys.
+Unmatched bundles are rejected. `TOYO_REGION` selects `NA`, `EU`, or `JP`.
+The older `TOYOTA_*` names for these settings still work.
 
 `toyo help` works without a catalog.
 
@@ -55,7 +60,10 @@ change the filter only when the search box is empty.
 
 Commands listed under Live in `toyo help` — monitor, scan, DTC, Active Tests,
 and the rest — need a vehicle link. They are not required for browsing the
-catalog. On a workstation, `uv sync --extra live` adds direct Panda support.
+catalog. Offline commands and J2534 need no Python. For Panda, point
+`TOYO_PYTHON` (or the older `TOYOTA_PYTHON`) at an environment that already
+has upstream Panda. On a comma, that adapter reuses `/usr/local/venv` and
+`/data/openpilot`; do not create another diagnostics virtualenv.
 
 Catalogs and plans stay offline. Live commands can transmit or write to the
 vehicle. `toyo dtc clear` clears codes when you run it. Active Tests,
@@ -68,4 +76,4 @@ are in `toyo help COMMAND` and [`docs/GTS_PARITY.md`](docs/GTS_PARITY.md).
 ## Development
 
 See [`AGENTS.md`](AGENTS.md) for repository layout and how to run
-`go test ./...` and `uv run pytest`.
+`go test ./...`.

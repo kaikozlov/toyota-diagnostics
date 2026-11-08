@@ -4,10 +4,9 @@
 build:
 	go build -o build/toyo ./cmd/toyo
 
-# Run the Go CLI and Python runtime test suites.
+# Run application and transport tests.
 test:
 	go test ./...
-	uv run pytest
 
 # Remove compiled binaries, preserving the generated catalog and other data.
 clean:

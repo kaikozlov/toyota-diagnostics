@@ -4,7 +4,9 @@ This document tracks `toyota-diagnostics` against the pinned current Toyota GTS+
 
 Current comparison target: **GTS+ 2026.03.002.02** from the 2026-06-18 distribution.
 
-The reverse-engineering source of truth remains `ghidra_rh850_analysis`. This repository consumes clean derived metadata and implements runtime behavior.
+The reverse-engineering source of truth remains `ghidra_rh850_analysis`. This repository consumes its public SQLite projection (`tools/gts bundle sqlite`) and implements runtime behavior; that exporter does not store `index.json` or a `runtime_documents` table.
+
+SQLite-only live use therefore has explicit vehicle selection, exported physical request addresses, inferred response addresses (`request+8`), and default/absent session control. A matching source bundle (`--bundle`, same `schema` and `release` as `meta.source_schema` / `meta.release`) can overlay lost session, support, topology, and per-route response/legislated fields when the route key matches. Unmatched or unidentified bundles are rejected rather than mixed with the projection. Without those overlay fields, legislated functional-clear completeness is unknown (not complete), and monitor skips session enter when no lifecycle metadata is present.
 
 ## Current baseline
 
@@ -204,7 +206,7 @@ GTS+ also relies on Toyota-hosted services for operations such as reprogramming 
 
 ## J2534 / MVCI backend
 
-**Implemented baseline (2026-09-12):** the CLI now has a first-class `--transport j2534` backend. It discovers Windows v04.04 providers or accepts an explicit shared library, opens a raw CAN channel with separate 11-bit and 29-bit pass filters, and presents the same CAN contract used by the existing opendbc ISO-TP/UDS layer. This gives the current DID/DTC/VIN/Active-Test/FFD operations a transport-independent path through J2534 without duplicating their protocol logic. The implementation was ABI-tested and load-tested against a locally built OpenMVCI dylib. A physical XHorse Mini-VCI clone was then auto-detected through its macOS serial node and completed firmware bootstrap plus raw-CAN channel initialization; no vehicle bus was connected for that validation.
+**Implemented baseline (2026-09-12):** the CLI now has a first-class `--transport j2534` backend. It discovers Windows v04.04 providers or accepts an explicit shared library, opens a raw CAN channel with separate 11-bit and 29-bit pass filters, and presents the same CAN contract used by the native Go ISO-TP/UDS layer. This gives the current DID/DTC/VIN/Active-Test/FFD operations a transport-independent path through J2534 without duplicating their protocol logic. The implementation was ABI-tested and load-tested against a locally built OpenMVCI dylib. A physical XHorse Mini-VCI clone was then auto-detected through its macOS serial node and completed firmware bootstrap plus raw-CAN channel initialization; no vehicle bus was connected for that validation.
 
 Still missing on the J2534 side: native J2534 ISO15765 channels, CAN-FD/ISO15765-PS, ISO9141/ISO14230 for older Toyotas, DoIP, and live validation against a vehicle bus.
 
