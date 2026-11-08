@@ -15,8 +15,8 @@ optional and need extra setup plus hardware.
 
 ## Run it
 
-You need Go. From this checkout, `./toyo` builds `build/toyo` the first time
-you run it.
+You need Go 1.27.3. From this checkout, `./toyo` builds `build/toyo` the first
+time you run it.
 
 Put the generated catalog at `build/catalog.sqlite` (ignored, not source).
 From `ghidra_rh850_analysis` next to this tree:
@@ -40,15 +40,16 @@ these settings still work.
 ./toyo vehicle
 ```
 
-Those examples match `toyo help`. `toyo help COMMAND` has the rest of the
-commands and their flags. Search rows include a `#number` you can open with
-`toyo inspect`; those numbers can change when the catalog is rebuilt, so
-prefer `toyo ECU IDENT` in anything you keep.
+`toyo help COMMAND` has the rest of the commands and their flags. Search rows
+include a `#number` you can open with `toyo inspect`; those numbers can change
+when the catalog is rebuilt, so prefer `toyo ECU IDENT` in anything you keep.
 
-In the explorer, type to search, press enter to open an ECU, and press esc to
-step back. Arrow keys, tab, or a click choose a kind filter.
+In the explorer, up and down move the list, enter opens an ECU or record, and
+esc steps back. Tab or a click on a chip chooses a kind filter. Left and right
+change the filter only when the search box is empty.
 
-`toyo completion zsh` (or `bash`, or `fish`) installs tab completion.
+`toyo completion zsh` (or `bash`, or `fish`) prints a completion script; see
+`toyo help completion`.
 
 ## Live hardware
 
@@ -56,8 +57,10 @@ Commands listed under Live in `toyo help` — monitor, scan, DTC, Active Tests,
 and the rest — need a vehicle link. They are not required for browsing the
 catalog. On a workstation, `uv sync --extra live` adds direct Panda support.
 
-Looking at plans and catalogs does not talk to the car. Commands that change
-vehicle state require an explicit `--execute`.
+Catalogs and plans stay offline. Live commands can transmit or write to the
+vehicle. `toyo dtc clear` clears codes when you run it. Active Tests,
+Customize, and utilities are a dry run unless you pass `--execute`. Mutating
+raw requests need `--force`.
 
 Transport options, recovered GTS+ coverage, and the longer live command set
 are in `toyo help COMMAND` and [`docs/GTS_PARITY.md`](docs/GTS_PARITY.md).
