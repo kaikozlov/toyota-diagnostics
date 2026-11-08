@@ -1,7 +1,7 @@
 """Live-output presentation: one palette and shape system with the Go CLI.
 
 Mirrors internal/terminal (theme.go, layout.go): same colors, same NO_COLOR /
-CLICOLOR_FORCE / TOYOTA_THEME / COLORFGBG handling, same line shapes. Machine
+CLICOLOR_FORCE / TOYO_THEME / COLORFGBG handling, same line shapes. Machine
 surfaces (--json/--jsonl/--csv) never pass through here.
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _light_background() -> bool:
-  theme = os.environ.get("TOYOTA_THEME", "").lower()
+  theme = (os.environ.get("TOYO_THEME") or os.environ.get("TOYOTA_THEME") or "").lower()
   if theme == "light":
     return True
   if theme == "dark":

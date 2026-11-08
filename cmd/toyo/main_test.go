@@ -53,7 +53,7 @@ func TestNativeHelpDoesNotRequireCatalog(t *testing.T) {
 	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
 	for _, args := range [][]string{{"search", "--help"}, {"--region", "EU", "ecu", "--help"}, {"help", "inspect"}} {
 		output, err := capture(func() error { return run(args) })
-		if err != nil || !strings.Contains(output, "toyota") {
+		if err != nil || !strings.Contains(output, "toyo") {
 			t.Fatalf("%v: %q %v", args, output, err)
 		}
 	}
@@ -66,10 +66,10 @@ func TestLiveCommandHelpRendersFromGoTable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}
-		if strings.Contains(output, "usage: toyota") {
+		if strings.Contains(output, "usage: toyo") {
 			t.Fatalf("%v: argparse usage leaked through:\n%s", args, output)
 		}
-		if !strings.Contains(output, "toyota monitor") && !strings.Contains(output, "toyota scan") {
+		if !strings.Contains(output, "toyo monitor") && !strings.Contains(output, "toyo scan") {
 			t.Fatalf("%v: no house-style page:\n%s", args, output)
 		}
 	}
@@ -151,7 +151,7 @@ func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}
-		if !strings.HasPrefix(out, "toyota ") || strings.Contains(out, "v0.0.0-") {
+		if !strings.HasPrefix(out, "toyo ") || strings.Contains(out, "v0.0.0-") {
 			t.Fatalf("%v: %q", args, out)
 		}
 	}
@@ -188,12 +188,12 @@ func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 	}
 
 	out, err := capture(func() error { return run([]string{"completion", "zsh"}) })
-	if err != nil || !strings.Contains(out, "#compdef toyota") {
+	if err != nil || !strings.Contains(out, "#compdef toyo") {
 		t.Fatalf("completion zsh should work without a catalog: %q %v", out, err)
 	}
 	t.Setenv("TOYOTA_REGION", "bogus")
 	out, err = capture(func() error { return run([]string{"completion", "zsh"}) })
-	if err != nil || !strings.Contains(out, "#compdef toyota") {
+	if err != nil || !strings.Contains(out, "#compdef toyo") {
 		t.Fatalf("completion zsh should ignore a bogus TOYOTA_REGION: %q %v", out, err)
 	}
 	t.Setenv("TOYOTA_REGION", "")
@@ -210,7 +210,7 @@ func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 
 	for _, args := range [][]string{{"help", "frc"}, {"frc", "--help"}, {"help", "nosuchcommand"}} {
 		out, err = capture(func() error { return run(args) })
-		if err != nil || !strings.Contains(out, "toyota ECU") {
+		if err != nil || !strings.Contains(out, "toyo ECU") {
 			t.Fatalf("%v should show generic ECU shorthand help: %q %v", args, out, err)
 		}
 	}

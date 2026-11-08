@@ -5,6 +5,8 @@ import (
 	"io"
 	"runtime/debug"
 	"strings"
+
+	"github.com/kaikozlov/toyota-diagnostics/internal/terminal"
 )
 
 // version is the release label. `go build -ldflags "-X main.version=…"` can
@@ -46,9 +48,9 @@ func formatVersion(label, revision string, dirty bool) string {
 		revision += "-dirty"
 	}
 	if revision != "" {
-		return "toyota " + label + " (" + revision + ")"
+		return terminal.Command + " " + label + " (" + revision + ")"
 	}
-	return "toyota " + label
+	return terminal.Command + " " + label
 }
 
 // releaseVersion accepts a tagged module version and ignores Go's

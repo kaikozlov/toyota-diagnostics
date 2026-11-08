@@ -211,7 +211,7 @@ func TestFailureOffersWayForward(t *testing.T) {
 	p := Printer{Out: &buf, Width: 80}
 	p.Failure(&catalog.NotFoundError{What: "ECU", Query: "frcc", Suggestions: []string{"frc", "frs"}})
 	got := buf.String()
-	if !strings.HasPrefix(got, "toyota: no ECU matches \"frcc\"") || !strings.Contains(got, "did you mean frc, frs") {
+	if !strings.HasPrefix(got, "toyo: no ECU matches \"frcc\"") || !strings.Contains(got, "did you mean frc, frs") {
 		t.Fatal(got)
 	}
 	buf.Reset()
@@ -225,7 +225,7 @@ func TestFailureOffersWayForward(t *testing.T) {
 	}
 	buf.Reset()
 	p.Failure(errors.New("plain failure"))
-	if buf.String() != "toyota: plain failure\n" {
+	if buf.String() != "toyo: plain failure\n" {
 		t.Fatal(buf.String())
 	}
 }
@@ -239,7 +239,7 @@ func TestECUHidesEmptyFamiliesAndIsHonestAboutUndecoded(t *testing.T) {
 	Printer{Out: &buf, Width: 100}.ECU(e)
 	out := buf.String()
 	if !strings.Contains(out, "283") || !strings.Contains(out, "148 DIDs") || strings.Contains(out, "Utilities") ||
-		!strings.Contains(out, "P5 · generation 20") || !strings.Contains(out, "toyota frc dtcs") {
+		!strings.Contains(out, "P5 · generation 20") || !strings.Contains(out, "toyo frc dtcs") {
 		t.Fatal(out)
 	}
 	e.CatalogMember = ""
@@ -264,8 +264,8 @@ func TestMarkHighlightsOnlyWhenStyled(t *testing.T) {
 func TestHelpTablesShareAColumn(t *testing.T) {
 	out := plain(100, func(p Printer) {
 		p.Overview("tag", []HelpGroup{
-			{Title: "A", Entries: []HelpEntry{{"toyota search TERM", "find"}}},
-			{Title: "B", Entries: []HelpEntry{{"toyota x", "short"}}},
+			{Title: "A", Entries: []HelpEntry{{"toyo search TERM", "find"}}},
+			{Title: "B", Entries: []HelpEntry{{"toyo x", "short"}}},
 		}, nil)
 	})
 	col := -1

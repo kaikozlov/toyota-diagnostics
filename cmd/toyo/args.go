@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/kaikozlov/toyota-diagnostics/internal/appenv"
 )
 
 type options struct {
@@ -37,8 +39,8 @@ func usagef(command, format string, args ...any) error {
 }
 
 func parse(args []string) (options, []string, error) {
-	opt := options{db: os.Getenv("TOYOTA_CATALOG"), region: "NA", limit: 50, literalAt: -1}
-	if r := os.Getenv("TOYOTA_REGION"); r != "" {
+	opt := options{db: appenv.Catalog(), region: "NA", limit: 50, literalAt: -1}
+	if r := appenv.Region(); r != "" {
 		opt.region = r
 	}
 	var command []string
@@ -105,7 +107,7 @@ func findDB(explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
-	if p := os.Getenv("TOYOTA_CATALOG"); p != "" {
+	if p := appenv.Catalog(); p != "" {
 		return p
 	}
 	var candidates []string
@@ -115,7 +117,7 @@ func findDB(explicit string) string {
 	if exe, err := os.Executable(); err == nil {
 		candidates = append(candidates, filepath.Dir(exe))
 	}
-	if root := os.Getenv("TOYOTA_DIAGNOSTICS_ROOT"); root != "" {
+	if root := appenv.Root(); root != "" {
 		candidates = append(candidates, root)
 	}
 	for _, start := range candidates {

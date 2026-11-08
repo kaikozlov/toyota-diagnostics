@@ -13,15 +13,28 @@ from pathlib import Path
 import sys
 from typing import Mapping, Sequence
 
-BOOTSTRAP_ENV = "TOYOTA_DIAGNOSTICS_RUNTIME"
-SOURCE_ROOT_ENV = "TOYOTA_DIAGNOSTICS_ROOT"
-OPENPILOT_ROOT_ENV = "TOYOTA_OPENPILOT_ROOT"
-OPENPILOT_PYTHON_ENV = "TOYOTA_OPENPILOT_PYTHON"
+BOOTSTRAP_ENV = "TOYO_RUNTIME"
+BOOTSTRAP_ENV_LEGACY = "TOYOTA_DIAGNOSTICS_RUNTIME"
+SOURCE_ROOT_ENV = "TOYO_ROOT"
+SOURCE_ROOT_ENV_LEGACY = "TOYOTA_DIAGNOSTICS_ROOT"
+OPENPILOT_ROOT_ENV = "TOYO_OPENPILOT_ROOT"
+OPENPILOT_ROOT_ENV_LEGACY = "TOYOTA_OPENPILOT_ROOT"
+OPENPILOT_PYTHON_ENV = "TOYO_OPENPILOT_PYTHON"
+OPENPILOT_PYTHON_ENV_LEGACY = "TOYOTA_OPENPILOT_PYTHON"
 
-DEFAULT_SOURCE_ROOT = Path("/data/toyota-diagnostics")
+DEFAULT_SOURCE_ROOT = Path("/data/toyo-cli")
+DEFAULT_SOURCE_ROOT_LEGACY = Path("/data/toyota-diagnostics")
 DEFAULT_OPENPILOT_ROOT = Path("/data/openpilot")
 DEFAULT_OPENPILOT_PYTHON = Path("/usr/local/venv/bin/python")
 AGNOS_MARKER = Path("/AGNOS")
+
+
+def _first_env(env: Mapping[str, str], *keys: str) -> tuple[str | None, str]:
+  for key in keys:
+    value = env.get(key)
+    if value:
+      return key, value
+  return None, ""
 
 
 @dataclass(frozen=True)
@@ -38,18 +51,19 @@ def _is_checkout(path: Path) -> bool:
 def source_root(env: Mapping[str, str] | None = None) -> Path | None:
   """Return the source checkout that should remain import-authoritative."""
   env = os.environ if env is None else env
-  explicit = env.get(SOURCE_ROOT_ENV)
+  key, explicit = _first_env(env, SOURCE_ROOT_ENV, SOURCE_ROOT_ENV_LEGACY)
   if explicit:
     root = Path(explicit).expanduser().absolute()
     if not _is_checkout(root):
-      raise SystemExit(f"{SOURCE_ROOT_ENV} does not point at a toyota-diagnostics checkout: {root}")
+      raise SystemExit(f"{key} does not point at a toyo-cli checkout: {root}")
     return root
 
   module_root = Path(__file__).absolute().parent.parent
   if _is_checkout(module_root):
     return module_root
-  if _is_checkout(DEFAULT_SOURCE_ROOT):
-    return DEFAULT_SOURCE_ROOT
+  for default_root in (DEFAULT_SOURCE_ROOT, DEFAULT_SOURCE_ROOT_LEGACY):
+    if _is_checkout(default_root):
+      return default_root
   return None
 
 
@@ -71,15 +85,19 @@ def runtime_plan(
   """Select the host runtime without importing any third-party package."""
   env = os.environ if env is None else env
   current_python = sys.executable if current_python is None else current_python
-  if env.get(BOOTSTRAP_ENV):
+  if env.get(BOOTSTRAP_ENV) or env.get(BOOTSTRAP_ENV_LEGACY):
     return None
 
-  explicit_openpilot = OPENPILOT_ROOT_ENV in env or OPENPILOT_PYTHON_ENV in env
+  explicit_openpilot = any(key in env for key in (
+    OPENPILOT_ROOT_ENV, OPENPILOT_ROOT_ENV_LEGACY, OPENPILOT_PYTHON_ENV, OPENPILOT_PYTHON_ENV_LEGACY,
+  ))
   if agnos_marker.is_file() or explicit_openpilot:
     if root is None:
-      raise SystemExit("comma/openpilot runtime found, but the toyota-diagnostics source checkout could not be located")
-    openpilot_root = Path(env.get(OPENPILOT_ROOT_ENV, os.fspath(default_openpilot_root))).expanduser().absolute()
-    python = Path(env.get(OPENPILOT_PYTHON_ENV, os.fspath(default_openpilot_python))).expanduser().absolute()
+      raise SystemExit("comma/openpilot runtime found, but the toyo-cli source checkout could not be located")
+    _, openpilot_root_value = _first_env(env, OPENPILOT_ROOT_ENV, OPENPILOT_ROOT_ENV_LEGACY)
+    _, openpilot_python_value = _first_env(env, OPENPILOT_PYTHON_ENV, OPENPILOT_PYTHON_ENV_LEGACY)
+    openpilot_root = Path(openpilot_root_value or os.fspath(default_openpilot_root)).expanduser().absolute()
+    python = Path(openpilot_python_value or os.fspath(default_openpilot_python)).expanduser().absolute()
     if not (openpilot_root / "openpilot" / "__init__.py").is_file():
       raise SystemExit(f"openpilot checkout not found at {openpilot_root}; set {OPENPILOT_ROOT_ENV} to override")
     if not python.is_file():
@@ -123,8 +141,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     raise AssertionError("os.execve returned")
 
   if importlib.util.find_spec("opendbc") is None:
-    hint = "run `uv sync` first" if root is not None else "install toyota-diagnostics with its dependencies"
-    raise SystemExit(f"Toyota diagnostics dependencies are unavailable; {hint}")
+    hint = "run `uv sync` first" if root is not None else "install toyo-cli with its dependencies"
+    raise SystemExit(f"toyo-cli dependencies are unavailable; {hint}")
 
   from toyota_diag.cli import main as cli_main
   return int(cli_main(args))

@@ -87,5 +87,13 @@ class TestEntrypoint(unittest.TestCase):
     self.assertEqual(env["PYTHONPATH"].split(os.pathsep)[:3], ["/data/toyota-diagnostics", "/data/openpilot", "/existing"])
 
 
+
+  def test_legacy_source_root_env_still_works(self):
+    with tempfile.TemporaryDirectory() as td:
+      checkout = self.make_checkout(Path(td) / "legacy-checkout")
+      root = entrypoint.source_root(env={entrypoint.SOURCE_ROOT_ENV_LEGACY: os.fspath(checkout)})
+    self.assertEqual(root, checkout)
+
+
 if __name__ == "__main__":
   unittest.main()

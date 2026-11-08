@@ -17,7 +17,7 @@ func TestBridgeTargetsInternalPythonRuntime(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("TOYOTA_DIAGNOSTICS_ROOT", root)
+	t.Setenv("TOYO_ROOT", root)
 	got, err := sourceRoot()
 	if err != nil || got != root {
 		t.Fatal(got, err)
@@ -31,7 +31,7 @@ func TestBridgeTargetsInternalPythonRuntime(t *testing.T) {
 	}
 	found := false
 	for _, item := range env {
-		if item == "TOYOTA_DIAGNOSTICS_ROOT="+root {
+		if item == "TOYO_ROOT="+root || item == "TOYOTA_DIAGNOSTICS_ROOT="+root {
 			found = true
 		}
 	}

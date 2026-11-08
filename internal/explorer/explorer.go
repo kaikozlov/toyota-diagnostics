@@ -1046,7 +1046,7 @@ func (m model) view() string {
 }
 
 func (m model) titleBar() string {
-	left := " " + terminal.StyleAccent.Render("toyota") + "  " + terminal.StyleDim.Render(m.region)
+	left := " " + terminal.StyleAccent.Render(terminal.Command) + "  " + terminal.StyleDim.Render(m.region)
 	status := m.status()
 	if status == "" {
 		return left

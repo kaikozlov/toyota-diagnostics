@@ -2279,7 +2279,7 @@ def cmd_functional_obd(args, profile: Profile) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-  parser = argparse.ArgumentParser(prog="toyota", description="Toyota/GTS-derived diagnostics with pluggable vehicle transports")
+  parser = argparse.ArgumentParser(prog="toyo", description="Toyota/GTS-derived diagnostics with pluggable vehicle transports")
   parser.add_argument(
     "--registry", "--profile", dest="registry", default=str(registry.DEFAULT_REGISTRY), metavar="BUNDLE_OR_FILE",
     help="Toyota derived diagnostics bundle/legacy registry (default: bundled universal current-GTS Toyota database)",
@@ -2660,7 +2660,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _normalize_argv(argv: list[str]) -> list[str]:
   # Preserve the original verb-first surface while allowing the more natural
-  # `toyota ecu frc` / `toyota ecu frc data LTA` browsing form. Global profile
+  # `toyo ecu frc` / `toyo ecu frc data LTA` browsing form. Global profile
   # options may precede the command, so normalize only the command tail.
   prefix: list[str] = []
   index = 0
@@ -2694,7 +2694,7 @@ def _normalize_argv(argv: list[str]) -> list[str]:
         return [*prefix, "ecu", tail[2], ref, *tail[3:]]
       return [*prefix, "ecu", "info", ref, *tail[2:]]
   elif tail and tail[0] not in top_level and not tail[0].startswith("-"):
-    # Direct ECU shorthand: `toyota frc`, `toyota frc data LTA`, etc. Unknown
+    # Direct ECU shorthand: `toyo frc`, `toyo frc data LTA`, etc. Unknown
     # words intentionally flow through ECU lookup so its close-match suggestions apply.
     ref = tail[0]
     if len(tail) >= 2 and ref.casefold() == "frc" and tail[1] == "ffd":

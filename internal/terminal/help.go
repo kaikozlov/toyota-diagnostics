@@ -13,7 +13,7 @@ type HelpGroup struct {
 
 // Overview prints the front-door help screen.
 func (p Printer) Overview(tagline string, groups []HelpGroup, notes []string) {
-	p.println(p.accent("toyota") + "  " + p.dim(tagline))
+	p.println(p.accent(Command) + "  " + p.dim(tagline))
 	var all []HelpEntry
 	for _, g := range groups {
 		all = append(all, g.Entries...)
@@ -34,7 +34,7 @@ func (p Printer) Overview(tagline string, groups []HelpGroup, notes []string) {
 
 // CommandHelp prints focused help for one command.
 func (p Printer) CommandHelp(name, summary string, usage []string, examples, options []HelpEntry) {
-	p.println(p.accent("toyota "+name) + "  " + p.dim(summary))
+	p.println(p.accent(Command+" "+name) + "  " + p.dim(summary))
 	p.println()
 	for _, u := range usage {
 		p.println("  " + p.highlightUsage(u))
@@ -81,7 +81,7 @@ func (p Printer) highlightUsage(u string) string {
 	for i, w := range words {
 		bare := strings.Trim(w, "[]|.…")
 		switch {
-		case i == 0 && w == "toyota":
+		case i == 0 && w == Command:
 		case w != "" && (bare == strings.ToUpper(bare) && strings.ContainsAny(bare, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") || strings.HasPrefix(w, "[") || strings.HasPrefix(w, "--")):
 			words[i] = p.dim(w)
 		default:

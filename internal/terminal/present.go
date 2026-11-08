@@ -94,7 +94,7 @@ func (p Printer) Scoped(e catalog.ECU, query string, rows []catalog.Item, more b
 	p.title(p.accent(e.Key)+"  "+p.bold(query), p.dim(e.Name+" · "+summary(len(rows), more)))
 	p.println()
 	if len(rows) == 0 {
-		p.println("  Nothing in this ECU matches. toyota search " + query + " looks everywhere.")
+		p.println("  Nothing in this ECU matches. toyo search " + query + " looks everywhere.")
 		return
 	}
 	p.itemTable(rows, Terms(query), false)
@@ -108,7 +108,7 @@ func (p Printer) Matches(e catalog.ECU, ident string, rows []catalog.Item) {
 	p.title(p.accent(e.Key)+"  "+p.bold(ident), p.dim(e.Region+" · "+summary(len(rows), false)))
 	p.println()
 	p.itemTable(rows, nil, false)
-	p.footer("toyota inspect ID shows one")
+	p.footer("toyo inspect ID shows one")
 }
 
 func ecuProfile(e catalog.ECU) string {
@@ -176,14 +176,14 @@ func (p Printer) ECU(e catalog.ECU) {
 			line += "  " + strings.Repeat(" ", 9)
 		}
 		if !p.NoHints {
-			line += "  " + p.dim("toyota "+e.Key+" "+r.cmd)
+			line += "  " + p.dim("toyo "+e.Key+" "+r.cmd)
 		}
 		p.println(strings.TrimRight(line, " "))
 	}
 	if !shown {
 		p.println("  " + p.dim("Catalog is present but empty."))
 	}
-	p.footer("toyota "+e.Key+" IDENT decodes one record", "toyota monitor "+e.Key+" ITEM watches it live")
+	p.footer("toyo "+e.Key+" IDENT decodes one record", "toyo monitor "+e.Key+" ITEM watches it live")
 }
 
 // ECUs prints a directory of ECUs. hidden counts matches that were left out
@@ -309,7 +309,7 @@ func (p Printer) VehicleGroups(region, query string, groups []catalog.VehicleGro
 		}
 		p.println("  " + pad(fit(g.Name, nameW), nameW) + "  " + p.dim(detail))
 	}
-	p.footer(ifs(total > len(groups), "--limit N shows more"), "toyota vehicle NAME lists its variants")
+	p.footer(ifs(total > len(groups), "--limit N shows more"), "toyo vehicle NAME lists its variants")
 }
 
 // VehicleVariants prints every Toyota vehicle type sharing one OEM name.
@@ -324,7 +324,7 @@ func (p Printer) VehicleVariants(region string, vehicles []catalog.Vehicle, ecus
 		}
 		p.println("  " + pad(p.blue(strconv.Itoa(v.Type)), 7) + "  " + pad(plural(ecus[v.Type], "ECU", "ECUs"), 9) + "  " + p.dim("install sets "+strings.Join(sets, " ")))
 	}
-	p.footer("toyota vehicle TYPE shows install-set ECUs")
+	p.footer("toyo vehicle TYPE shows install-set ECUs")
 }
 
 // Vehicle prints one vehicle type and its declared install-set ECUs.
@@ -392,7 +392,7 @@ func ifs(ok bool, s string) string {
 }
 
 // Failure prints an error with whatever help it can offer. Plain terminals get
-// a single greppable "toyota: …" line.
+// a single greppable "toyo: …" line.
 func (p Printer) Failure(err error) {
 	msg := err.Error()
 	if !utf8.ValidString(msg) {
@@ -402,7 +402,7 @@ func (p Printer) Failure(err error) {
 	var amb *catalog.AmbiguousError
 	mark := p.paint("✗", theme.red, true)
 	if !p.Color {
-		mark = "toyota:"
+		mark = "toyo:"
 	}
 	p.printf("%s %s\n", mark, msg)
 	switch {

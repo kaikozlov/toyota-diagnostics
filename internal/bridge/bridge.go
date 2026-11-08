@@ -6,14 +6,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/kaikozlov/toyota-diagnostics/internal/appenv"
 )
 
 func sourceRoot() (string, error) {
-	if root := os.Getenv("TOYOTA_DIAGNOSTICS_ROOT"); root != "" {
+	if root := appenv.Root(); root != "" {
 		if validRoot(root) {
 			return filepath.Abs(root)
 		}
-		return "", fmt.Errorf("TOYOTA_DIAGNOSTICS_ROOT is not a checkout: %s", root)
+		return "", fmt.Errorf("TOYO_ROOT is not a checkout: %s", root)
 	}
 	var starts []string
 	if cwd, err := os.Getwd(); err == nil {
@@ -33,7 +35,7 @@ func sourceRoot() (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("toyota-diagnostics checkout not found")
+	return "", fmt.Errorf("toyo-cli checkout not found")
 }
 
 func validRoot(root string) bool {
@@ -62,6 +64,7 @@ func command(args []string) (string, []string, []string, error) {
 		return "", nil, nil, err
 	}
 	env := os.Environ()
+	env = setEnv(env, "TOYO_ROOT", root)
 	env = setEnv(env, "TOYOTA_DIAGNOSTICS_ROOT", root)
 	pythonPath := root
 	if existing := os.Getenv("PYTHONPATH"); existing != "" {

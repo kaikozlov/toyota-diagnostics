@@ -73,7 +73,7 @@ func output(t *testing.T, args ...string) string {
 	t.Helper()
 	out, err := capture(func() error { return run(args) })
 	if err != nil {
-		t.Fatalf("toyota %s: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("toyo %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return out
 }
@@ -82,7 +82,7 @@ func failure(t *testing.T, args ...string) error {
 	t.Helper()
 	_, err := capture(func() error { return run(args) })
 	if err == nil {
-		t.Fatalf("toyota %s should fail", strings.Join(args, " "))
+		t.Fatalf("toyo %s should fail", strings.Join(args, " "))
 	}
 	return err
 }
@@ -92,7 +92,7 @@ func TestECUShorthandAndExplicitFormsAgree(t *testing.T) {
 	want := output(t, "frc", "data")
 	for _, args := range [][]string{{"ecu", "frc", "data"}, {"ecu", "data", "frc"}, {"FRC", "signals"}, {"498", "dids"}} {
 		if got := output(t, args...); got != want {
-			t.Errorf("%v differs from toyota frc data:\n%s\nvs\n%s", args, got, want)
+			t.Errorf("%v differs from toyo frc data:\n%s\nvs\n%s", args, got, want)
 		}
 	}
 	if !strings.Contains(want, "0x1601") || strings.Contains(want, "U0131") {
@@ -155,11 +155,11 @@ func TestSearchNearCommandNameIsNotStolen(t *testing.T) {
 func TestVersionIsACatalogSearch(t *testing.T) {
 	cliFixture(t)
 	if out := output(t, "version"); !strings.Contains(out, "Software Version") {
-		t.Fatalf("toyota version should search:\n%s", out)
+		t.Fatalf("toyo version should search:\n%s", out)
 	}
 	err := failure(t, "version", "LTA")
 	if strings.Contains(err.Error(), "takes no arguments") || strings.Contains(err.Error(), "unknown command") {
-		t.Fatalf("toyota version LTA should be a search, not a subcommand: %v", err)
+		t.Fatalf("toyo version LTA should be a search, not a subcommand: %v", err)
 	}
 	var miss *catalog.NotFoundError
 	if !errors.As(err, &miss) {
@@ -187,13 +187,13 @@ func TestSearchFindsHexIdentifiersAndHintsECU(t *testing.T) {
 	}
 	for _, q := range []string{"frc", "FRC", "498", "Front Recognition Camera 2"} {
 		out := output(t, "search", q)
-		if !strings.Contains(out, "Nothing found") || !strings.Contains(out, "toyota frc opens") {
+		if !strings.Contains(out, "Nothing found") || !strings.Contains(out, "toyo frc opens") {
 			t.Fatalf("search %q should hint at the ECU:\n%s", q, out)
 		}
 	}
 	for _, q := range []string{"Front", "2"} {
 		out := output(t, "search", q)
-		if strings.Contains(out, "toyota frc opens") {
+		if strings.Contains(out, "toyo frc opens") {
 			t.Fatalf("search %q must not hint from a unique substring:\n%s", q, out)
 		}
 	}
@@ -347,7 +347,7 @@ func TestCompletionKnowsTheCatalog(t *testing.T) {
 
 func TestCompletionScriptsAreEmitted(t *testing.T) {
 	cliFixture(t)
-	for shell, marker := range map[string]string{"zsh": "#compdef toyota", "bash": "complete -F _toyota toyota", "fish": "complete -c toyota"} {
+	for shell, marker := range map[string]string{"zsh": "#compdef toyo", "bash": "complete -F _toyo toyo", "fish": "complete -c toyo"} {
 		if out := output(t, "completion", shell); !strings.Contains(out, marker) || !strings.Contains(out, "__complete") {
 			t.Errorf("%s script is wrong:\n%s", shell, out)
 		}
@@ -360,18 +360,18 @@ func TestCompletionScriptsAreEmitted(t *testing.T) {
 func TestHelpIsPerCommandAndNeverNeedsACatalog(t *testing.T) {
 	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
 	overviewText := output(t, "help")
-	for _, want := range []string{"Explore", "Live", "toyota search TERM", "toyota monitor ECU"} {
+	for _, want := range []string{"Explore", "Live", "toyo search TERM", "toyo monitor ECU"} {
 		if !strings.Contains(overviewText, want) {
 			t.Errorf("overview lacks %q\n%s", want, overviewText)
 		}
 	}
 	for name := range nativeDocs {
 		out := output(t, "help", name)
-		if !strings.Contains(out, "toyota") || !strings.Contains(out, nativeDocs[name].summary) {
+		if !strings.Contains(out, "toyo") || !strings.Contains(out, nativeDocs[name].summary) {
 			t.Errorf("help %s:\n%s", name, out)
 		}
 	}
-	if out := output(t, "frc", "--help"); !strings.Contains(out, "toyota ECU") {
+	if out := output(t, "frc", "--help"); !strings.Contains(out, "toyo ECU") {
 		t.Fatalf("ECU shorthand help:\n%s", out)
 	}
 }
