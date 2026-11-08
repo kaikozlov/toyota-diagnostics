@@ -26,6 +26,7 @@ var nativeDocs = map[string]commandDoc{
 		usage:   []string{"toyota search TERM…"},
 		examples: []terminal.HelpEntry{
 			{Usage: "toyota search LTA", Summary: "everything Toyota calls LTA"},
+			{Usage: "toyota search 1601", Summary: "the same DID as 0x1601"},
 			{Usage: "toyota search steering angle", Summary: "all words must match"},
 			{Usage: "toyota frc LTA", Summary: "the same, inside one ECU"},
 		},

@@ -175,6 +175,30 @@ func TestInspectScopedQueryMatchesShorthand(t *testing.T) {
 	}
 }
 
+func TestSearchFindsHexIdentifiersAndHintsECU(t *testing.T) {
+	cliFixture(t)
+	plain := output(t, "search", "1601")
+	prefixed := output(t, "search", "0x1601")
+	if !strings.Contains(plain, "LTA Control Condition") || !strings.Contains(prefixed, "LTA Control Condition") {
+		t.Fatalf("1601:\n%s\n0x1601:\n%s", plain, prefixed)
+	}
+	if !strings.Contains(plain, "0x1601") {
+		t.Fatal(plain)
+	}
+	out := output(t, "search", "frc")
+	if !strings.Contains(out, "Nothing found") || !strings.Contains(out, "toyota frc opens") {
+		t.Fatalf("search frc should hint at the ECU, not invent catalog hits:\n%s", out)
+	}
+	var items []catalog.Item
+	if err := json.Unmarshal([]byte(output(t, "search", "frc", "--json")), &items); err != nil || len(items) != 0 {
+		t.Fatalf("JSON search frc should stay an empty array: %v %d", err, len(items))
+	}
+	hostile := output(t, "search", `name:LTA OR "1=1`)
+	if !strings.Contains(hostile, "Nothing found") {
+		t.Fatalf("operator-like punctuation should not become MATCH syntax:\n%s", hostile)
+	}
+}
+
 func TestMistakesGetCorrections(t *testing.T) {
 	cliFixture(t)
 	var miss *catalog.NotFoundError

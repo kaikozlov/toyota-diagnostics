@@ -39,6 +39,7 @@ INSERT INTO items VALUES(1,'NA',498,'did','0x1601','LTA Control Condition','','{
 INSERT INTO items VALUES(2,'NA',498,'did','0x1601','LTA Switch Condition Flag','','{}');
 INSERT INTO items VALUES(3,'NA',498,'ffd-signal','0x5285','Arbitration result_lateral ID','TSS3 Operation FFD','{}');
 INSERT INTO items VALUES(4,'NA',0,'adu-signal','0x1593','Arbitration result Lateral ID','ADAS recorder','{}');
+INSERT INTO items VALUES(5,'NA',0,'did','0xFFFF','Mentions 1601 only in the title','also 1601 in detail','{}');
 CREATE VIRTUAL TABLE items_fts USING fts5(name,detail,identifier,content='items',content_rowid='id',tokenize='unicode61',prefix='2 3 4');
 INSERT INTO items_fts(items_fts) VALUES('rebuild');
 `
@@ -48,7 +49,7 @@ INSERT INTO items_fts(items_fts) VALUES('rebuild');
 	if _, err := db.Exec("CREATE TABLE item_payloads(item_id INTEGER PRIMARY KEY,data BLOB)"); err != nil {
 		t.Fatal(err)
 	}
-	for id, payload := range map[int]string{1: `{"name":"LTA Control Condition","bit_start":3,"unit":"deg"}`, 2: `{}`, 3: `{}`, 4: `{}`} {
+	for id, payload := range map[int]string{1: `{"name":"LTA Control Condition","bit_start":3,"unit":"deg"}`, 2: `{}`, 3: `{}`, 4: `{}`, 5: `{}`} {
 		var buffer bytes.Buffer
 		writer := zlib.NewWriter(&buffer)
 		if _, err := writer.Write([]byte(payload)); err != nil {
@@ -181,9 +182,77 @@ func TestSingleCharacterAndEmptyQueries(t *testing.T) {
 	if ftsQuery("x") != `"x"*` {
 		t.Fatal("single-letter search discarded")
 	}
+	if ftsQuery("LTA") != `"lta"*` {
+		t.Fatalf("LTA: %q", ftsQuery("LTA"))
+	}
+	if ftsQuery("1601") != `("1601"* OR "0x1601"*)` {
+		t.Fatalf("1601: %q", ftsQuery("1601"))
+	}
+	if ftsQuery("0x1601") != `("0x1601"* OR "1601"*)` {
+		t.Fatalf("0x1601: %q", ftsQuery("0x1601"))
+	}
+	if ftsQuery("LTA 1601") != `"lta"* AND ("1601"* OR "0x1601"*)` {
+		t.Fatalf("multiword: %q", ftsQuery("LTA 1601"))
+	}
 	rows, err := d.Search(context.Background(), "NA", "---", 20)
 	if err != nil || rows == nil || len(rows) != 0 {
 		t.Fatal(rows, err)
+	}
+}
+
+func TestSearchRanksExactIdentifiersBeforeTextMentions(t *testing.T) {
+	d := fixture(t)
+	ctx := context.Background()
+	for _, q := range []string{"1601", "0x1601", "0X1601", " 0x1601 "} {
+		rows, err := d.Search(ctx, "NA", q, 10)
+		if err != nil {
+			t.Fatal(q, err)
+		}
+		if len(rows) < 3 {
+			t.Fatalf("%q: %#v", q, rows)
+		}
+		if rows[0].Identifier != "0x1601" || rows[1].Identifier != "0x1601" {
+			t.Fatalf("%q should list DID 0x1601 first: %#v", q, rows)
+		}
+		var sawMention bool
+		for i, row := range rows {
+			if row.Identifier == "0xFFFF" {
+				sawMention = true
+				if i < 2 {
+					t.Fatalf("%q ranked a title mention of 1601 above the DID: %#v", q, rows)
+				}
+			}
+		}
+		if !sawMention {
+			t.Fatalf("%q should still find the title mention: %#v", q, rows)
+		}
+	}
+}
+
+func TestSearchQueryPunctuationDoesNotBecomeOperators(t *testing.T) {
+	d := fixture(t)
+	ctx := context.Background()
+	for _, q := range []string{`" OR 1=1 --`, `NOT LTA`, `name:LTA`, `NEAR(LTA, 2)`, `LTA*`, `0x1601; DROP TABLE items`} {
+		rows, err := d.Search(ctx, "NA", q, 10)
+		if err != nil {
+			t.Fatalf("%q should be a safe MATCH parameter: %v", q, err)
+		}
+		_ = rows
+	}
+	// A real identifier still wins after surrounding punctuation is stripped.
+	rows, err := d.Search(ctx, "NA", "(0x1601)", 10)
+	if err != nil || len(rows) == 0 || rows[0].Identifier != "0x1601" {
+		t.Fatalf("punctuated identifier: %#v %v", rows, err)
+	}
+	// No silent rewrite of a typo into a nearby catalog word.
+	miss, err := d.Search(ctx, "NA", "LTX", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range miss {
+		if strings.Contains(row.Name, "LTA") {
+			t.Fatalf("LTX should not be rewritten into LTA: %#v", miss)
+		}
 	}
 }
 

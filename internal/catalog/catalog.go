@@ -197,17 +197,76 @@ func Region(text string) (string, error) {
 }
 
 // FTS5 query construction accepts only ordinary Unicode alphanumerics, so
-// query punctuation cannot be interpreted as MATCH syntax.
+// query punctuation cannot be interpreted as MATCH syntax. Each token is a
+// quoted prefix term; hex DID-like tokens also match with or without "0x".
 func ftsQuery(query string) string {
 	words := strings.FieldsFunc(query, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
 	terms := make([]string, 0, len(words))
 	for _, word := range words {
-		// Prefix matching allows LTA, steer, and multiword queries as typed.
-		terms = append(terms, `"`+strings.ToLower(word)+`"*`)
+		terms = append(terms, ftsTerm(word))
 	}
 	return strings.Join(terms, " AND ")
+}
+
+func ftsTerm(word string) string {
+	word = strings.ToLower(word)
+	quoted := func(s string) string { return `"` + s + `"*` }
+	bare, ok := hexBare(word)
+	if !ok {
+		return quoted(word)
+	}
+	with := "0x" + bare
+	if word == with {
+		return "(" + quoted(word) + " OR " + quoted(bare) + ")"
+	}
+	if word == bare {
+		return "(" + quoted(word) + " OR " + quoted(with) + ")"
+	}
+	return "(" + quoted(word) + " OR " + quoted(with) + " OR " + quoted(bare) + ")"
+}
+
+// normalizeIdent folds hex DID spellings so 0x1601, 1601 and 0X1601 agree.
+func normalizeIdent(s string) string {
+	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(s)), "0x")
+}
+
+// hexBare reports a 3–8 digit hex identifier, after stripping a leading 0x.
+// Shorter tokens stay ordinary words so "be" or "a" are not treated as DIDs.
+func hexBare(s string) (string, bool) {
+	s = normalizeIdent(s)
+	if len(s) < 3 || len(s) > 8 {
+		return "", false
+	}
+	for _, r := range s {
+		if !unicode.Is(unicode.ASCII_Hex_Digit, r) {
+			return "", false
+		}
+	}
+	return s, true
+}
+
+// queryIdent is the hex DID in q if there is exactly one, even when
+// punctuation surrounded it ("(0x1601)"). Conflicting hex tokens cancel.
+func queryIdent(q string) string {
+	if bare, ok := hexBare(q); ok {
+		return bare
+	}
+	found := ""
+	for _, word := range strings.FieldsFunc(q, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		bare, ok := hexBare(word)
+		if !ok {
+			continue
+		}
+		if found != "" && found != bare {
+			return ""
+		}
+		found = bare
+	}
+	return found
 }
 
 func (d *DB) Search(ctx context.Context, region, query string, limit int) ([]Item, error) {
@@ -242,7 +301,10 @@ func (d *DB) search(ctx context.Context, region string, category int, kind, quer
 	if match == "" {
 		return []Item{}, nil
 	}
-	// All fields in the source item remain addressable by kind, region and ECU.
+	ident := queryIdent(query)
+	// Identifier hits (0x optional) lead; then an exact display name; then an
+	// ECU key match; then BM25 over name (10), detail (1), identifier (3).
+	// Remaining keys keep equal scores in a stable order.
 	rows, err := d.db.QueryContext(ctx, `
 SELECT i.id, i.kind, i.region, i.category_id, coalesce(e.key,''), coalesce(e.name,''),
        i.identifier, i.name, i.detail
@@ -250,13 +312,15 @@ FROM items_fts
 JOIN items i ON i.id=items_fts.rowid
 LEFT JOIN ecus e ON e.region=i.region AND e.category_id=i.category_id
 WHERE items_fts MATCH ? AND i.region=? AND (?=0 OR i.category_id=?) AND (?='' OR i.kind=?)
-ORDER BY CASE WHEN lower(e.key)=lower(?) AND i.kind='ecu' THEN -2
-              WHEN lower(e.key)=lower(?) THEN -1
-              WHEN lower(i.name)=lower(?) THEN 0
-              WHEN lower(i.identifier)=lower(?) THEN 1 ELSE 2 END,
+ORDER BY CASE WHEN ? != '' AND replace(lower(i.identifier),'0x','') = ? THEN 0
+              WHEN lower(i.identifier)=lower(?) THEN 0
+              WHEN lower(i.name)=lower(?) THEN 1
+              WHEN lower(e.key)=lower(?) AND i.kind='ecu' THEN 2
+              WHEN lower(e.key)=lower(?) THEN 3
+              ELSE 4 END,
          bm25(items_fts, 10.0, 1.0, 3.0),
          i.kind, i.category_id, i.identifier, i.id
-LIMIT ?`, match, region, category, category, kind, kind, query, query, query, query, limit)
+LIMIT ?`, match, region, category, category, kind, kind, ident, ident, query, query, query, query, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -524,15 +588,14 @@ ORDER BY identifier COLLATE NOCASE, id LIMIT ?`,
 // ItemsByIdentifier finds an ECU's records by DID, DTC or test identifier.
 // Hex is forgiving: 0x1601, 1601 and 0X1601 are the same identifier.
 func (d *DB) ItemsByIdentifier(ctx context.Context, e ECU, ident string) ([]Item, error) {
-	norm := func(s string) string { return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(s)), "0x") }
-	want := norm(ident)
+	want := normalizeIdent(ident)
 	if want == "" {
 		return nil, nil
 	}
 	rows, err := d.db.QueryContext(ctx, `
 SELECT id,kind,region,category_id,identifier,name,detail FROM items
 WHERE region=? AND category_id=? AND kind NOT IN ('ecu','vehicle')
-  AND lower(replace(identifier,'0x',''))=?
+  AND replace(lower(identifier),'0x','')=?
 ORDER BY kind, id`, e.Region, e.CategoryID, want)
 	if err != nil {
 		return nil, err
