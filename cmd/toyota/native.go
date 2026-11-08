@@ -543,8 +543,6 @@ func validateOffline(opt options, rest []string) error {
 		return validateInspect(rest[1:])
 	case "browse":
 		return validateBrowse(rest[1:], opt.json)
-	case "completion":
-		return validateCompletion(rest[1:])
 	case "kinds":
 		return validateKinds(rest[1:])
 	case "db":

@@ -172,6 +172,7 @@ func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 		{[]string{"completion", "powershell"}, "unsupported shell", "completion"},
 		{[]string{"--json"}, "--json needs a command", ""},
 		{[]string{"serach", "lta"}, "unknown command", ""},
+		{[]string{"searc", "lta"}, "unknown command", ""},
 	}
 	for _, tc := range cases {
 		err := run(tc.args)
@@ -197,7 +198,7 @@ func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 	}
 	t.Setenv("TOYOTA_REGION", "")
 
-	for _, phrase := range [][]string{{"didactic", "example"}, {"customized", "settings"}, {"monitoring", "LTA"}, {"canbus", "foo"}, {"version", "LTA"}} {
+	for _, phrase := range [][]string{{"didactic", "example"}, {"customized", "settings"}, {"monitoring", "LTA"}, {"canbus", "foo"}, {"vehicles", "foo"}, {"version", "LTA"}} {
 		err := run(phrase)
 		if err == nil || strings.Contains(err.Error(), "unknown command") || strings.Contains(err.Error(), "takes no arguments") {
 			t.Fatalf("%v should need a catalog, not be treated as a command: %v", phrase, err)

@@ -107,19 +107,16 @@ func Closest(query string, candidates []string, n int) []string {
 }
 
 // Typos returns up to n candidates that differ from query by one substitution,
-// insertion, deletion, or adjacent transposition. Prefix matches are excluded
-// so longer search words are not labeled as shorter commands.
+// insertion, deletion, or adjacent transposition. A query that merely extends a
+// shorter command is not a typo (didactic/did, vehicles/vehicle), but dropping
+// the last character of a command still matches (searc/search, inspec/inspect).
 func Typos(query string, candidates []string, n int) []string {
 	q := normalize(query)
 	if q == "" || n <= 0 {
 		return nil
 	}
 	qr := []rune(q)
-	type scored struct {
-		text  string
-		score int
-	}
-	var found []scored
+	var found []string
 	seen := map[string]bool{}
 	for _, text := range candidates {
 		c := normalize(text)
@@ -130,30 +127,29 @@ func Typos(query string, candidates []string, n int) []string {
 		if abs(len(qr)-len(cr)) > 1 {
 			continue
 		}
-		if strings.HasPrefix(q, c) || strings.HasPrefix(c, q) {
+		// Query extends the candidate: "vehicles" is not a misspelling of "vehicle".
+		if strings.HasPrefix(q, c) {
 			continue
 		}
-		d := distance(qr, cr)
-		if d != 1 {
+		if distance(qr, cr) != 1 {
 			continue
 		}
 		seen[text] = true
-		found = append(found, scored{text, d})
+		found = append(found, text)
 	}
 	sort.SliceStable(found, func(i, j int) bool {
-		if len(found[i].text) != len(found[j].text) {
-			return len(found[i].text) < len(found[j].text)
+		if len(found[i]) != len(found[j]) {
+			return len(found[i]) < len(found[j])
 		}
-		return found[i].text < found[j].text
+		return found[i] < found[j]
 	})
 	if len(found) == 0 {
 		return nil
 	}
-	out := make([]string, 0, min(n, len(found)))
-	for i := 0; i < len(found) && i < n; i++ {
-		out = append(out, found[i].text)
+	if len(found) > n {
+		found = found[:n]
 	}
-	return out
+	return found
 }
 
 func abs(n int) int {
