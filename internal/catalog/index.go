@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -15,18 +16,111 @@ import (
 // membership, and utility-family bindings are projected into structured
 // tables and item payloads instead.
 //
-// Session control, support contracts, commsets, and CAN topology are not
-// copied by that exporter. When a source bundle is attached, its index
-// is used so those fields remain available.
+// Session control, support contracts, commsets, CAN topology, and extra
+// route fields (response/legislated addresses) are not copied by that
+// exporter. A matching attached source bundle may overlay only those
+// lost fields; the SQL projection remains authoritative for vehicles,
+// categories, install sets, and exported request routes.
 func (d *DB) Index(ctx context.Context) (map[string]any, error) {
-	if d.bundle != nil {
-		index, err := d.bundle.Index()
-		if err != nil {
-			return nil, err
-		}
-		return normalizeIndex(index), nil
+	sqlIndex, sqlErr := d.reconstructIndex(ctx)
+	if d.bundle == nil {
+		return sqlIndex, sqlErr
 	}
-	return d.reconstructIndex(ctx)
+	bundleIndex, err := d.bundle.Index()
+	if err != nil {
+		return nil, err
+	}
+	bundleIndex = normalizeIndex(bundleIndex)
+	if sqlErr != nil {
+		if isBrowseOnlyIndexError(sqlErr) {
+			return bundleIndex, nil
+		}
+		return nil, sqlErr
+	}
+	if err := matchingBundleGeneration(sqlIndex, bundleIndex); err != nil {
+		return nil, err
+	}
+	return overlayLostIndexFields(sqlIndex, bundleIndex), nil
+}
+
+func isBrowseOnlyIndexError(err error) bool {
+	var missing *MissingRuntimeMetadataError
+	return errors.As(err, &missing) && missing.Member == "index.json"
+}
+
+func matchingBundleGeneration(sqlIndex, bundleIndex map[string]any) error {
+	sqlSchema, sqlRelease := indexText(sqlIndex["schema"]), indexText(sqlIndex["release"])
+	bundleSchema, bundleRelease := indexText(bundleIndex["schema"]), indexText(bundleIndex["release"])
+	if sqlSchema == "" || sqlRelease == "" || bundleSchema == "" || bundleRelease == "" {
+		return fmt.Errorf("source bundle does not match this catalog: schema/release metadata is incomplete (catalog schema=%q release=%q, bundle schema=%q release=%q); not mixing unmatched generations", sqlSchema, sqlRelease, bundleSchema, bundleRelease)
+	}
+	if sqlSchema != bundleSchema || sqlRelease != bundleRelease {
+		return fmt.Errorf("source bundle does not match this catalog: catalog schema=%q release=%q, bundle schema=%q release=%q; not mixing unmatched generations", sqlSchema, sqlRelease, bundleSchema, bundleRelease)
+	}
+	return nil
+}
+
+func indexText(v any) string {
+	if v == nil {
+		return ""
+	}
+	s := strings.TrimSpace(fmt.Sprint(v))
+	if s == "<nil>" {
+		return ""
+	}
+	return s
+}
+
+func overlayLostIndexFields(sqlIndex, bundleIndex map[string]any) map[string]any {
+	for _, key := range []string{"support_contracts", "fault_status_mask", "decoders", "function_names", "mode04_request"} {
+		if sqlIndex[key] == nil && bundleIndex[key] != nil {
+			sqlIndex[key] = bundleIndex[key]
+		}
+	}
+	sqlRegions, _ := sqlIndex["regions"].(map[string]any)
+	bundleRegions, _ := bundleIndex["regions"].(map[string]any)
+	if sqlRegions == nil || bundleRegions == nil {
+		return sqlIndex
+	}
+	lost := []string{"session_control", "commsets", "can_topology", "connection_frames", "vin_decision", "vehicle_decision", "vehicle_resolver_dispatch"}
+	for name, raw := range sqlRegions {
+		sqlRegional, _ := raw.(map[string]any)
+		bundleRegional, _ := bundleRegions[name].(map[string]any)
+		if sqlRegional == nil || bundleRegional == nil {
+			continue
+		}
+		for _, key := range lost {
+			if sqlRegional[key] == nil && bundleRegional[key] != nil {
+				sqlRegional[key] = bundleRegional[key]
+			}
+		}
+		overlayMatchedRoutes(sqlRegional, bundleRegional)
+	}
+	return sqlIndex
+}
+
+func overlayMatchedRoutes(sqlRegional, bundleRegional map[string]any) {
+	sqlRoutes, _ := sqlRegional["routes"].(map[string]any)
+	bundleRoutes, _ := bundleRegional["routes"].(map[string]any)
+	if sqlRoutes == nil || bundleRoutes == nil {
+		return
+	}
+	for key, raw := range sqlRoutes {
+		sqlRoute, _ := raw.(map[string]any)
+		bundleRoute, _ := bundleRoutes[key].(map[string]any)
+		if sqlRoute == nil || bundleRoute == nil {
+			continue
+		}
+		for field, value := range bundleRoute {
+			if value == nil {
+				continue
+			}
+			if _, exists := sqlRoute[field]; exists {
+				continue
+			}
+			sqlRoute[field] = value
+		}
+	}
 }
 
 func normalizeIndex(index map[string]any) map[string]any {

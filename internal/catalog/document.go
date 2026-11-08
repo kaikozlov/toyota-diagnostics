@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -151,14 +152,8 @@ func (d *DB) resolveDocumentMember(ctx context.Context, requested string) (strin
 		return matches[0], nil
 	}
 	if len(matches) > 1 {
-		// The exporter records repo:// URIs for in-tree supplements and
-		// supplement:// URIs for files outside the generator checkout.
-		for _, name := range matches {
-			if strings.HasPrefix(name, "repo://") {
-				return name, nil
-			}
-		}
-		return matches[0], nil
+		sort.Strings(matches)
+		return "", d.missingRuntime(requested, fmt.Sprintf("ambiguous runtime document %q matches %d stored members (%s); not guessing among them", requested, len(matches), strings.Join(matches, ", ")))
 	}
 	return requested, nil
 }

@@ -170,3 +170,56 @@ func TestDTCDoesNotClearAfterFailedScan(t *testing.T) {
 		})
 	}
 }
+
+func TestFunctionalClearCompletenessRequiresExpectedMetadata(t *testing.T) {
+	complete, status := functionalClearCompleteness(nil, nil)
+	if complete || status != "unknown" {
+		t.Fatalf("empty expected claimed %v %s", complete, status)
+	}
+	complete, status = functionalClearCompleteness(map[uint32]bool{}, map[uint32]bool{})
+	if complete || status != "unknown" {
+		t.Fatalf("zero expected claimed complete: %v %s", complete, status)
+	}
+	complete, status = functionalClearCompleteness(map[uint32]bool{0x7e8: true}, map[uint32]bool{})
+	if complete || status != "incomplete" {
+		t.Fatalf("missing ACK: %v %s", complete, status)
+	}
+	complete, status = functionalClearCompleteness(map[uint32]bool{0x7e8: true}, map[uint32]bool{0x7e8: true})
+	if !complete || status != "complete" {
+		t.Fatalf("matching ACK: %v %s", complete, status)
+	}
+}
+
+func TestDTCClearDoesNotClaimFunctionalCompletionWithoutLegislatedMetadata(t *testing.T) {
+	r := readApp(t, map[string]any{"dtcs": map[string]any{}})
+	r.profile.Vehicle = map[string]any{"vehicle_type": 1}
+	r.profile.ECUs[0].Address = 0x7e0
+	r.profile.ECUs[0].RouteResolved = true
+	r.profile.ECUs[0].Route = map[string]any{"physical_request_address": 0x7e0}
+	r.opt.json = true
+	bus := &sessionCAN{reply: func(req []byte) ([]byte, error) {
+		switch req[0] {
+		case 0x19:
+			return []byte{0x59, 0x02}, nil
+		case 0x14:
+			return []byte{0x54}, nil
+		case 0x10:
+			return []byte{0x50, req[1]}, nil
+		case 0x04:
+			return nil, nil
+		default:
+			return nil, errors.New("unexpected SID")
+		}
+	}}
+	r.transport = bus
+	out, err := capture(func() error { return r.dtcCommand([]string{"dtc", "clear"}) })
+	if err != nil && !strings.Contains(out, "functional_completeness") {
+		// clear may exit 0; if it errors for another reason, show it
+	}
+	if !strings.Contains(out, `"functional_completeness": "unknown"`) && !strings.Contains(out, `"functional_completeness":"unknown"`) {
+		t.Fatalf("want unknown functional completeness, got %s err=%v", out, err)
+	}
+	if strings.Contains(out, `"functional_complete": true`) || strings.Contains(out, `"functional_complete":true`) {
+		t.Fatalf("empty legislated metadata claimed functional completion: %s", out)
+	}
+}

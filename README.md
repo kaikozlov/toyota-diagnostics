@@ -27,13 +27,12 @@ tools/gts bundle sqlite --out ../toyota-diagnostics/build/catalog.sqlite
 ```
 
 If the catalog lives somewhere else, pass `--db PATH` or set `TOYO_CATALOG`.
-`toyo` rebuilds documents and the vehicle/ECU index from that SQLite
-projection; the public exporter does not emit a `runtime_documents` table.
-Session control, support contracts, and CAN topology are not in the
-projection—if you still have the source bundle (a directory of `.json.gz`
-members or a zip of JSON files), pass `--bundle PATH` or set `TOYO_BUNDLE`.
-`TOYO_REGION` selects `NA`, `EU`, or `JP`. The older `TOYOTA_*` names for
-these settings still work.
+SQLite-only live use has explicit `--vehicle`, exported request addresses,
+inferred RX (`TX+8`), and no session/support tables. A matching `--bundle`
+or `TOYO_BUNDLE` (same schema and release) overlays those lost fields,
+including recovered response/legislated addresses on matching route keys.
+Unmatched bundles are rejected. `TOYO_REGION` selects `NA`, `EU`, or `JP`.
+The older `TOYOTA_*` names for these settings still work.
 
 `toyo help` works without a catalog.
 

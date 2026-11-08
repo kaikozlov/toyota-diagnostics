@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -65,5 +66,44 @@ func TestRuntimeDocumentErrorsAreActionable(t *testing.T) {
 	_, err = db.Document(ctx, "supplement://pcs_data_viewer_tss3_managed_semantics.json")
 	if err == nil || !strings.Contains(err.Error(), "FFD") || !strings.Contains(err.Error(), "supplement://") {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestDocumentDoesNotAliasRegionalCatalogMembers(t *testing.T) {
+	d, db := documentFixture(t)
+	ctx := context.Background()
+	for _, region := range []string{"NA", "EU"} {
+		member := fmt.Sprintf("catalogs/%s/405.json", region)
+		if _, err := db.Exec("INSERT INTO runtime_documents VALUES (?,?)", member, packedDocument(t, map[string]any{"region": region})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := d.Document(ctx, "catalogs/NA/405.json")
+	if err != nil || got["region"] != "NA" {
+		t.Fatalf("NA member: %v %#v", err, got)
+	}
+	got, err = d.Document(ctx, "catalogs/EU/405.json")
+	if err != nil || got["region"] != "EU" {
+		t.Fatalf("EU member: %v %#v", err, got)
+	}
+}
+
+func TestAmbiguousSupplementURIDoesNotPickARepoCandidate(t *testing.T) {
+	d, db := documentFixture(t)
+	members := []string{
+		"repo://data/generated/gtsplus_2026/pcs_data_viewer_tss3_managed_semantics.json",
+		"repo://data/generated/other/pcs_data_viewer_tss3_managed_semantics.json",
+	}
+	for i, member := range members {
+		if _, err := db.Exec("INSERT INTO item_sources VALUES (?,?,?)", i+1, member, "/operation_ffd/detail_rows/0"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO item_payloads VALUES (?,?)", i+1, packedDocument(t, map[string]any{"src": member})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := d.Document(context.Background(), "supplement://pcs_data_viewer_tss3_managed_semantics.json")
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("want ambiguous URI error, got %v", err)
 	}
 }

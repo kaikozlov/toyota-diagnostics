@@ -3,7 +3,9 @@ package catalog
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -15,15 +17,16 @@ import (
 
 const (
 	historicalBundleBlob    = "9ee6414c78f1a1632653c581c97d3ee926fa82b4"
+	historicalBundleSHA256  = "47ef70ee8c2200fede7ac795cfccd09f624e95025ab2d6c131fe6710eaf4095d"
 	historicalPCSBlob       = "d76554dca3e06f7f745a1ba6cff3d21e202cf142"
+	historicalPCSSHA256     = "0d594c8e61ecb406aaf2a33320449b5aa24962877b71d95a0cd2018034cc4905"
 	historicalScratchBundle = "/workspace/catalog-contract-scratch/toyota_current_diag.zip"
 )
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
+func findGitRoot() string {
 	wd, err := os.Getwd()
 	if err != nil {
-		t.Fatal(err)
+		return ""
 	}
 	dir := wd
 	for {
@@ -32,29 +35,62 @@ func repoRoot(t *testing.T) string {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			t.Fatal("repository root not found")
+			return ""
 		}
 		dir = parent
 	}
 }
 
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func verifiedHistoricalBytes(t *testing.T, gitSHA, wantSHA256, envKey string, optionalPaths ...string) []byte {
+	t.Helper()
+	if path := os.Getenv(envKey); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("%s=%s: %v", envKey, path, err)
+		}
+		if sha256Hex(data) != wantSHA256 {
+			t.Fatalf("%s failed integrity check", envKey)
+		}
+		return data
+	}
+	if root := findGitRoot(); root != "" {
+		data, err := exec.Command("git", "-C", root, "cat-file", "blob", gitSHA).Output()
+		if err == nil {
+			if sha256Hex(data) != wantSHA256 {
+				t.Fatalf("git blob %s failed integrity check", gitSHA)
+			}
+			return data
+		}
+	}
+	for _, path := range optionalPaths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if sha256Hex(data) == wantSHA256 {
+			return data
+		}
+	}
+	t.Skipf("historical source %s is unavailable; set %s to a file matching sha256 %s", gitSHA, envKey, wantSHA256)
+	return nil
+}
+
 func gitBlob(t *testing.T, sha string) []byte {
 	t.Helper()
-	cmd := exec.Command("git", "cat-file", "blob", sha)
-	cmd.Dir = repoRoot(t)
-	out, err := cmd.Output()
-	if err != nil {
-		t.Skipf("historical git blob %s is not available: %v", sha, err)
+	if sha == historicalPCSBlob {
+		return verifiedHistoricalBytes(t, historicalPCSBlob, historicalPCSSHA256, "TOYO_TEST_HISTORICAL_PCS")
 	}
-	return out
+	return verifiedHistoricalBytes(t, sha, historicalBundleSHA256, "TOYO_TEST_HISTORICAL_BUNDLE", historicalScratchBundle)
 }
 
 func historicalBundlePath(t *testing.T) string {
 	t.Helper()
-	if st, err := os.Stat(historicalScratchBundle); err == nil && st.Size() > 0 {
-		return historicalScratchBundle
-	}
-	data := gitBlob(t, historicalBundleBlob)
+	data := verifiedHistoricalBytes(t, historicalBundleBlob, historicalBundleSHA256, "TOYO_TEST_HISTORICAL_BUNDLE", historicalScratchBundle)
 	path := filepath.Join(t.TempDir(), "toyota_current_diag.zip")
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)

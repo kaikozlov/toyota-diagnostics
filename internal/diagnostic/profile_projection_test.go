@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/kaikozlov/toyota-diagnostics/internal/catalog"
@@ -80,22 +81,14 @@ CREATE TABLE item_payloads (item_id INTEGER PRIMARY KEY, data BLOB);
 }
 
 func TestNewProfileHistoricalBundleSessionLifecycle(t *testing.T) {
-	bundle := "/workspace/catalog-contract-scratch/toyota_current_diag.zip"
-	if _, err := os.Stat(bundle); err != nil {
-		cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-		cmd.Dir = "."
-		root, err := cmd.Output()
-		if err != nil {
-			t.Skip(err)
-		}
-		data, err := exec.Command("git", "-C", strings.TrimSpace(string(root)), "cat-file", "blob", "9ee6414c78f1a1632653c581c97d3ee926fa82b4").Output()
-		if err != nil {
-			t.Skipf("historical bundle blob unavailable: %v", err)
-		}
-		bundle = filepath.Join(t.TempDir(), "toyota_current_diag.zip")
-		if err := os.WriteFile(bundle, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
+	const (
+		gitSHA   = "9ee6414c78f1a1632653c581c97d3ee926fa82b4"
+		wantHash = "47ef70ee8c2200fede7ac795cfccd09f624e95025ab2d6c131fe6710eaf4095d"
+	)
+	data := verifiedHistoricalBundle(t, gitSHA, wantHash)
+	bundle := filepath.Join(t.TempDir(), "toyota_current_diag.zip")
+	if err := os.WriteFile(bundle, data, 0o644); err != nil {
+		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "empty.sqlite")
 	raw, err := sql.Open("sqlite", path)
@@ -132,4 +125,49 @@ func TestNewProfileHistoricalBundleSessionLifecycle(t *testing.T) {
 	if err != nil || life == nil || life.ExtendedSession == 0 && len(life.EnterSequence) == 0 {
 		t.Fatalf("session lifecycle from historical sidecar: %v %#v", err, life)
 	}
+}
+
+func verifiedHistoricalBundle(t *testing.T, gitSHA, wantHash string) []byte {
+	t.Helper()
+	if path := os.Getenv("TOYO_TEST_HISTORICAL_BUNDLE"); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sha256Hex(data) != wantHash {
+			t.Fatal("TOYO_TEST_HISTORICAL_BUNDLE failed integrity check")
+		}
+		return data
+	}
+	wd, err := os.Getwd()
+	if err == nil {
+		dir := wd
+		for {
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+				data, err := exec.Command("git", "-C", dir, "cat-file", "blob", gitSHA).Output()
+				if err == nil {
+					if sha256Hex(data) != wantHash {
+						t.Fatalf("git blob %s failed integrity check", gitSHA)
+					}
+					return data
+				}
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	if data, err := os.ReadFile("/workspace/catalog-contract-scratch/toyota_current_diag.zip"); err == nil && sha256Hex(data) == wantHash {
+		return data
+	}
+	t.Skipf("historical bundle %s unavailable; set TOYO_TEST_HISTORICAL_BUNDLE to a file matching sha256 %s", gitSHA, wantHash)
+	return nil
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }

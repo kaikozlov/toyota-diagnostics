@@ -565,7 +565,7 @@ func (r *runtimeApp) dtcCommand(a []string) error {
 	if e != nil {
 		return e
 	}
-	functionalComplete := len(positive) == len(expected)
+	functionalComplete, functionalCompleteness := functionalClearCompleteness(expected, positive)
 	timer := time.NewTimer(200 * time.Millisecond)
 	defer timer.Stop()
 	select {
@@ -578,11 +578,23 @@ func (r *runtimeApp) dtcCommand(a []string) error {
 		return e
 	}
 	verified := len(responders) > 0 && runtimeNumber(after["responding_ecus"]) == len(responders) && runtimeNumber(after["fault_status_records"]) == 0
-	if e := r.output(map[string]any{"before": before, "clear": clears, "after": after, "functional_complete": functionalComplete, "clear_verified": verified}); e != nil {
+	if e := r.output(map[string]any{"before": before, "clear": clears, "after": after, "functional_complete": functionalComplete, "functional_completeness": functionalCompleteness, "clear_verified": verified}); e != nil {
 		return e
 	}
 	if !verified {
 		return exitStatus(2)
 	}
 	return nil
+}
+
+func functionalClearCompleteness(expected, positive map[uint32]bool) (bool, string) {
+	if len(expected) == 0 {
+		return false, "unknown"
+	}
+	for addr := range expected {
+		if !positive[addr] {
+			return false, "incomplete"
+		}
+	}
+	return true, "complete"
 }

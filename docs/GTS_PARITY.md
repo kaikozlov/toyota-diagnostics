@@ -4,7 +4,9 @@ This document tracks `toyota-diagnostics` against the pinned current Toyota GTS+
 
 Current comparison target: **GTS+ 2026.03.002.02** from the 2026-06-18 distribution.
 
-The reverse-engineering source of truth remains `ghidra_rh850_analysis`. This repository consumes clean derived metadata and implements runtime behavior.
+The reverse-engineering source of truth remains `ghidra_rh850_analysis`. This repository consumes its public SQLite projection (`tools/gts bundle sqlite`) and implements runtime behavior; that exporter does not store `index.json` or a `runtime_documents` table.
+
+SQLite-only live use therefore has explicit vehicle selection, exported physical request addresses, inferred response addresses (`request+8`), and default/absent session control. A matching source bundle (`--bundle`, same `schema` and `release` as `meta.source_schema` / `meta.release`) can overlay lost session, support, topology, and per-route response/legislated fields when the route key matches. Unmatched or unidentified bundles are rejected rather than mixed with the projection. Without those overlay fields, legislated functional-clear completeness is unknown (not complete), and monitor skips session enter when no lifecycle metadata is present.
 
 ## Current baseline
 

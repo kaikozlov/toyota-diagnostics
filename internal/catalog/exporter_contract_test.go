@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -294,5 +295,117 @@ func TestPointerCreateMatchesExporterLayout(t *testing.T) {
 	}
 	if !reflect.DeepEqual(doc, want) {
 		t.Fatalf("got %#v", doc)
+	}
+}
+
+func writeMatchingBundle(t *testing.T, schema, release string) string {
+	t.Helper()
+	root := t.TempDir()
+	writeGzipJSON(t, filepath.Join(root, "index.json.gz"), map[string]any{
+		"schema":            schema,
+		"release":           release,
+		"default_region":    "NA",
+		"fault_status_mask": 175,
+		"support_contracts": map[string]any{"p5": map[string]any{"kind": "p5"}},
+		"regions": map[string]any{
+			"NA": map[string]any{
+				"selected_categories": map[string]any{"405": map[string]any{"catalog_member": "catalogs/NA/405.json", "name": "Bundle Should Not Win"}},
+				"vehicles":            map[string]any{"12704": map[string]any{"vehicle_type": 12704, "name": "Bundle Camry"}, "1": map[string]any{"vehicle_type": 1, "name": "Invented"}},
+				"session_control":     map[string]any{"kind": "uds", "per_category": map[string]any{"405": map[string]any{"extended_session": map[string]any{"comm_set": 1}}}},
+				"routes": map[string]any{"405:18": map[string]any{
+					"physical_request_address":   9999,
+					"request_address":            9999,
+					"physical_response_address":  1946,
+					"legislated_request_address": 2016,
+					"transport_kind":             "bundle-kind",
+				}},
+			},
+		},
+	})
+	return root
+}
+
+func TestMatchingSidecarOverlaysLostFieldsWithoutReplacingRegistry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "export.sqlite")
+	exporterProjection(t, path)
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.AttachBundle(writeMatchingBundle(t, "toyota-diagnostics-bundle-v4", "test")); err != nil {
+		t.Fatal(err)
+	}
+	index, err := db.Index(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	regional := index["regions"].(map[string]any)["NA"].(map[string]any)
+	if regional["selected_categories"].(map[string]any)["405"].(map[string]any)["name"] != "Power Steering" {
+		t.Fatalf("sidecar overrode category registry: %#v", regional["selected_categories"])
+	}
+	vehicles := regional["vehicles"].(map[string]any)
+	if vehicles["12704"].(map[string]any)["name"] != "Camry HV" {
+		t.Fatalf("sidecar overrode vehicle registry: %#v", vehicles["12704"])
+	}
+	if _, invented := vehicles["1"]; invented {
+		t.Fatalf("sidecar invented a vehicle: %#v", vehicles)
+	}
+	route := regional["routes"].(map[string]any)["405:18"].(map[string]any)
+	if asIndexInt(route["physical_request_address"]) != 1938 || route["transport_kind"] != "iso15765-phase-family" {
+		t.Fatalf("sidecar overrode exported TX route: %#v", route)
+	}
+	if asIndexInt(route["physical_response_address"]) != 1946 || asIndexInt(route["legislated_request_address"]) != 2016 {
+		t.Fatalf("matching sidecar should overlay lost RX/legislated fields: %#v", route)
+	}
+	if regional["session_control"] == nil || index["support_contracts"] == nil {
+		t.Fatalf("matching sidecar should overlay lost session/support fields: %#v", regional)
+	}
+}
+
+func TestSidecarSchemaReleaseMismatchRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "export.sqlite")
+	exporterProjection(t, path)
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.AttachBundle(writeMatchingBundle(t, "toyota-diagnostics-bundle-v2", "2026.03.002.02")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Index(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "does not match") || !strings.Contains(err.Error(), "toyota-diagnostics-bundle-v2") {
+		t.Fatalf("want generation mismatch, got %v", err)
+	}
+}
+
+func TestSidecarWithoutIdentifiableGenerationRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "partial.sqlite")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = raw.Exec(`
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO meta VALUES ('schema','toyota-diagnostics-sqlite-v2'),('default_region','NA'),('member_count','1');
+CREATE TABLE ecus (region TEXT,category_id INTEGER,key TEXT,name TEXT,database_name TEXT,generation INTEGER,support_mode TEXT,catalog_member TEXT,counts TEXT);
+INSERT INTO ecus VALUES('NA',405,'eps','Power Steering','EMPS_P5.ddb',20,'p5-standard','catalogs/NA/405.json','{}');
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.AttachBundle(writeMatchingBundle(t, "toyota-diagnostics-bundle-v4", "test")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Index(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("want explicit missing generation metadata, got %v", err)
 	}
 }

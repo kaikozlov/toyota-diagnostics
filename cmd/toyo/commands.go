@@ -85,7 +85,7 @@ var nativeDocs = map[string]commandDoc{
 		usage:   []string{"toyo db [status]", "toyo db verify"},
 		options: []terminal.HelpEntry{
 			{Usage: "--db PATH", Summary: "use another catalog (or $TOYO_CATALOG)"},
-			{Usage: "--bundle PATH", Summary: "optional source bundle zip or gzip directory (or $TOYO_BUNDLE)"},
+			{Usage: "--bundle PATH", Summary: "matching source bundle, same schema/release (or $TOYO_BUNDLE)"},
 			jsonOpt,
 		},
 	},
@@ -233,6 +233,7 @@ var liveDocs = map[string]commandDoc{
 		examples: []terminal.HelpEntry{
 			{Usage: "toyo dtc scan", Summary: "every responding ECU, decoded descriptions"},
 			{Usage: "toyo dtc scan --ecu engine", Summary: "one ECU (repeatable)"},
+			{Usage: "toyo dtc clear", Summary: "physical clear; functional completeness stays unknown without legislated route metadata"},
 			{Usage: "toyo dtc decode 0x2F", Summary: "explain a status byte offline"},
 		},
 		options: append([]terminal.HelpEntry{
