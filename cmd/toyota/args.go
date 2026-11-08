@@ -16,6 +16,7 @@ type options struct {
 	region    string
 	json      bool
 	help      bool
+	version   bool
 	all       bool
 	limit     int
 	limitSet  bool
@@ -88,6 +89,11 @@ func parse(args []string) (options, []string, error) {
 			opt.all = true
 		case "--help", "-h":
 			opt.help = true
+		case "--version", "-V":
+			if strings.Contains(token, "=") {
+				return opt, nil, usagef("", "%s does not take a value", key)
+			}
+			opt.version = true
 		default:
 			command = append(command, token)
 		}
@@ -133,7 +139,7 @@ func encode(value any) error {
 	return enc.Encode(value)
 }
 
-var errNoCatalog = errors.New("runtime catalog not found; generate build/catalog.sqlite with `tools/gts bundle sqlite`")
+var errNoCatalog = errors.New("runtime catalog not found (build/catalog.sqlite); generate it from ghidra_rh850_analysis with `tools/gts bundle sqlite --out build/catalog.sqlite`, or pass --db PATH")
 
 // Native catalog browsing coexists with the original Python command contract.
 // All live commands, mutation operations, and unsupported offline commands
@@ -162,7 +168,7 @@ func shouldBridge(args []string) bool {
 			return isLiveVerb(args[2]) || isLiveVerb(args[1]) || args[2] == "ffd"
 		}
 		return false
-	case "search", "db", "browse", "inspect", "completion", "__complete":
+	case "search", "db", "browse", "inspect", "completion", "__complete", "version", "kinds":
 		return false
 	default:
 		return len(args) > 1 && (isLiveVerb(args[1]) || args[1] == "ffd")

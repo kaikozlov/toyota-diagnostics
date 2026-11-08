@@ -105,3 +105,56 @@ func Closest(query string, candidates []string, n int) []string {
 	}
 	return out
 }
+
+// Typos returns up to n candidates that differ from query by one substitution,
+// insertion, deletion, or adjacent transposition. A query that merely extends a
+// shorter command is not a typo (didactic/did, vehicles/vehicle), but dropping
+// the last character of a command still matches (searc/search, inspec/inspect).
+func Typos(query string, candidates []string, n int) []string {
+	q := normalize(query)
+	if q == "" || n <= 0 {
+		return nil
+	}
+	qr := []rune(q)
+	var found []string
+	seen := map[string]bool{}
+	for _, text := range candidates {
+		c := normalize(text)
+		if c == "" || c == q || seen[text] {
+			continue
+		}
+		cr := []rune(c)
+		if abs(len(qr)-len(cr)) > 1 {
+			continue
+		}
+		// Query extends the candidate: "vehicles" is not a misspelling of "vehicle".
+		if strings.HasPrefix(q, c) {
+			continue
+		}
+		if distance(qr, cr) != 1 {
+			continue
+		}
+		seen[text] = true
+		found = append(found, text)
+	}
+	sort.SliceStable(found, func(i, j int) bool {
+		if len(found[i]) != len(found[j]) {
+			return len(found[i]) < len(found[j])
+		}
+		return found[i] < found[j]
+	})
+	if len(found) == 0 {
+		return nil
+	}
+	if len(found) > n {
+		found = found[:n]
+	}
+	return found
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}

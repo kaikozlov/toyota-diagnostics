@@ -60,10 +60,9 @@ func run(args []string) error {
 	}
 	p := terminal.New(os.Stdout)
 	if opt.help {
-		nativeHelp(p, rest)
-		return nil
+		return nativeHelp(p, rest)
 	}
-	if len(rest) == 0 && !opt.json && !term.IsTerminal(int(os.Stdin.Fd())) {
+	if len(rest) == 0 && !opt.json && !term.IsTerminal(int(os.Stdin.Fd())) && !opt.version {
 		overview(p)
 		return nil
 	}
@@ -75,14 +74,48 @@ func run(args []string) error {
 			return usagef(firstWord(rest), "unknown option %q", arg)
 		}
 	}
+	if err := versionRequest(opt, rest); err != nil {
+		return err
+	}
+	if opt.version {
+		return writeVersion(os.Stdout)
+	}
+	// Completion scripts are static and must not depend on a valid region
+	// or catalog (`TOYOTA_REGION=bogus toyota completion zsh`).
+	if len(rest) > 0 && rest[0] == "completion" {
+		return (&app{p: p, opt: opt}).completion(rest[1:])
+	}
 	region, err := catalog.Region(opt.region)
 	if err != nil {
 		return usagef("", "%v", err)
 	}
 	opt.region = region
+	if err := validateOffline(opt, rest); err != nil {
+		return err
+	}
 	dbPath := findDB(opt.db)
 	if dbPath == "" {
+		if err := unknownCommandWithoutCatalog(rest); err != nil {
+			return err
+		}
+		// Interactive first run: show the front door, then say how to get a catalog.
+		if len(rest) == 0 && !opt.json {
+			overview(p)
+		}
 		return errNoCatalog
+	}
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if err := unknownCommandWithoutCatalog(rest); err != nil {
+				return err
+			}
+			return fmt.Errorf("catalog not found at %s; generate it from ghidra_rh850_analysis or pass --db PATH", dbPath)
+		}
+		return fmt.Errorf("cannot read catalog %s: %w", dbPath, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("catalog path %s is a directory; pass the SQLite file with --db PATH", dbPath)
 	}
 	db, err := catalog.Open(dbPath)
 	if err != nil {
@@ -108,15 +141,36 @@ func firstWord(args []string) string {
 	return ""
 }
 
-func nativeHelp(p terminal.Printer, args []string) {
+func nativeHelp(p terminal.Printer, args []string) error {
 	if len(args) == 0 {
 		overview(p)
-		return
+		return nil
 	}
 	if commandHelp(p, args[0]) {
-		return
+		return nil
 	}
+	// Longer unknown words that look like a command typo get a correction.
+	// Short collisions such as "frc" vs "ffd" are left alone.
+	if hints := commandHints(args[0]); len(hints) > 0 {
+		return &catalog.NotFoundError{What: "command", Query: args[0], Suggestions: hints}
+	}
+	// Anything else uses the generic ECU shorthand page. That describes the
+	// grammar (`toyota ECU …`) and does not assert the token exists in a
+	// catalog, which is why `toyota help frc` stays useful offline.
 	ecuShorthandHelp(p)
+	return nil
+}
+
+// versionRequest reports extra operands given with --version or -V.
+// The bare word "version" is a catalog search, not a subcommand.
+func versionRequest(opt options, rest []string) error {
+	if !opt.version {
+		return nil
+	}
+	if len(rest) > 0 {
+		return usagef("", "version takes no arguments")
+	}
+	return nil
 }
 
 // pageable reports whether a command prints a finite, read-once listing.

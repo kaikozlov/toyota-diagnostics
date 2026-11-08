@@ -2,6 +2,7 @@ package main
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/kaikozlov/toyota-diagnostics/internal/terminal"
 )
@@ -32,10 +33,11 @@ var nativeDocs = map[string]commandDoc{
 	},
 	"inspect": {
 		summary: "show one record by its search-result number",
-		usage:   []string{"toyota inspect ID", "toyota inspect ECU IDENT"},
+		usage:   []string{"toyota inspect ID", "toyota inspect ECU IDENT|TEXT…"},
 		examples: []terminal.HelpEntry{
 			{Usage: "toyota inspect 161299", Summary: "the number at the end of a search row"},
 			{Usage: "toyota inspect frc 0x1601", Summary: "same as toyota frc 0x1601"},
+			{Usage: "toyota inspect frc LTA control", Summary: "same as toyota frc LTA control"},
 		},
 		options: []terminal.HelpEntry{jsonOpt},
 	},
@@ -93,6 +95,15 @@ var nativeDocs = map[string]commandDoc{
 			{Usage: "source <(toyota completion bash)", Summary: "bash"},
 			{Usage: "toyota completion fish > ~/.config/fish/completions/toyota.fish", Summary: "fish"},
 		},
+	},
+	"kinds": {
+		summary: "list the record kinds present in the catalog",
+		usage:   []string{"toyota kinds", "toyota ECU kinds"},
+		examples: []terminal.HelpEntry{
+			{Usage: "toyota kinds", Summary: "every kind in this region"},
+			{Usage: "toyota frc kinds", Summary: "kinds this ECU actually has"},
+		},
+		options: []terminal.HelpEntry{regionOpt, jsonOpt},
 	},
 }
 
@@ -327,6 +338,7 @@ func overview(p terminal.Printer) {
 		{Title: "Explore", Entries: []terminal.HelpEntry{
 			{Usage: "toyota", Summary: "open the explorer"},
 			{Usage: "toyota search TERM…", Summary: "search signals, codes, tests, ECUs, vehicles"},
+			{Usage: "toyota inspect ID", Summary: "open one search result by its #number"},
 			{Usage: "toyota ECU", Summary: "one ECU at a glance, e.g. toyota frc"},
 			{Usage: "toyota kinds / toyota ECU kinds", Summary: "list available record kinds"},
 			{Usage: "toyota ECU KIND [QUERY]", Summary: "browse any kind; data, dtcs, tests also work"},
@@ -342,7 +354,7 @@ func overview(p terminal.Printer) {
 			{Usage: "toyota COMMAND --help", Summary: "did, rid, uds, can, ffd, observe, customize, …"},
 		}},
 	}, []string{
-		"--region NA|EU|JP   --limit N   --json   --all   --db PATH",
+		"--region NA|EU|JP   --limit N   --json   --all   --db PATH   --version",
 		"toyota help COMMAND for details · toyota completion zsh for tab completion",
 	})
 }
@@ -376,8 +388,15 @@ func commandNames() []string {
 }
 
 func usageLine(command string) string {
-	if doc, ok := nativeDocs[command]; ok && len(doc.usage) > 0 {
-		return doc.usage[0]
+	if doc, ok := nativeDocs[command]; ok {
+		for _, u := range doc.usage {
+			if strings.HasPrefix(u, "toyota "+command) {
+				return u
+			}
+		}
+		if len(doc.usage) > 0 {
+			return doc.usage[0]
+		}
 	}
 	return "toyota help"
 }

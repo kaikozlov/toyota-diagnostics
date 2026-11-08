@@ -54,8 +54,8 @@ func (a *app) dispatch(args []string) error {
 	rest := args[1:]
 	switch args[0] {
 	case "kinds":
-		if len(rest) != 0 {
-			return usagef("", "kinds takes no arguments")
+		if err := validateKinds(rest); err != nil {
+			return err
 		}
 		return a.kinds(nil)
 	case "search":
@@ -87,8 +87,8 @@ func trimItems(items []catalog.Item, limit int) ([]catalog.Item, bool) {
 }
 
 func (a *app) search(args []string) error {
-	if len(args) == 0 {
-		return usagef("search", "search needs something to look for")
+	if err := validateSearch(args); err != nil {
+		return err
 	}
 	query := strings.Join(args, " ")
 	items, err := a.db.Search(a.ctx, a.opt.region, query, a.probe())
@@ -104,11 +104,11 @@ func (a *app) search(args []string) error {
 }
 
 func (a *app) inspect(args []string) error {
+	if err := validateInspect(args); err != nil {
+		return err
+	}
 	if len(args) >= 2 {
 		return a.inECU(args[0], args[1:], false)
-	}
-	if len(args) != 1 {
-		return usagef("inspect", "inspect needs a record number")
 	}
 	id, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil || id <= 0 {
@@ -126,11 +126,8 @@ func (a *app) inspect(args []string) error {
 }
 
 func (a *app) browse(args []string) error {
-	if len(args) != 0 {
-		return usagef("browse", "browse takes no arguments")
-	}
-	if a.opt.json {
-		return usagef("browse", "browse is interactive; use search --json for structured results")
+	if err := validateBrowse(args, a.opt.json); err != nil {
+		return err
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return errors.New("browse needs an interactive terminal")
@@ -139,8 +136,8 @@ func (a *app) browse(args []string) error {
 }
 
 func (a *app) database(args []string) error {
-	if len(args) > 1 {
-		return usagef("db", "db takes status or verify")
+	if err := validateDB(args); err != nil {
+		return err
 	}
 	sub := "status"
 	if len(args) == 1 {
@@ -273,7 +270,7 @@ func (a *app) searchAnything(args []string) error {
 		a.p.Search(query, a.opt.region, items, more)
 		return nil
 	}
-	commands := suggest.Closest(args[0], commandNames(), 2)
+	commands := commandHints(args[0])
 	if len(commands) > 0 && len(args) > 1 {
 		// "toyota serach LTA": the first word was meant as a command.
 		return &catalog.NotFoundError{What: "command", Query: args[0], Suggestions: commands}
@@ -469,4 +466,113 @@ func (a *app) vehicleDetail(v catalog.Vehicle) error {
 	}
 	a.p.Vehicle(v, candidates)
 	return nil
+}
+
+func validateSearch(args []string) error {
+	if len(args) == 0 {
+		return usagef("search", "search needs something to look for")
+	}
+	return nil
+}
+
+func validateInspect(args []string) error {
+	if len(args) == 0 {
+		return usagef("inspect", "inspect needs a record number")
+	}
+	if len(args) == 1 {
+		id, err := strconv.ParseInt(args[0], 10, 64)
+		if err != nil || id <= 0 {
+			return usagef("inspect", "%q is not a record number; use the #number from a search row", args[0])
+		}
+	}
+	return nil
+}
+
+func validateBrowse(args []string, jsonOutput bool) error {
+	if len(args) != 0 {
+		return usagef("browse", "browse takes no arguments")
+	}
+	if jsonOutput {
+		return usagef("browse", "browse is interactive; use search --json for structured results")
+	}
+	return nil
+}
+
+func validateCompletion(args []string) error {
+	if len(args) != 1 {
+		return usagef("completion", "completion needs a shell: zsh, bash or fish")
+	}
+	switch args[0] {
+	case "zsh", "bash", "fish":
+		return nil
+	default:
+		return usagef("completion", "unsupported shell %q; choose zsh, bash or fish", args[0])
+	}
+}
+
+func validateKinds(args []string) error {
+	if len(args) != 0 {
+		return usagef("kinds", "kinds takes no arguments")
+	}
+	return nil
+}
+
+func validateDB(args []string) error {
+	if len(args) > 1 {
+		return usagef("db", "db takes status or verify")
+	}
+	if len(args) == 1 && args[0] != "status" && args[0] != "verify" {
+		return usagef("db", "unknown db command %q", args[0])
+	}
+	return nil
+}
+
+// validateOffline reports invocation mistakes that do not need the catalog,
+// using the same helpers as the command implementations.
+func validateOffline(opt options, rest []string) error {
+	if len(rest) == 0 {
+		if opt.json {
+			return usagef("", "--json needs a command, e.g. toyota search LTA --json")
+		}
+		return nil
+	}
+	switch rest[0] {
+	case "search":
+		return validateSearch(rest[1:])
+	case "inspect":
+		return validateInspect(rest[1:])
+	case "browse":
+		return validateBrowse(rest[1:], opt.json)
+	case "kinds":
+		return validateKinds(rest[1:])
+	case "db":
+		return validateDB(rest[1:])
+	}
+	return nil
+}
+
+// unknownCommandWithoutCatalog offers a command correction when there is no
+// catalog to search. Single-word invocations are left alone so they stay
+// search/ECU fallbacks once a catalog is available.
+func unknownCommandWithoutCatalog(rest []string) error {
+	if len(rest) < 2 {
+		return nil
+	}
+	if _, ok := nativeDocs[rest[0]]; ok {
+		return nil
+	}
+	if _, ok := liveDocs[rest[0]]; ok {
+		return nil
+	}
+	if hints := commandHints(rest[0]); len(hints) > 0 {
+		return &catalog.NotFoundError{What: "command", Query: rest[0], Suggestions: hints}
+	}
+	return nil
+}
+
+func commandHints(query string) []string {
+	if len([]rune(query)) < 5 {
+		return nil
+	}
+	return suggest.Typos(query, commandNames(), 2)
 }

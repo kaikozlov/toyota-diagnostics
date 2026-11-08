@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/kaikozlov/toyota-diagnostics/internal/catalog"
 )
 
@@ -18,7 +19,7 @@ func (a *app) kinds(ecu *catalog.ECU) error {
 		return encode(kinds)
 	}
 	for _, kind := range kinds {
-		fmt.Println(kind)
+		fmt.Fprintln(a.p.Out, kind)
 	}
 	return nil
 }
