@@ -80,7 +80,7 @@ func (p Printer) Search(query, region string, rows []catalog.Item, more bool) {
 	p.title(p.accent("search")+"  "+p.bold(query), p.dim(region+" · "+summary(len(rows), more)))
 	p.println()
 	if len(rows) == 0 {
-		p.println("  Nothing found. Try fewer words, a signal's OEM name, or --region EU|JP.")
+		p.println("  Nothing found. Try a DID (0x1601 or 1601), a DTC (U0131), fewer words, or --region EU|JP.")
 		return
 	}
 	p.itemTable(rows, Terms(query), true)

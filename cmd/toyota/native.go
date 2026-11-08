@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -100,6 +101,13 @@ func (a *app) search(args []string) error {
 		return encode(items)
 	}
 	a.p.Search(query, a.opt.region, items, more)
+	if len(items) == 0 {
+		if ecu, ok, err := a.db.ExactECU(a.ctx, a.opt.region, query); err != nil {
+			return err
+		} else if ok {
+			fmt.Fprintf(a.p.Out, "  toyota %s opens the %s.\n", ecu.Key, ecu.Name)
+		}
+	}
 	return nil
 }
 

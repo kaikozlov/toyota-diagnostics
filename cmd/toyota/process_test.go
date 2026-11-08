@@ -169,4 +169,14 @@ func TestCLIProcessFixtureOutput(t *testing.T) {
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "Software Version") {
 		t.Fatalf("version search: code=%d err=%q out=%q", code, stderr, stdout)
 	}
+
+	stdout, stderr, code = runCLI(t, append(base, "NO_COLOR=1"), "search", "1601")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "LTA Control Condition") || !strings.Contains(stdout, "0x1601") {
+		t.Fatalf("hex search: code=%d err=%q out=%q", code, stderr, stdout)
+	}
+
+	stdout, stderr, code = runCLI(t, append(base, "NO_COLOR=1"), "search", "frc")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "Nothing found") || !strings.Contains(stdout, "toyota frc opens") {
+		t.Fatalf("ecu hint: code=%d err=%q out=%q", code, stderr, stdout)
+	}
 }

@@ -175,6 +175,41 @@ func TestInspectScopedQueryMatchesShorthand(t *testing.T) {
 	}
 }
 
+func TestSearchFindsHexIdentifiersAndHintsECU(t *testing.T) {
+	cliFixture(t)
+	plain := output(t, "search", "1601")
+	prefixed := output(t, "search", "0x1601")
+	if !strings.Contains(plain, "LTA Control Condition") || !strings.Contains(prefixed, "LTA Control Condition") {
+		t.Fatalf("1601:\n%s\n0x1601:\n%s", plain, prefixed)
+	}
+	if !strings.Contains(plain, "0x1601") {
+		t.Fatal(plain)
+	}
+	for _, q := range []string{"frc", "FRC", "498", "Front Recognition Camera 2"} {
+		out := output(t, "search", q)
+		if !strings.Contains(out, "Nothing found") || !strings.Contains(out, "toyota frc opens") {
+			t.Fatalf("search %q should hint at the ECU:\n%s", q, out)
+		}
+	}
+	for _, q := range []string{"Front", "2"} {
+		out := output(t, "search", q)
+		if strings.Contains(out, "toyota frc opens") {
+			t.Fatalf("search %q must not hint from a unique substring:\n%s", q, out)
+		}
+	}
+	var items []catalog.Item
+	if err := json.Unmarshal([]byte(output(t, "search", "frc", "--json")), &items); err != nil || len(items) != 0 {
+		t.Fatalf("JSON search frc should stay an empty array: %v %d", err, len(items))
+	}
+	if err := json.Unmarshal([]byte(output(t, "search", "Front", "--json")), &items); err != nil || len(items) != 0 {
+		t.Fatalf("JSON search Front should stay an empty array: %v %d", err, len(items))
+	}
+	hostile := output(t, "search", `name:LTA OR "1=1`)
+	if !strings.Contains(hostile, "Nothing found") {
+		t.Fatalf("operator-like punctuation should not become MATCH syntax:\n%s", hostile)
+	}
+}
+
 func TestMistakesGetCorrections(t *testing.T) {
 	cliFixture(t)
 	var miss *catalog.NotFoundError
