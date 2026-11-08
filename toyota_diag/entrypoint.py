@@ -1,9 +1,8 @@
-"""Dependency-free launcher for the Toyota diagnostics CLI.
+"""Bootstrap the internal Python live-diagnostics runtime.
 
-A comma already has the authoritative openpilot Python runtime, compiled messaging
-stack, Panda package, and the exact opendbc checkout used by the running software.
-Do not duplicate those dependencies in this repository's standalone virtualenv.
-The launcher selects that runtime before importing :mod:`toyota_diag.cli`.
+The public CLI is Go. Its live-command bridge invokes ``python -m toyota_diag``;
+this module selects the workstation or comma/openpilot Python runtime before
+importing the existing diagnostic execution code.
 """
 from __future__ import annotations
 

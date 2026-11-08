@@ -16,9 +16,6 @@ live = [
   "pandacan @ git+https://github.com/commaai/panda.git@bbc93b17d8612c60c10b43553b37adce53817bf4",
 ]
 
-[project.scripts]
-toyota = "toyota_diag.entrypoint:main"
-
 [dependency-groups]
 dev = [
   "pytest>=8,<9",

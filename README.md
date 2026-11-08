@@ -4,32 +4,32 @@ Standalone Toyota diagnostic tooling backed by clean metadata recovered from Toy
 
 ## Running it
 
-**On a comma:** do not create a second Python environment for this repository. The comma already has the authoritative openpilot runtime, Panda bindings, compiled messaging stack, and the exact opendbc checkout used by the running software. From the checkout, run:
+`./toyota` is the public CLI. Search, ECU browsing, vehicle browsing, and the interactive explorer are native Go over an indexed SQLite projection of the current GTS+ corpus. Live and not-yet-migrated specialized commands use the existing Python/openpilot runtime behind the same command surface.
+
+Generate the runtime catalog from the source-of-truth repository, then run the CLI:
 
 ```bash
-cd /data/toyota-diagnostics
-./toyota dtc scan
-./toyota dtc clear
+cd ../ghidra_rh850_analysis
+tools/gts bundle sqlite --out ../toyota-diagnostics/build/catalog.sqlite
+
+cd ../toyota-diagnostics
+./toyota search LTA
+./toyota frc data "LTA Control"
+./toyota vehicle 12704
+./toyota monitor frc LTA
 ```
 
-The dependency-free launcher detects AGNOS before importing the CLI and re-execs `/usr/local/venv/bin/python` with this checkout plus `/data/openpilot` on `PYTHONPATH`. In other words, live diagnostics use openpilot's own dependencies rather than duplicating them in `/data/toyota-diagnostics/.venv`. **Do not use `uv run` on the comma**: `uv` may create/sync a project venv before the launcher ever starts. Use `./toyota ...` directly; `python -m toyota_diag ...` also goes through the selector when invoked from the checkout. Do not manually assemble `PYTHONPATH` or install missing openpilot dependencies into a local diagnostics venv.
+The root launcher builds `build/toyota` on first use when Go is available. The SQLite file and binary are generated artifacts under `build/`, not tracked source. `TOYOTA_CATALOG` or `--db` selects another runtime database.
 
-**On a workstation:** run `uv sync` for offline/catalog work, or `uv sync --extra live` for direct Panda access, then use `./toyota ...`. The launcher automatically enters the checkout's `.venv`; the installed `toyota` console script, `uv run toyota`, and `python -m toyota_diag` use the same selector as well.
+On a comma, deploy the Linux/arm64 Go binary and SQLite database with the checkout. Live commands still use openpilot's authoritative `/usr/local/venv` and `/data/openpilot`; do not create a second diagnostics virtualenv. The Go bridge invokes `python -m toyota_diag`, whose bootstrap selects the existing openpilot runtime before importing diagnostic dependencies.
 
-Live Panda ownership is separate from Python dependency selection. With `pandad` running, transmitting commands reuse openpilot's `can`/`sendcan` path only when the Panda is already in ELM327 diagnostic safety; otherwise stop openpilot/manager and rerun the same `./toyota ...` command so the CLI can take direct Panda ownership. Receive-only `can sniff` can reuse the running `pandad` path without changing Panda safety.
+For workstation live access, `uv sync --extra live` supplies direct Panda support. Native search/ECU/vehicle browsing does not require Python or Panda.
 
-The initial extraction came from `kaikozlov/kai-openpilot` branch `kai` at `7cde0135351f298b9a9d84344b5f685fde5a6005`.
-
-The bundled metadata is copied byte-for-byte from generated outputs in `ghidra_rh850_analysis`; do not hand-edit it here. At extraction time those outputs matched `ghidra_rh850_analysis` commit `c3bbfc3f11d4c1f851fe5d88de4da6a83f7ff019`:
-
-- `toyota_diag/data/toyota_current_diag.zip` ← `data/generated/gtsplus_2026/toyota_diag_bundle_current.zip`
-- `toyota_diag/data/camry_2026_f33.json` ← `data/generated/gtsplus_2026/toyota_diag_registry_camry_2026.json`
-- `toyota_diag/data/pcs_data_viewer_tss3_managed_semantics.json` ← the same generated filename
-- `toyota_diag/data/tss3_native_recorder_protocol.json` ← the same generated filename
+The initial Python runtime was extracted from `kaikozlov/kai-openpilot` branch `kai` at `7cde0135351f298b9a9d84344b5f685fde5a6005`. Its compatibility fixtures under `toyota_diag/data/` are generated data; do not hand-edit them.
 
 ## CLI reference
 
-`toyota` is a standalone entry point for Toyota diagnostics recovered from Techstream/GTS+. The default bundled database is the current universal Toyota resolver: vehicle/VIN decision tables, install sets, logical mount candidates, category+phase transport routes from `CDbProtInfoTable`, literal support-family dispatch, live P5/P6 capability metadata, GTS DID/DTC catalogs, and static Active-Test plans. The older Camry JSON is retained only as a compatibility/evidence fixture; live all-system commands use the selected vehicle's Toyota install set and resolved routes, not a maintainer-specific address list. The CLI also bundles clean generated metadata for the current GTS+ TSS3 Operation/Image FFD protocols and PCS Data Viewer recorder schema. It does **not** contain Toyota DLL/DDB/EXE binaries.
+`toyota` is the standalone entry point for Toyota diagnostics recovered from Techstream/GTS+. Its SQLite catalog is generated from the current canonical v4 resolver and catalogs in `ghidra_rh850_analysis`; live execution remains delegated to the proven Python transport/session implementation while that layer is migrated. The repository contains only clean derived metadata, never Toyota DLL/DDB/EXE binaries.
 
 Offline discovery works without Panda access. The CLI is ECU-first now, so you can browse by Toyota names instead of memorizing DIDs or command families:
 
@@ -154,7 +154,7 @@ Active-Test execution keeps **static evidence grade** separate from live materia
 
 For ordinary P5 direct `0x2F` tests, a static `plan_only` grade likewise no longer permanently blocks execution when the row carries Toyota's exact selector-`0xCA` runtime-length probe. After explicit `--execute`, the runtime enters the recovered session, performs `22 <DID>`, and uses the returned DID-value byte count as GTS+'s exact `DataIdLengthList` N (`received_length - 3` before the `62 <DID>` prefix is stripped). This probe is separate from role-`0x08`'s initial-value mode, so controls can materialize N even when the UI initialization read differs. Shared type-67 DIDs are intentionally one-to-many in current GTS+: the generated registry now preserves every matching row instead of rejecting the DID. Across the current NA bundle that resolves **58 of the former 72 unresolved direct rows**; the remaining **14** are all Electric Parking Brake category 485 rows whose category genuinely lacks selector `0x9D` in the current master.
 
-Direct control-enable masks are generated internally from Toyota's recovered encoding-mode rules; there is no Active-Test `--mask` override. Mode 0 derives both start and stop masks from the matching type-67 rows and selected type-68 byte span; modes 1/4 use no start mask and a minimal MSB0 selected-bit-range mask on return-control; mode 3 uses no mask. P6 additionally uses mode 6: the scalar is placed at `bit_end>>3` with the recovered MSB shift, and neither start nor return-control carries a control-enable mask. Mask length is independent of N. The host owns direct value packing for all currently observed P5/P6 direct modes (`0/1/3/4/6`). Callers provide exactly one of `--raw-value`, `--engineering-value`, or `--choice`; engineering input uses the exported Active-Test Mul/Div/Offset/precision/unit metadata and current `CStartActTstSnd::SetValue` inverse conversion, while `--choice` resolves Toyota's OEM display text. Arbitrary N-byte direct payload input is no longer part of the Active-Test CLI. The registry also carries raw Toyota CommSet rows (for example CommSet 1 `receive_timeout=1020`, retry count 1); the runtime exposes those rows but deliberately does not reinterpret the raw timeout as seconds until Techstream's `CheckAndConvertRcvTimeOut` conversion is fully recovered.
+Direct control-enable masks are generated internally from Toyota's recovered encoding-mode rules; there is no Active-Test `--mask` override. Mode 0 derives both start and stop masks from the matching type-67 rows and selected type-68 byte span; modes 1/4 use the full N-byte MSB0 selected-bit-range mask on both start and return-control; mode 3 uses no mask. P6 additionally uses mode 6: the scalar is placed at `bit_end>>3` with the recovered MSB shift, and neither start nor return-control carries a control-enable mask. Mask length is independent of N. The host owns direct value packing for all currently observed P5/P6 direct modes (`0/1/3/4/6`). Callers provide exactly one of `--raw-value`, `--engineering-value`, or `--choice`; engineering input uses the exported Active-Test Mul/Div/Offset/precision/unit metadata and current `CStartActTstSnd::SetValue` inverse conversion, while `--choice` resolves Toyota's OEM display text. Arbitrary N-byte direct payload input is no longer part of the Active-Test CLI. The registry also carries raw Toyota CommSet rows (for example CommSet 1 `receive_timeout=1020`, retry count 1); the runtime exposes those rows but deliberately does not reinterpret the raw timeout as seconds until Techstream's `CheckAndConvertRcvTimeOut` conversion is fully recovered.
 
 P6 Active-Test execution is now live-materializable rather than catalog-only. The generated P6 shards use the same recovered type-67/68 direct and type-71 routine geometry consumed by `DataMonitorPhase6_DT.dll`, but mutation admission follows the P6-specific support protocol first: direct controls must be advertised through Toyota's `A100/A1nn` DID hierarchy, routines through `D100/D1nn`. Only after that gate does the direct path run the common selector-`0xCA` `22 <DID>` probe and use `received_length - 3` as N. P6 routine execution uses the same `31 01/02/03 RID` materialization and explicit output masks; every current P6 type-71 stop-command variable is zero in the recovered corpus. The standalone runtime therefore refuses an unadvertised P6 DID/RID before sending the Active-Test request instead of treating static catalog presence as live support. P6 Data List presentation, generic FFD, and Record-of-Behavior conversion remain explicitly separate unrecovered surfaces and are not projected from P5.
 

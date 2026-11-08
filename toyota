@@ -1,7 +1,18 @@
-#!/usr/bin/env python3
-"""Source-checkout launcher; see toyota_diag.entrypoint for runtime selection."""
-from toyota_diag.entrypoint import main
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+bin="$root/build/toyota"
+export TOYOTA_DIAGNOSTICS_ROOT="$root"
 
+if command -v go >/dev/null 2>&1; then
+  if [ ! -x "$bin" ] || [ "$root/go.mod" -nt "$bin" ] || [ "$root/go.sum" -nt "$bin" ] || \
+     find "$root/cmd" "$root/internal" -type f -newer "$bin" -print -quit | grep -q .; then
+    mkdir -p "$root/build"
+    (cd "$root" && go build -o "$bin" ./cmd/toyota)
+  fi
+elif [ ! -x "$bin" ]; then
+  echo "toyota: build/toyota is missing and Go is not installed" >&2
+  exit 127
+fi
 
-if __name__ == "__main__":
-  raise SystemExit(main())
+exec "$bin" "$@"

@@ -4,7 +4,7 @@ This document tracks `toyota-diagnostics` against the pinned current Toyota GTS+
 
 Current comparison target: **GTS+ 2026.03.002.02** from the 2026-06-18 distribution.
 
-The reverse-engineering source of truth remains `ghidra_rh850_analysis`. This repository consumes only clean derived metadata and implements runtime behavior.
+The reverse-engineering source of truth remains `ghidra_rh850_analysis`. This repository consumes clean derived metadata and implements runtime behavior.
 
 ## Current baseline
 
@@ -27,20 +27,20 @@ Current clean catalog coverage is:
 
 | Region | Toyota categories | Decoded catalogs |
 |---|---:|---:|
-| NA | 2,136 | 135 |
-| EU | 2,136 | 161 |
-| JP | 2,136 | 143 |
+| NA | 2,136 | 203 |
+| EU | 2,136 | 232 |
+| JP | 2,136 | 247 |
 
 The current GTS+ master contains **191 logical DLL roles / 6,194 category-role bindings**. The standalone runtime intentionally implements only roles whose semantics have been recovered strongly enough to execute without guessing.
 
 For NA decoded catalogs, the current Active Test census is:
 
-- **1,739** candidates total;
-- **245** fixed-geometry `executable` rows;
-- **1,407** `plan_only` rows;
-- **87** `unresolved_static_plan` rows.
+- **3,244** candidates total;
+- **605** fixed-geometry `executable` routine rows;
+- **2,610** `plan_only` rows (2,347 direct + 263 routine);
+- **29** `unresolved_static_plan` rows (14 direct + 15 routine).
 
-Those are static evidence grades. The runtime now live-materializes exact P5 direct-test payload width for **all 1,082 NA plan-only direct rows** from the exported selector-`0xCA` runtime-length probe. GTS+ records `received_length - 3` into `DataIdLengthList`; the standalone `UdsClient` already returns only the DID value bytes, so `len(value)` is the same N. The probe is independent of role-`0x08`'s initial-value mode, which is why the 13 mode-1/no-read controls are covered too. The 72 unresolved direct rows remain blocked. `executable` means static request geometry is complete; it does not assert live ECU support or bypass required Toyota session/authentication behavior.
+Those are static evidence grades. The runtime now live-materializes exact P5 direct-test payload width for **all 1,082 NA plan-only direct rows** from the exported selector-`0xCA` runtime-length probe. GTS+ records `received_length - 3` into `DataIdLengthList`; the standalone `UdsClient` already returns only the DID value bytes, so `len(value)` is the same N. The probe is independent of role-`0x08`'s initial-value mode, which is why the 13 mode-1/no-read controls are covered too. The remaining 14 NA unresolved direct rows remain blocked (Electric Parking Brake category 485). `executable` means static request geometry is complete; it does not assert live ECU support or bypass required Toyota session/authentication behavior.
 
 ## Main parity gaps
 
@@ -79,7 +79,7 @@ The CLI has a strong ordinary-P5 monitor path, but GTS+ supports more display an
 
 Missing work includes:
 
-- broaden decoded catalogs beyond the current 135/161/143 regional subset;
+- broaden decoded catalogs beyond the current 203/232/247 regional subset;
 - recover P4/P6 and partner-family signal conversion/presentation paths instead of applying the P5 decoder outside its proven scope;
 - special-format signals and generation-specific Data List semantics;
 - GTS-style recording/graphing/trigger behavior and stored-session integration.
