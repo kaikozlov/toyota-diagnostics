@@ -86,7 +86,7 @@ Missing work includes:
 
 ### 4. Health Check
 
-`toyota health-check` (with `scan` as an exact CLI alias) now provides the all-system foundation over the selected Toyota vehicle's install-set/mount model. It preserves every logical candidate, probes Toyota's recovered family-local support root where available, acquires DTCs only from responding routed ECUs, performs exact exported generic-CID identity reads where available, and can persist the complete open JSON document with `--out`. There is no separate maintainer-address scan implementation.
+`toyo health-check` (with `scan` as an exact CLI alias) now provides the all-system foundation over the selected Toyota vehicle's install-set/mount model. It preserves every logical candidate, probes Toyota's recovered family-local support root where available, acquires DTCs only from responding routed ECUs, performs exact exported generic-CID identity reads where available, and can persist the complete open JSON document with `--out`. There is no separate maintainer-address scan implementation.
 
 Still needed for GTS+ Health Check parity:
 

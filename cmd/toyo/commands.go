@@ -14,7 +14,7 @@ type commandDoc struct {
 	options  []terminal.HelpEntry
 }
 
-var regionOpt = terminal.HelpEntry{Usage: "--region NA|EU|JP", Summary: "GTS+ region (default NA, or $TOYOTA_REGION)"}
+var regionOpt = terminal.HelpEntry{Usage: "--region NA|EU|JP", Summary: "GTS+ region (default NA, or $TOYO_REGION)"}
 var jsonOpt = terminal.HelpEntry{Usage: "--json", Summary: "structured output for scripts"}
 var limitOpt = terminal.HelpEntry{Usage: "--limit N", Summary: "rows to show (default 50)"}
 
@@ -23,41 +23,41 @@ var limitOpt = terminal.HelpEntry{Usage: "--limit N", Summary: "rows to show (de
 var nativeDocs = map[string]commandDoc{
 	"search": {
 		summary: "search every signal, code, test, ECU and vehicle",
-		usage:   []string{"toyota search TERM…"},
+		usage:   []string{"toyo search TERM…"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota search LTA", Summary: "everything Toyota calls LTA"},
-			{Usage: "toyota search 1601", Summary: "the same DID as 0x1601"},
-			{Usage: "toyota search steering angle", Summary: "all words must match"},
-			{Usage: "toyota frc LTA", Summary: "the same, inside one ECU"},
+			{Usage: "toyo search LTA", Summary: "everything Toyota calls LTA"},
+			{Usage: "toyo search 1601", Summary: "the same DID as 0x1601"},
+			{Usage: "toyo search steering angle", Summary: "all words must match"},
+			{Usage: "toyo frc LTA", Summary: "the same, inside one ECU"},
 		},
 		options: []terminal.HelpEntry{regionOpt, limitOpt, jsonOpt},
 	},
 	"inspect": {
 		summary: "show one record by its search-result number",
-		usage:   []string{"toyota inspect ID", "toyota inspect ECU IDENT|TEXT…"},
+		usage:   []string{"toyo inspect ID", "toyo inspect ECU IDENT|TEXT…"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota inspect 161299", Summary: "the number at the end of a search row"},
-			{Usage: "toyota inspect frc 0x1601", Summary: "same as toyota frc 0x1601"},
-			{Usage: "toyota inspect frc LTA control", Summary: "same as toyota frc LTA control"},
+			{Usage: "toyo inspect 161299", Summary: "the number at the end of a search row"},
+			{Usage: "toyo inspect frc 0x1601", Summary: "same as toyo frc 0x1601"},
+			{Usage: "toyo inspect frc LTA control", Summary: "same as toyo frc LTA control"},
 		},
 		options: []terminal.HelpEntry{jsonOpt},
 	},
 	"ecu": {
 		summary: "list ECUs, or work inside one",
 		usage: []string{
-			"toyota ecu [QUERY]",
-			"toyota ECU",
-			"toyota ECU data|dtcs|tests|functions|plugins|utilities [QUERY]",
-			"toyota ECU IDENT",
-			"toyota ECU TEXT…",
+			"toyo ecu [QUERY]",
+			"toyo ECU",
+			"toyo ECU data|dtcs|tests|functions|plugins|utilities [QUERY]",
+			"toyo ECU IDENT",
+			"toyo ECU TEXT…",
 		},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota ecu brake", Summary: "ECUs whose key or name has \"brake\""},
-			{Usage: "toyota frc", Summary: "one ECU at a glance (key, name or category)"},
-			{Usage: "toyota frc data steer", Summary: "its Data List, filtered"},
-			{Usage: "toyota frc dtcs U0131", Summary: "its trouble codes"},
-			{Usage: "toyota frc 0x1601", Summary: "decode one DID, DTC or Active Test"},
-			{Usage: "toyota frc LTA control", Summary: "search just this ECU"},
+			{Usage: "toyo ecu brake", Summary: "ECUs whose key or name has \"brake\""},
+			{Usage: "toyo frc", Summary: "one ECU at a glance (key, name or category)"},
+			{Usage: "toyo frc data steer", Summary: "its Data List, filtered"},
+			{Usage: "toyo frc dtcs U0131", Summary: "its trouble codes"},
+			{Usage: "toyo frc 0x1601", Summary: "decode one DID, DTC or Active Test"},
+			{Usage: "toyo frc LTA control", Summary: "search just this ECU"},
 		},
 		options: []terminal.HelpEntry{
 			{Usage: "--all", Summary: "include ECUs that have no decoded catalog"},
@@ -66,43 +66,43 @@ var nativeDocs = map[string]commandDoc{
 	},
 	"vehicle": {
 		summary: "browse Toyota vehicles and their declared ECUs",
-		usage:   []string{"toyota vehicle [NAME|TYPE]", "toyota vehicle detect|mounted"},
+		usage:   []string{"toyo vehicle [NAME|TYPE]", "toyo vehicle detect|mounted"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota vehicle", Summary: "every model, grouped"},
-			{Usage: "toyota vehicle Camry", Summary: "its variants"},
-			{Usage: "toyota vehicle 10041", Summary: "one type and its install-set ECUs"},
-			{Usage: "toyota vehicle detect", Summary: "live: identify the connected car"},
+			{Usage: "toyo vehicle", Summary: "every model, grouped"},
+			{Usage: "toyo vehicle Camry", Summary: "its variants"},
+			{Usage: "toyo vehicle 10041", Summary: "one type and its install-set ECUs"},
+			{Usage: "toyo vehicle detect", Summary: "live: identify the connected car"},
 		},
 		options: []terminal.HelpEntry{regionOpt, limitOpt, jsonOpt},
 	},
 	"browse": {
 		summary: "open the interactive explorer",
-		usage:   []string{"toyota", "toyota browse"},
+		usage:   []string{"toyo", "toyo browse"},
 		options: []terminal.HelpEntry{regionOpt},
 	},
 	"db": {
 		summary: "inspect the offline catalog",
-		usage:   []string{"toyota db [status]", "toyota db verify"},
+		usage:   []string{"toyo db [status]", "toyo db verify"},
 		options: []terminal.HelpEntry{
-			{Usage: "--db PATH", Summary: "use another catalog (or $TOYOTA_CATALOG)"},
+			{Usage: "--db PATH", Summary: "use another catalog (or $TOYO_CATALOG)"},
 			jsonOpt,
 		},
 	},
 	"completion": {
 		summary: "shell completion that knows your ECUs",
-		usage:   []string{"toyota completion zsh|bash|fish"},
+		usage:   []string{"toyo completion zsh|bash|fish"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota completion zsh > ~/.zfunc/_toyota", Summary: "zsh (add ~/.zfunc to fpath)"},
-			{Usage: "source <(toyota completion bash)", Summary: "bash"},
-			{Usage: "toyota completion fish > ~/.config/fish/completions/toyota.fish", Summary: "fish"},
+			{Usage: "toyo completion zsh > ~/.zfunc/_toyo", Summary: "zsh (add ~/.zfunc to fpath)"},
+			{Usage: "source <(toyo completion bash)", Summary: "bash"},
+			{Usage: "toyo completion fish > ~/.config/fish/completions/toyo.fish", Summary: "fish"},
 		},
 	},
 	"kinds": {
 		summary: "list the record kinds present in the catalog",
-		usage:   []string{"toyota kinds", "toyota ECU kinds"},
+		usage:   []string{"toyo kinds", "toyo ECU kinds"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota kinds", Summary: "every kind in this region"},
-			{Usage: "toyota frc kinds", Summary: "kinds this ECU actually has"},
+			{Usage: "toyo kinds", Summary: "every kind in this region"},
+			{Usage: "toyo frc kinds", Summary: "kinds this ECU actually has"},
 		},
 		options: []terminal.HelpEntry{regionOpt, jsonOpt},
 	},
@@ -118,15 +118,15 @@ var liveLinkOpts = []terminal.HelpEntry{
 var monitorOutputOpts = terminal.HelpEntry{Usage: "--jsonl | --csv", Summary: "one JSON object per sample group, or one CSV row per signal"}
 
 // liveDocs gives the Python-owned commands a house-style help page. Deep
-// flags still answer from the runtime: `toyota CMD ARG --help` bridges.
+// flags still answer from the runtime: `toyo CMD ARG --help` bridges.
 var liveDocs = map[string]commandDoc{
 	"monitor": {
 		summary: "watch decoded Data List values, live",
-		usage:   []string{"toyota monitor ECU ITEM…"},
+		usage:   []string{"toyo monitor ECU ITEM…"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota monitor engine BATT", Summary: "every Data List signal Toyota calls BATT"},
-			{Usage: "toyota monitor frc 0x1014 steer", Summary: "mix DID numbers and names"},
-			{Usage: "toyota monitor frc data --interval 1", Summary: "whole Data List, once a second"},
+			{Usage: "toyo monitor engine BATT", Summary: "every Data List signal Toyota calls BATT"},
+			{Usage: "toyo monitor frc 0x1014 steer", Summary: "mix DID numbers and names"},
+			{Usage: "toyo monitor frc data --interval 1", Summary: "whole Data List, once a second"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--interval S", Summary: "seconds between samples (default 0.25)"},
@@ -138,10 +138,10 @@ var liveDocs = map[string]commandDoc{
 	},
 	"observe": {
 		summary: "monitor Data List values across several ECUs at once",
-		usage:   []string{"toyota observe ECU:ITEM…", "toyota observe PRESET"},
+		usage:   []string{"toyo observe ECU:ITEM…", "toyo observe PRESET"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota observe engine:BATT frc:steer", Summary: "any ECUs, DID numbers or terms"},
-			{Usage: "toyota observe tss3-longitudinal", Summary: "a recovered preset"},
+			{Usage: "toyo observe engine:BATT frc:steer", Summary: "any ECUs, DID numbers or terms"},
+			{Usage: "toyo observe tss3-longitudinal", Summary: "a recovered preset"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--interval S", Summary: "seconds between samples (default 0.25)"},
@@ -153,11 +153,11 @@ var liveDocs = map[string]commandDoc{
 	},
 	"health-check": {
 		summary: "all-system Health Check over the vehicle's install set (scan is an alias)",
-		usage:   []string{"toyota scan", "toyota health-check"},
+		usage:   []string{"toyo scan", "toyo health-check"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota scan", Summary: "mount states, DTCs, freeze frames, RoBs, identities"},
-			{Usage: "toyota health-check --out run.json", Summary: "also save the full snapshot"},
-			{Usage: "toyota health-check --compare run.json", Summary: "diff against a saved run"},
+			{Usage: "toyo scan", Summary: "mount states, DTCs, freeze frames, RoBs, identities"},
+			{Usage: "toyo health-check --out run.json", Summary: "also save the full snapshot"},
+			{Usage: "toyo health-check --compare run.json", Summary: "diff against a saved run"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--out FILE", Summary: "write the complete JSON snapshot"},
@@ -168,10 +168,10 @@ var liveDocs = map[string]commandDoc{
 	},
 	"transport": {
 		summary: "show the vehicle-link status, or list transport backends",
-		usage:   []string{"toyota transport status", "toyota transport list"},
+		usage:   []string{"toyo transport status", "toyo transport list"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota transport status", Summary: "backend, readiness and detail"},
-			{Usage: "toyota transport list", Summary: "backends and discoverable J2534 providers"},
+			{Usage: "toyo transport status", Summary: "backend, readiness and detail"},
+			{Usage: "toyo transport list", Summary: "backends and discoverable J2534 providers"},
 		},
 		options: []terminal.HelpEntry{
 			{Usage: "--json", Summary: "structured output for scripts"},
@@ -181,10 +181,10 @@ var liveDocs = map[string]commandDoc{
 	},
 	"can": {
 		summary: "GTS CAN topology, or capture raw frames",
-		usage:   []string{"toyota can topology", "toyota can sniff ADDRESS…"},
+		usage:   []string{"toyo can topology", "toyo can sniff ADDRESS…"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota can topology", Summary: "the registry's bus map"},
-			{Usage: "toyota can sniff 0x7E0", Summary: "capture one address"},
+			{Usage: "toyo can topology", Summary: "the registry's bus map"},
+			{Usage: "toyo can sniff 0x7E0", Summary: "capture one address"},
 		},
 		options: []terminal.HelpEntry{
 			{Usage: "--duration S", Summary: "capture window (default 5; 0 runs until interrupted)"},
@@ -196,15 +196,15 @@ var liveDocs = map[string]commandDoc{
 	"did": {
 		summary: "live DID reads, support contracts and hex decoding",
 		usage: []string{
-			"toyota did read ECU DID…",
-			"toyota did watch ECU DID…",
-			"toyota did support ECU [DID…]",
-			"toyota did decode ECU DID PAYLOAD",
+			"toyo did read ECU DID…",
+			"toyo did watch ECU DID…",
+			"toyo did support ECU [DID…]",
+			"toyo did decode ECU DID PAYLOAD",
 		},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota did read engine 0x1002", Summary: "one live read, decoded"},
-			{Usage: "toyota did watch frc 0x1014 --interval 1", Summary: "repeat and watch"},
-			{Usage: "toyota did decode frc 0x1202 01", Summary: "decode hex bytes offline"},
+			{Usage: "toyo did read engine 0x1002", Summary: "one live read, decoded"},
+			{Usage: "toyo did watch frc 0x1014 --interval 1", Summary: "repeat and watch"},
+			{Usage: "toyo did decode frc 0x1202 01", Summary: "decode hex bytes offline"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--interval S", Summary: "watch seconds between samples (default 0.25)"},
@@ -214,19 +214,19 @@ var liveDocs = map[string]commandDoc{
 	},
 	"rid": {
 		summary: "live routine-identifier capability queries",
-		usage:   []string{"toyota rid support ECU [RID…]"},
+		usage:   []string{"toyo rid support ECU [RID…]"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota rid support engine", Summary: "every advertised RID"},
+			{Usage: "toyo rid support engine", Summary: "every advertised RID"},
 		},
 		options: append([]terminal.HelpEntry{jsonOpt}, liveLinkOpts...),
 	},
 	"dtc": {
 		summary: "scan or clear trouble codes; decode a status byte",
-		usage:   []string{"toyota dtc scan", "toyota dtc clear", "toyota dtc decode STATUS"},
+		usage:   []string{"toyo dtc scan", "toyo dtc clear", "toyo dtc decode STATUS"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota dtc scan", Summary: "every responding ECU, decoded descriptions"},
-			{Usage: "toyota dtc scan --ecu engine", Summary: "one ECU (repeatable)"},
-			{Usage: "toyota dtc decode 0x2F", Summary: "explain a status byte offline"},
+			{Usage: "toyo dtc scan", Summary: "every responding ECU, decoded descriptions"},
+			{Usage: "toyo dtc scan --ecu engine", Summary: "one ECU (repeatable)"},
+			{Usage: "toyo dtc decode 0x2F", Summary: "explain a status byte offline"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--all", Summary: "scan: include non-fault-status records"},
@@ -236,9 +236,9 @@ var liveDocs = map[string]commandDoc{
 	},
 	"uds": {
 		summary: "send one raw UDS request",
-		usage:   []string{"toyota uds raw ECU SERVICE [DATA]"},
+		usage:   []string{"toyo uds raw ECU SERVICE [DATA]"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota uds raw frc 0x22 0x1202", Summary: "one request, response printed as hex"},
+			{Usage: "toyo uds raw frc 0x22 0x1202", Summary: "one request, response printed as hex"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--force", Summary: "acknowledge a mutating request"},
@@ -248,13 +248,13 @@ var liveDocs = map[string]commandDoc{
 	"ffd": {
 		summary: "TSS3 freeze frames: browse definitions, read Operation/Image FFD",
 		usage: []string{
-			"toyota ffd data|robs [QUERY]",
-			"toyota ffd operation list|records|read …",
-			"toyota ffd image info|list|read …",
+			"toyo ffd data|robs [QUERY]",
+			"toyo ffd operation list|records|read …",
+			"toyo ffd image info|list|read …",
 		},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota ffd data steer", Summary: "Operation-FFD signal definitions"},
-			{Usage: "toyota ffd operation read 0x9D 1", Summary: "one stored Operation record, decoded"},
+			{Usage: "toyo ffd data steer", Summary: "Operation-FFD signal definitions"},
+			{Usage: "toyo ffd operation read 0x9D 1", Summary: "one stored Operation record, decoded"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--query TERM", Summary: "read: only blocks matching a DID/name"},
@@ -263,9 +263,9 @@ var liveDocs = map[string]commandDoc{
 	},
 	"functional": {
 		summary: "broadcast OBD-mode requests to all ECUs",
-		usage:   []string{"toyota functional obd MODE [PAYLOAD]"},
+		usage:   []string{"toyo functional obd MODE [PAYLOAD]"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota functional obd 09 02", Summary: "ask every ECU for its VIN"},
+			{Usage: "toyo functional obd 09 02", Summary: "ask every ECU for its VIN"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--window S", Summary: "seconds to listen (default 1)"},
@@ -275,15 +275,15 @@ var liveDocs = map[string]commandDoc{
 	"customize": {
 		summary: "browse and change OEM Customize settings",
 		usage: []string{
-			"toyota customize groups [QUERY]",
-			"toyota customize items|info GROUP [ITEM]",
-			"toyota customize read GROUP ITEM",
-			"toyota customize set GROUP ITEM VALUE",
+			"toyo customize groups [QUERY]",
+			"toyo customize items|info GROUP [ITEM]",
+			"toyo customize read GROUP ITEM",
+			"toyo customize set GROUP ITEM VALUE",
 		},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota customize groups lamp", Summary: "find a group"},
-			{Usage: "toyota customize read body lamp_turn_timing", Summary: "one live setting"},
-			{Usage: "toyota customize set body lamp_turn_timing short", Summary: "dry-run plan; --execute writes"},
+			{Usage: "toyo customize groups lamp", Summary: "find a group"},
+			{Usage: "toyo customize read body lamp_turn_timing", Summary: "one live setting"},
+			{Usage: "toyo customize set body lamp_turn_timing short", Summary: "dry-run plan; --execute writes"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--body-type N", Summary: "installation body variant"},
@@ -294,15 +294,15 @@ var liveDocs = map[string]commandDoc{
 	"active-test": {
 		summary: "browse, plan, run or stop recovered Active Tests",
 		usage: []string{
-			"toyota active-test list [ECU]",
-			"toyota active-test plan ECU ITEM",
-			"toyota active-test run|stop ECU ITEM",
-			"toyota active-test groups|group-run|group-stop …",
+			"toyo active-test list [ECU]",
+			"toyo active-test plan ECU ITEM",
+			"toyo active-test run|stop ECU ITEM",
+			"toyo active-test groups|group-run|group-stop …",
 		},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota active-test list frc", Summary: "one ECU's tests"},
-			{Usage: "toyota active-test plan frc 0xA429", Summary: "the zero-transmit plan"},
-			{Usage: "toyota active-test run frc 0xA429", Summary: "dry run; --execute actuates"},
+			{Usage: "toyo active-test list frc", Summary: "one ECU's tests"},
+			{Usage: "toyo active-test plan frc 0xA429", Summary: "the zero-transmit plan"},
+			{Usage: "toyo active-test run frc 0xA429", Summary: "dry run; --execute actuates"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--hold S", Summary: "run: seconds before stop (default 1)"},
@@ -313,9 +313,9 @@ var liveDocs = map[string]commandDoc{
 	},
 	"utility": {
 		summary: "browse and run recovered utility plans",
-		usage:   []string{"toyota utility list [ECU]", "toyota utility plan ITEM", "toyota utility run ECU ITEM"},
+		usage:   []string{"toyo utility list [ECU]", "toyo utility plan ITEM", "toyo utility run ECU ITEM"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyota utility plan allclear", Summary: "the recovered plan for a semantic utility"},
+			{Usage: "toyo utility plan allclear", Summary: "the recovered plan for a semantic utility"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--kind direct|routine|simple_operation", Summary: "run: disambiguate the plan"},
@@ -337,26 +337,26 @@ var liveCommands = []string{
 func overview(p terminal.Printer) {
 	p.Overview("Toyota diagnostics from the GTS+ catalog", []terminal.HelpGroup{
 		{Title: "Explore", Entries: []terminal.HelpEntry{
-			{Usage: "toyota", Summary: "open the explorer"},
-			{Usage: "toyota search TERM…", Summary: "search signals, codes, tests, ECUs, vehicles"},
-			{Usage: "toyota inspect ID", Summary: "open one search result by its #number"},
-			{Usage: "toyota ECU", Summary: "one ECU at a glance, e.g. toyota frc"},
-			{Usage: "toyota kinds / toyota ECU kinds", Summary: "list available record kinds"},
-			{Usage: "toyota ECU KIND [QUERY]", Summary: "browse any kind; data, dtcs, tests also work"},
-			{Usage: "toyota ECU IDENT", Summary: "decode one record, e.g. toyota frc 0x1601"},
-			{Usage: "toyota ecu [QUERY]", Summary: "find ECUs"},
-			{Usage: "toyota vehicle [NAME|TYPE]", Summary: "models, variants, install-set ECUs"},
+			{Usage: "toyo", Summary: "open the explorer"},
+			{Usage: "toyo search TERM…", Summary: "search signals, codes, tests, ECUs, vehicles"},
+			{Usage: "toyo inspect ID", Summary: "open one search result by its #number"},
+			{Usage: "toyo ECU", Summary: "one ECU at a glance, e.g. toyo frc"},
+			{Usage: "toyo kinds / toyo ECU kinds", Summary: "list available record kinds"},
+			{Usage: "toyo ECU KIND [QUERY]", Summary: "browse any kind; data, dtcs, tests also work"},
+			{Usage: "toyo ECU IDENT", Summary: "decode one record, e.g. toyo frc 0x1601"},
+			{Usage: "toyo ecu [QUERY]", Summary: "find ECUs"},
+			{Usage: "toyo vehicle [NAME|TYPE]", Summary: "models, variants, install-set ECUs"},
 		}},
 		{Title: "Live", Entries: []terminal.HelpEntry{
-			{Usage: "toyota monitor ECU ITEM…", Summary: "decoded Data List, live"},
-			{Usage: "toyota scan", Summary: "all-system health check"},
-			{Usage: "toyota dtc scan|clear", Summary: "read or clear trouble codes"},
-			{Usage: "toyota vehicle detect", Summary: "identify the connected car"},
-			{Usage: "toyota COMMAND --help", Summary: "did, rid, uds, can, ffd, observe, customize, …"},
+			{Usage: "toyo monitor ECU ITEM…", Summary: "decoded Data List, live"},
+			{Usage: "toyo scan", Summary: "all-system health check"},
+			{Usage: "toyo dtc scan|clear", Summary: "read or clear trouble codes"},
+			{Usage: "toyo vehicle detect", Summary: "identify the connected car"},
+			{Usage: "toyo COMMAND --help", Summary: "did, rid, uds, can, ffd, observe, customize, …"},
 		}},
 	}, []string{
 		"--region NA|EU|JP   --limit N   --json   --all   --db PATH   --version",
-		"toyota help COMMAND for details · toyota completion zsh for tab completion",
+		"toyo help COMMAND for details · toyo completion zsh for tab completion",
 	})
 }
 
@@ -391,7 +391,7 @@ func commandNames() []string {
 func usageLine(command string) string {
 	if doc, ok := nativeDocs[command]; ok {
 		for _, u := range doc.usage {
-			if strings.HasPrefix(u, "toyota "+command) {
+			if strings.HasPrefix(u, "toyo "+command) {
 				return u
 			}
 		}
@@ -399,5 +399,5 @@ func usageLine(command string) string {
 			return doc.usage[0]
 		}
 	}
-	return "toyota help"
+	return "toyo help"
 }

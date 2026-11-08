@@ -1,17 +1,18 @@
 #!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-bin="$root/build/toyota"
+bin="$root/build/toyo"
+export TOYO_ROOT="$root"
 export TOYOTA_DIAGNOSTICS_ROOT="$root"
 
 if command -v go >/dev/null 2>&1; then
   if [ ! -x "$bin" ] || [ "$root/go.mod" -nt "$bin" ] || [ "$root/go.sum" -nt "$bin" ] || \
      find "$root/cmd" "$root/internal" -type f -newer "$bin" -print -quit | grep -q .; then
     mkdir -p "$root/build"
-    (cd "$root" && go build -o "$bin" ./cmd/toyota)
+    (cd "$root" && go build -o "$bin" ./cmd/toyo)
   fi
 elif [ ! -x "$bin" ]; then
-  echo "toyota: build/toyota is missing and Go is not installed" >&2
+  echo "toyo: build/toyo is missing and Go is not installed" >&2
   exit 127
 fi
 

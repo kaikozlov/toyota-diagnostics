@@ -6,34 +6,35 @@ import (
 	"os"
 	"strings"
 
+	"github.com/kaikozlov/toyota-diagnostics/internal/appenv"
 	"github.com/kaikozlov/toyota-diagnostics/internal/catalog"
 	"github.com/kaikozlov/toyota-diagnostics/internal/terminal"
 )
 
-const zshCompletion = `#compdef toyota
-_toyota() {
+const zshCompletion = `#compdef toyo
+_toyo() {
   local out
-  out=$(toyota __complete "${(@)words[2,CURRENT-1]}" "${words[CURRENT]}" 2>/dev/null) || return
+  out=$(toyo __complete "${(@)words[2,CURRENT-1]}" "${words[CURRENT]}" 2>/dev/null) || return
   [[ -z $out ]] && return
   local -a items=("${(@)${(@f)out}/$'\t'/:}")
-  _describe -t toyota 'toyota' items
+  _describe -t toyo 'toyo' items
 }
-if [[ ${funcstack[1]} == _toyota ]]; then _toyota "$@"; else compdef _toyota toyota; fi
+if [[ ${funcstack[1]} == _toyo ]]; then _toyo "$@"; else compdef _toyo toyo; fi
 `
 
-const bashCompletion = `_toyota() {
+const bashCompletion = `_toyo() {
   local cur=${COMP_WORDS[COMP_CWORD]}
   local IFS=$'\n'
-  COMPREPLY=($(toyota __complete "${COMP_WORDS[@]:1:COMP_CWORD-1}" "$cur" 2>/dev/null | cut -f1))
+  COMPREPLY=($(toyo __complete "${COMP_WORDS[@]:1:COMP_CWORD-1}" "$cur" 2>/dev/null | cut -f1))
 }
-complete -F _toyota toyota
+complete -F _toyo toyo
 `
 
-const fishCompletion = `function __toyota_complete
+const fishCompletion = `function __toyo_complete
     set -l tokens (commandline -opc)[2..-1]
-    toyota __complete $tokens (commandline -ct) 2>/dev/null
+    toyo __complete $tokens (commandline -ct) 2>/dev/null
 end
-complete -c toyota -f -a '(__toyota_complete)'
+complete -c toyo -f -a '(__toyo_complete)'
 `
 
 // runComplete answers a shell's completion request. The words are the
@@ -55,7 +56,7 @@ func runComplete(words []string) error {
 	}
 	p := terminal.Printer{Out: os.Stdout}
 	a := &app{ctx: context.Background(), p: p, opt: options{region: region, limit: 50}}
-	if dbPath := findDB(os.Getenv("TOYOTA_CATALOG")); dbPath != "" {
+	if dbPath := findDB(appenv.Catalog()); dbPath != "" {
 		if db, err := catalog.Open(dbPath); err == nil {
 			defer db.Close()
 			a.db = db

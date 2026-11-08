@@ -1,10 +1,12 @@
-# Toyota diagnostics
+# toyo-cli
 
-Standalone Toyota diagnostic tooling backed by clean metadata recovered from Toyota Techstream/GTS+. The reverse-engineering and metadata-generation source of truth lives in `ghidra_rh850_analysis`; this repository owns the reusable runtime, CLI, transport adapters, decoders, and tests. It intentionally does not ship Toyota DLL/DDB/EXE binaries.
+Independent open-source diagnostics for Toyota vehicles. Not affiliated with or endorsed by Toyota Motor Corporation.
+
+Standalone diagnostic tooling backed by clean metadata recovered from Toyota Techstream/GTS+. The reverse-engineering and metadata-generation source of truth lives in `ghidra_rh850_analysis`; this repository owns the reusable runtime, CLI, transport adapters, decoders, and tests. It intentionally does not ship Toyota DLL/DDB/EXE binaries.
 
 ## Running it
 
-`./toyota` is the public CLI. Search, ECU browsing, vehicle browsing, and the interactive explorer are native Go over an indexed SQLite projection of the current GTS+ corpus. Live and not-yet-migrated specialized commands use the existing Python/openpilot runtime behind the same command surface.
+`./toyo` is the public CLI. Search, ECU browsing, vehicle browsing, and the interactive explorer are native Go over an indexed SQLite projection of the current GTS+ corpus. Live and not-yet-migrated specialized commands use the existing Python/openpilot runtime behind the same command surface.
 
 Generate the runtime catalog from the source-of-truth repository, then run the CLI:
 
@@ -13,32 +15,32 @@ cd ../ghidra_rh850_analysis
 tools/gts bundle sqlite --out ../toyota-diagnostics/build/catalog.sqlite
 
 cd ../toyota-diagnostics
-./toyota search LTA
-./toyota inspect 12345 --json   # item ID from search results
-./toyota frc data "LTA Control"
-./toyota vehicle 12704
-./toyota monitor frc LTA
+./toyo search LTA
+./toyo inspect 12345 --json   # item ID from search results
+./toyo frc data "LTA Control"
+./toyo vehicle 12704
+./toyo monitor frc LTA
 ```
 
 Everything offline is instant and reads the same way:
 
 ```bash
-toyota                          # explorer: browse ECUs, search as you type, preview records
-toyota search LTA               # every signal, trouble code, Active Test, ECU and vehicle
-toyota frc                      # one ECU at a glance (key, name or category number)
-toyota frc data steer           # its Data List, best match first
-toyota frc 0x1601               # decode one DID, DTC or Active Test by identifier
-toyota frc LTA control          # free text searches just that ECU
-toyota vehicle Camry            # variants of a model; `toyota vehicle 10041` for one type
+toyo                          # explorer: browse ECUs, search as you type, preview records
+toyo search LTA               # every signal, trouble code, Active Test, ECU and vehicle
+toyo frc                      # one ECU at a glance (key, name or category number)
+toyo frc data steer           # its Data List, best match first
+toyo frc 0x1601               # decode one DID, DTC or Active Test by identifier
+toyo frc LTA control          # free text searches just that ECU
+toyo vehicle Camry            # variants of a model; `toyo vehicle 10041` for one type
 ```
 
-A bare word that is not an ECU or command searches instead of failing, and typos get corrections (`toyota frcc` suggests `frc`). Long listings open in `$PAGER` (`less -FRX` by default; `TOYOTA_PAGER=cat` or `PAGER=cat` disables it). Colour follows `NO_COLOR`, `CLICOLOR_FORCE` and `TOYOTA_THEME=light|dark`; `TOYOTA_REGION` sets the default region. `toyota completion zsh|bash|fish` installs tab completion that knows your ECUs.
+A bare word that is not an ECU or command searches instead of failing, and typos get corrections (`toyo frcc` suggests `frc`). Long listings open in `$PAGER` (`less -FRX` by default; `TOYO_PAGER=cat` or `PAGER=cat` disables it). Colour follows `NO_COLOR`, `CLICOLOR_FORCE` and `TOYO_THEME=light|dark`; `TOYO_REGION` sets the default region. The older `TOYOTA_*` names for these settings are still accepted. `toyo completion zsh|bash|fish` installs tab completion that knows your ECUs.
 
-Search rows end with a record number; `toyota inspect N` shows that record, and `--json` emits its metadata and payload. Record numbers belong to the generated catalog and can change when it is regenerated, so prefer `toyota ECU IDENT` in anything you keep. Human output decodes records for their kind (bit layout, scaling, value tables, DTC code/failure byte); `--json` always carries the complete source record.
+Search rows end with a record number; `toyo inspect N` shows that record, and `--json` emits its metadata and payload. Record numbers belong to the generated catalog and can change when it is regenerated, so prefer `toyo ECU IDENT` in anything you keep. Human output decodes records for their kind (bit layout, scaling, value tables, DTC code/failure byte); `--json` always carries the complete source record.
 
 The explorer opens on the ECUs that have decoded catalogs. `enter` on an ECU steps into it (`esc` or backspace steps out). Filter chips list the record kinds present in the current scope — the whole catalog at the root, or one ECU after you open it — and stay put during a search even if a kind has no hits. Arrow keys, tab, or a click select a kind; a `+N` chip pages any that do not fit. `ctrl+r` cycles regions, and terminals at least 110 columns wide preview the highlighted record beside the list.
 
-The root launcher builds `build/toyota` on first use when Go is available. The SQLite file and binary are generated artifacts under `build/`, not tracked source. `TOYOTA_CATALOG` or `--db` selects another runtime database.
+The root launcher `./toyo` builds `build/toyo` on first use when Go is available. The SQLite file and binary are generated artifacts under `build/`, not tracked source. `TOYO_CATALOG` or `--db` selects another runtime database.
 
 On a comma, deploy the Linux/arm64 Go binary and SQLite database with the checkout. Live commands still use openpilot's authoritative `/usr/local/venv` and `/data/openpilot`; do not create a second diagnostics virtualenv. The Go bridge invokes `python -m toyota_diag`, whose bootstrap selects the existing openpilot runtime before importing diagnostic dependencies.
 
@@ -48,77 +50,77 @@ The initial Python runtime was extracted from `kaikozlov/kai-openpilot` branch `
 
 ## CLI reference
 
-`toyota` is the standalone entry point for Toyota diagnostics recovered from Techstream/GTS+. Its SQLite catalog is generated from the current canonical v4 resolver and catalogs in `ghidra_rh850_analysis`; live execution remains delegated to the proven Python transport/session implementation while that layer is migrated. The repository contains only clean derived metadata, never Toyota DLL/DDB/EXE binaries.
+`toyo` is the toyo-cli entry point for Toyota diagnostics recovered from Techstream/GTS+. Its SQLite catalog is generated from the current canonical v4 resolver and catalogs in `ghidra_rh850_analysis`; live execution remains delegated to the proven Python transport/session implementation while that layer is migrated. The repository contains only clean derived metadata, never Toyota DLL/DDB/EXE binaries.
 
 Offline discovery works without Panda access. The CLI is ECU-first now, so you can browse by Toyota names instead of memorizing DIDs or command families:
 
 ```bash
-toyota search LTA
-toyota ecu                         # ECUs that have decoded catalogs; --all adds declared-only ones
-toyota ecu brake                   # find ECUs by key or name
-toyota frc                         # shorthand for `ecu frc`
-toyota frc data "LTA Control"
-toyota frc dtcs U0131
-toyota frc tests                   # Active Tests (also: active-tests)
-toyota frc plugins
-toyota frc 0x1601                  # decode a DID; several signals sharing it show as a bit map
-toyota frc monitor "LTA Control"      # live ECU-first shorthand
-toyota frc read 0x1601                 # shorthand for `did read frc ...`
-toyota utility list
-toyota utility plan single_routine_active_test
-toyota vehicle
-toyota can topology
-toyota did decode eps 0x1037 0001
-toyota active-test plan frc 0xA429
-toyota active-test plan frc 0xA429 --json
-toyota search "Arbitration result Lateral ID"
-toyota ffd data "pinion angle"
-toyota ffd robs "Hands Free"
+toyo search LTA
+toyo ecu                         # ECUs that have decoded catalogs; --all adds declared-only ones
+toyo ecu brake                   # find ECUs by key or name
+toyo frc                         # shorthand for `ecu frc`
+toyo frc data "LTA Control"
+toyo frc dtcs U0131
+toyo frc tests                   # Active Tests (also: active-tests)
+toyo frc plugins
+toyo frc 0x1601                  # decode a DID; several signals sharing it show as a bit map
+toyo frc monitor "LTA Control"      # live ECU-first shorthand
+toyo frc read 0x1601                 # shorthand for `did read frc ...`
+toyo utility list
+toyo utility plan single_routine_active_test
+toyo vehicle
+toyo can topology
+toyo did decode eps 0x1037 0001
+toyo active-test plan frc 0xA429
+toyo active-test plan frc 0xA429 --json
+toyo search "Arbitration result Lateral ID"
+toyo ffd data "pinion angle"
+toyo ffd robs "Hands Free"
 ```
 
-`toyota help` is the front door and `toyota help COMMAND` has examples; both work without a catalog. So do `toyota --version`, `toyota completion zsh`, unknown options, missing-argument errors for commands that do not need the catalog (such as `search` and `inspect`), and multi-word command typos (`toyota serach LTA`). Offline output is a stable contract only through `--json` (`search` returns an array; ECU families return `{ecu, items, shown}`; an identifier returns `{ecu, records}`; `vehicle` lists every type ungrouped); the human layout is free to evolve.
+`toyo help` is the front door and `toyo help COMMAND` has examples; both work without a catalog. So do `toyo --version`, `toyo completion zsh`, unknown options, missing-argument errors for commands that do not need the catalog (such as `search` and `inspect`), and multi-word command typos (`toyo serach LTA`). Offline output is a stable contract only through `--json` (`search` returns an array; ECU families return `{ecu, items, shown}`; an identifier returns `{ecu, records}`; `vehicle` lists every type ungrouped); the human layout is free to evolve.
 
 `search` spans ECU/category names, Data List signals, DTCs, Active Tests, v4 function/plugin bindings, recovered generic utility-family metadata, and the separate PCS Data Viewer TSS3 Operation-FFD signal/trigger namespace. This matters because recorder-only Toyota names such as `Arbitration result_lateral ID` (`0x5285`) and `Arbitration result Pinion angle` (`0x57DE`) do not exist in the ordinary P5 Data Monitor DDB. `ecu ... functions` shows the recovered type-26/27 function/detail hierarchy even where Toyota's function names remain unrecovered; `ecu ... plugins` shows the role → DLL binding and only labels semantic kinds recovered for the exact plugin identity. Offline catalog browsing (`ecu list/info/functions/plugins/data/dtcs/active-tests`, `did list`, and `dtc catalog/decode`) accepts `--json`, matching the machine-readable live/planning surfaces without importing Panda. ECU lookup errors include close-match suggestions. The original verb-first `ecu info`, `did list`, `dtc catalog`, etc. remain supported.
 
 Live commands use a selectable transport backend. `--transport panda` remains the default: if `pandad` is stopped, the CLI takes direct Panda ownership using Panda's ordinary ELM327 diagnostic safety mode; if `pandad` is already running, it reuses openpilot's `can`/`sendcan` path only when the Panda is already in ELM327 safety. Direct Panda mode preserves normal-harness routing by default (`ELM327` param 1); `--obd-multiplexing` explicitly remaps logical bus 1 onto the OBD-II pins (`ELM327` param 0).
 
-`--transport j2534` uses a standard J2534 v04.04 provider as a raw classic-CAN link and reuses the same opendbc ISO-TP/UDS implementation as Panda. The backend supports ordinary 11-bit CAN diagnostics, 29-bit normal-fixed routes, and Toyota ISO-TP address-extension routes without changing the Toyota operation layer. PassThru providers are discovered from the Windows `PassThruSupport.04.04` registry, `TOYOTA_J2534_LIBRARY`, or an installed OpenMVCI library. With no selector, OpenMVCI discovers a compatible adapter automatically; on modern macOS it uses the available `/dev/cu.usbserial-*` node instead of libusb. `--j2534-library` and `--j2534-device` explicitly override provider and device selection. A vendor `MVCI32.dll` must match the Python process architecture. Native J2534 ISO15765, CAN-FD, K-Line, and DoIP transports are future backends; unsupported Toyota transport-controller families continue to fail closed instead of being coerced to CAN.
+`--transport j2534` uses a standard J2534 v04.04 provider as a raw classic-CAN link and reuses the same opendbc ISO-TP/UDS implementation as Panda. The backend supports ordinary 11-bit CAN diagnostics, 29-bit normal-fixed routes, and Toyota ISO-TP address-extension routes without changing the Toyota operation layer. PassThru providers are discovered from the Windows `PassThruSupport.04.04` registry, `TOYO_J2534_LIBRARY`, or an installed OpenMVCI library. With no selector, OpenMVCI discovers a compatible adapter automatically; on modern macOS it uses the available `/dev/cu.usbserial-*` node instead of libusb. `--j2534-library` and `--j2534-device` explicitly override provider and device selection. A vendor `MVCI32.dll` must match the Python process architecture. Native J2534 ISO15765, CAN-FD, K-Line, and DoIP transports are future backends; unsupported Toyota transport-controller families continue to fail closed instead of being coerced to CAN.
 
-`toyota transport status` is non-transmitting: it verifies transport/provider availability but does not open the vehicle hardware. `toyota transport list` shows known backends and J2534 providers.
+`toyo transport status` is non-transmitting: it verifies transport/provider availability but does not open the vehicle hardware. `toyo transport list` shows known backends and J2534 providers.
 
 ```bash
-toyota transport list
-toyota transport status
-toyota --bus 1 --obd-multiplexing transport status  # explicit direct-Panda OBD bus-1 remap
+toyo transport list
+toyo transport status
+toyo --bus 1 --obd-multiplexing transport status  # explicit direct-Panda OBD bus-1 remap
 
-toyota --transport j2534 --j2534-library /path/to/MVCI32.dll transport status
-toyota --transport j2534 vehicle detect  # installed OpenMVCI and attached adapter are auto-detected
-toyota --transport j2534 dtc scan
-toyota --transport j2534 did read frc 0x1601
-toyota can sniff 0xB6 --duration 10
-toyota can sniff 0x30 0x412 --duration 0 --json > can.jsonl
-toyota dtc scan
-toyota dtc scan --json > dtc-snapshot.json
-toyota did read eps 0x1037
-toyota did watch frc 0x1601 0x1501 0x1681 0x1903 --interval 0.25
-toyota monitor frc LTA --changed
-toyota monitor frc 0x1601 0x1914 --jsonl > frc-monitor.jsonl
-toyota monitor frc 0x1601 0x1914 --csv > frc-monitor.csv
-toyota observe tss3-longitudinal --changed
-toyota observe frc:0x1601 brake:0x10A1 --jsonl > joined-monitor.jsonl
-toyota health-check --out car-health.json
-toyota health-check --compare car-health.json --out car-health-next.json
-toyota health-check --json > car-health.json
-toyota scan --json > car-health.json  # exact alias of health-check
-toyota vehicle detect
-toyota vehicle mounted
-toyota did support frc 0x1601 0x1914
-toyota did support 452                  # Toyota category; uses 0x750/0x2A and enumerates advertised DIDs
-toyota --vehicle 12165 did support 6000  # P6 category; uses 0x18DA00F1 normal-fixed addressing
-toyota --vehicle 12165 rid support 6000  # enumerate P6 advertised routine IDs
-toyota uds raw eps 0x22 F181
-toyota uds raw 0x763 0x22 1033       # read-only unregistered 11-bit endpoint
-toyota uds raw 0x18DA00F1 0x22 A100 # read-only 29-bit normal-fixed endpoint
+toyo --transport j2534 --j2534-library /path/to/MVCI32.dll transport status
+toyo --transport j2534 vehicle detect  # installed OpenMVCI and attached adapter are auto-detected
+toyo --transport j2534 dtc scan
+toyo --transport j2534 did read frc 0x1601
+toyo can sniff 0xB6 --duration 10
+toyo can sniff 0x30 0x412 --duration 0 --json > can.jsonl
+toyo dtc scan
+toyo dtc scan --json > dtc-snapshot.json
+toyo did read eps 0x1037
+toyo did watch frc 0x1601 0x1501 0x1681 0x1903 --interval 0.25
+toyo monitor frc LTA --changed
+toyo monitor frc 0x1601 0x1914 --jsonl > frc-monitor.jsonl
+toyo monitor frc 0x1601 0x1914 --csv > frc-monitor.csv
+toyo observe tss3-longitudinal --changed
+toyo observe frc:0x1601 brake:0x10A1 --jsonl > joined-monitor.jsonl
+toyo health-check --out car-health.json
+toyo health-check --compare car-health.json --out car-health-next.json
+toyo health-check --json > car-health.json
+toyo scan --json > car-health.json  # exact alias of health-check
+toyo vehicle detect
+toyo vehicle mounted
+toyo did support frc 0x1601 0x1914
+toyo did support 452                  # Toyota category; uses 0x750/0x2A and enumerates advertised DIDs
+toyo --vehicle 12165 did support 6000  # P6 category; uses 0x18DA00F1 normal-fixed addressing
+toyo --vehicle 12165 rid support 6000  # enumerate P6 advertised routine IDs
+toyo uds raw eps 0x22 F181
+toyo uds raw 0x763 0x22 1033       # read-only unregistered 11-bit endpoint
+toyo uds raw 0x18DA00F1 0x22 A100 # read-only 29-bit normal-fixed endpoint
 ```
 
 `uds raw` accepts explicit 11-bit or 29-bit request addresses, including endpoints that are not part of the selected Toyota profile. This is useful for recovered Toyota utility endpoints such as the MACKey-registration master `0x763` and for normal-fixed P6 routes such as `0x18DA00F1`. opendbc's UDS transport infers the ordinary 11-bit `+8` or 29-bit source/target-swapped response address; `--rx-address` overrides it when Toyota metadata requires a different physical response. Use `--sub-address` / `--rx-sub-address` for ISO-TP address-extension bytes such as Toyota's logical `0x750` routes. Read-only services transmit directly; a service classified as mutating requires the explicit `--force` acknowledgement, with no separate registry-address or F181 admission check.
@@ -130,11 +132,11 @@ Current GTS+ exposes two proprietary recorder surfaces on `FRC_P5 = Front Recogn
 Operation FFD is the highest-value control/arbitration recorder. `AB11` enumerates behavior/RoB codes, `AB12 <behavior_be16>` enumerates stored record IDs, and `AB13 <behavior_be16> <record_be16>` returns the recorder blocks. The CLI decodes those blocks with the recovered PCS Data Viewer schema (`physical = raw * Lsb + Offset`, including signed fixed-point and IEEE float fields):
 
 ```bash
-toyota ffd operation list
-toyota ffd operation records 2818
-toyota ffd operation read 2818 0100
-toyota ffd operation read 2818 0100 --query pinion
-toyota frc ffd operation read 2818 0100 --query LTA --json
+toyo ffd operation list
+toyo ffd operation records 2818
+toyo ffd operation read 2818 0100
+toyo ffd operation read 2818 0100 --query pinion
+toyo frc ffd operation read 2818 0100 --query LTA --json
 ```
 
 Recorder IDs are hexadecimal by Toyota convention even when they contain only decimal digits, so `2818`, `0100`, and `0201` are interpreted as hex without requiring `0x`. Global `search`, `ffd data`, and `ffd robs` are offline and do not touch Panda. Useful recovered steering joins include generic TSS request `0x5282`, LDA `0x5531`, LTA `0x5631`, arbitration-result lateral ID `0x5285`, arbitration-result pinion angle `0x57DE`, EPS pinion state `0x560D`, and active-steering state `0x5265`.
@@ -142,10 +144,10 @@ Recorder IDs are hexadecimal by Toyota convention even when they contain only de
 Image FFD uses the live-validated current P5 path: extended diagnostic session, SecurityAccess `27 03/04` with the recovered six-byte level-49 algorithm, then `AB31` RoB enumeration and `AB33 <rob_be16> <frame_be32>` split-record fetches. The host key algorithm is release-local and contains no vehicle/package secret; the CLI follows that Toyota lifecycle directly and restores default session on exit.
 
 ```bash
-toyota ffd image info
-toyota ffd image list
-toyota ffd image read 2822 0201
-toyota ffd image read 2822 0201 --json
+toyo ffd image info
+toyo ffd image list
+toyo ffd image read 2822 0201
+toyo ffd image read 2822 0201 --json
 ```
 
 For the exact Camry live witness, frame `0201` is split 1 / data set 1 / trigger 1. `image read` deliberately exposes the EB33 block inventory and split `0x6002..0x6017` payloads; it does not silently synthesize/decrypt/write a JPEG. PCS Data Viewer semantics for split reassembly and the `0x2081 != 01` byte transform remain preserved in the bundled metadata for a future explicit export command.
@@ -163,7 +165,7 @@ For the exact Camry live witness, frame `0201` is split 1 / data set 1 / trigger
 The exact Camry maintenance clear is now:
 
 ```bash
-toyota dtc clear
+toyo dtc clear
 ```
 
 It uses the selected vehicle's resolved UDS-capable logical ECU set, attempts physical `14 FF FF FF` on responders, sends the validated functional `0x7DF` Mode 04 frame where that clear contract applies, then rescans and fails if any `status & 0xAF` fault bits remain. Exact-F33 F181 remains evidence, not an admission check or routing authority.
@@ -183,30 +185,30 @@ Current type-33 **multi-control** execution is also recovered instead of treatin
 Viewing and listing never transmits. `active-test list --json` and `active-test plan --json` expose the registry geometry grade and concrete runtime construction failures, so automation does not have to infer executability from the catalog. Mutation requires the literal `--execute` user acknowledgement; without `--execute`, `active-test run/stop` is a dry-run. There is no second F181 or session-acknowledgement gate. Started operations always attempt their recovered stop/return-control request on exception or Ctrl-C, and context cleanup returns an extended session to D1. Cleanup failures are surfaced separately and produce a nonzero result instead of looking successful.
 
 ```bash
-toyota active-test list frc
-toyota active-test list frc --json
-toyota active-test plan frc 0xA429
-toyota active-test plan frc 0xA429 --json
-toyota active-test run frc 0xA429                # dry-run only
-toyota active-test run frc 0xA429 --execute --hold 1
-toyota --vehicle 12704 active-test run engine 40000 --execute --button 02 --hold 1
-toyota --vehicle 12704 active-test run engine 4 --execute --engineering-value 0 --hold 1
-toyota --vehicle 12704 active-test run hybrid 1 --execute --choice ON --hold 1
-toyota --vehicle 12165 active-test run engine_cm 1 --execute --choice ON --hold 1   # P6: A1xx gate + mode 6
-toyota --vehicle 12704 active-test groups engine
-toyota --vehicle 12704 active-test group-plan engine 76
-toyota --vehicle 12704 active-test group-run engine 76 --execute \
+toyo active-test list frc
+toyo active-test list frc --json
+toyo active-test plan frc 0xA429
+toyo active-test plan frc 0xA429 --json
+toyo active-test run frc 0xA429                # dry-run only
+toyo active-test run frc 0xA429 --execute --hold 1
+toyo --vehicle 12704 active-test run engine 40000 --execute --button 02 --hold 1
+toyo --vehicle 12704 active-test run engine 4 --execute --engineering-value 0 --hold 1
+toyo --vehicle 12704 active-test run hybrid 1 --execute --choice ON --hold 1
+toyo --vehicle 12165 active-test run engine_cm 1 --execute --choice ON --hold 1   # P6: A1xx gate + mode 6
+toyo --vehicle 12704 active-test groups engine
+toyo --vehicle 12704 active-test group-plan engine 76
+toyo --vehicle 12704 active-test group-run engine 76 --execute \
   --member-choice '77=#2' --member-choice '78=0mm3/st' --hold 1
-toyota active-test stop frc 0xA429 --execute
-toyota customize groups Wireless --body-type 0
-toyota customize items 1 --body-type 0
-toyota customize info 1 23 --body-type 0
-toyota --vehicle 12704 customize read 1 200
-toyota --vehicle 12704 customize set 1 200 ON             # dry-run
-toyota --vehicle 12704 customize set 1 200 ON --execute   # read/merge/2E/re-read verify
-toyota --vehicle 12704 utility list engine
-toyota --vehicle 12704 utility run engine "Reset Memory"  # dry-run
-toyota --vehicle 12704 utility run engine "Reset Memory" --execute --hold 1
+toyo active-test stop frc 0xA429 --execute
+toyo customize groups Wireless --body-type 0
+toyo customize items 1 --body-type 0
+toyo customize info 1 23 --body-type 0
+toyo --vehicle 12704 customize read 1 200
+toyo --vehicle 12704 customize set 1 200 ON             # dry-run
+toyo --vehicle 12704 customize set 1 200 ON --execute   # read/merge/2E/re-read verify
+toyo --vehicle 12704 utility list engine
+toyo --vehicle 12704 utility run engine "Reset Memory"  # dry-run
+toyo --vehicle 12704 utility run engine "Reset Memory" --execute --hold 1
 ```
 
 `customize groups/items/info` browses Toyota's regional master-level Customize catalog without touching the vehicle. The catalog preserves body-type-specific group IDs, OEM item/choice names, target ECU/category IDs, current/write DID and MSB0 field geometry, and the structural fields consumed by `GetCustomItemList` / `SetCustom`. This is intentionally not flattened into ordinary ECU Data List metadata: current GTS+ stores Customize in master tables 20/21/22/34 and points each item at its live target ECU.

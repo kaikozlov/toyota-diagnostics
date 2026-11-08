@@ -23,13 +23,13 @@ func TestReleaseAndFormatVersion(t *testing.T) {
 	if got := releaseVersion("v1.4.6"); got != "v1.4.6" {
 		t.Fatal(got)
 	}
-	if got := formatVersion("devel", "5cfe8ec", false); got != "toyota devel (5cfe8ec)" {
+	if got := formatVersion("devel", "5cfe8ec", false); got != "toyo devel (5cfe8ec)" {
 		t.Fatal(got)
 	}
-	if got := formatVersion("devel", "5cfe8ec", true); got != "toyota devel (5cfe8ec-dirty)" {
+	if got := formatVersion("devel", "5cfe8ec", true); got != "toyo devel (5cfe8ec-dirty)" {
 		t.Fatal(got)
 	}
-	if got := formatVersion("v1.2.3", "", false); got != "toyota v1.2.3" {
+	if got := formatVersion("v1.2.3", "", false); got != "toyo v1.2.3" {
 		t.Fatal(got)
 	}
 	// dirty is recorded even if the modified setting appears before revision
@@ -50,7 +50,7 @@ func TestVersionStringUsesOverrideLabel(t *testing.T) {
 	version = "v9.9.9"
 	defer func() { version = orig }()
 	got := versionString()
-	if !strings.HasPrefix(got, "toyota v9.9.9") || strings.Contains(got, "v0.0.0-") {
+	if !strings.HasPrefix(got, "toyo v9.9.9") || strings.Contains(got, "v0.0.0-") {
 		t.Fatal(got)
 	}
 }

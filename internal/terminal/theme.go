@@ -9,6 +9,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"golang.org/x/term"
+
+	"github.com/kaikozlov/toyota-diagnostics/internal/appenv"
 )
 
 // The palette is resolved once. Terminal background detection is deliberately
@@ -33,10 +35,10 @@ func resolvePalette() palette {
 	}
 }
 
-// lightBackground honours TOYOTA_THEME, then the COLORFGBG convention
+// lightBackground honours TOYO_THEME (or TOYOTA_THEME), then the COLORFGBG convention
 // ("fg;bg", where bg 7 or 15 is a light terminal). Dark is the default.
 func lightBackground() bool {
-	switch strings.ToLower(os.Getenv("TOYOTA_THEME")) {
+	switch strings.ToLower(appenv.Theme()) {
 	case "light":
 		return true
 	case "dark":

@@ -177,7 +177,7 @@ def discover_providers(explicit_library: str | None = None) -> list[Provider]:
   if explicit_library:
     return [Provider(name=Path(explicit_library).stem or "J2534", library=explicit_library, source="explicit")]
 
-  env_library = os.environ.get("TOYOTA_J2534_LIBRARY")
+  env_library = os.environ.get("TOYO_J2534_LIBRARY") or os.environ.get("TOYOTA_J2534_LIBRARY")
   rows: list[Provider] = []
   if env_library:
     rows.append(Provider(name=Path(env_library).stem or "J2534", library=env_library, source="environment"))
@@ -191,7 +191,7 @@ def resolve_provider(explicit_library: str | None = None) -> Provider:
   if not rows:
     raise J2534Error(
       "provider discovery", detail=(
-        "no J2534 library found; pass --j2534-library PATH, set TOYOTA_J2534_LIBRARY, "
+        "no J2534 library found; pass --j2534-library PATH, set TOYO_J2534_LIBRARY, "
         "install a Windows PassThruSupport.04.04 provider, or install libopenmvci"
       ),
     )
@@ -356,7 +356,7 @@ class CanAdapter:
     if baud <= 0:
       raise ValueError("J2534 baud must be positive")
     self.provider = resolve_provider(library_path)
-    self.device_selector = device_selector or os.environ.get("TOYOTA_J2534_DEVICE")
+    self.device_selector = device_selector or os.environ.get("TOYO_J2534_DEVICE") or os.environ.get("TOYOTA_J2534_DEVICE")
     self.baud = baud
     self.bus = bus
     self.api = api_factory(self.provider.library)
@@ -490,7 +490,7 @@ def status(*, library_path: str | None = None, device_selector: str | None = Non
   return {
     "backend": "j2534", "mode": "j2534-raw-can", "ready": True,
     "hardware_probed": False, "provider": provider.name, "provider_source": provider.source,
-    "library": provider.library, "device_selector": device_selector or os.environ.get("TOYOTA_J2534_DEVICE"),
+    "library": provider.library, "device_selector": device_selector or os.environ.get("TOYO_J2534_DEVICE") or os.environ.get("TOYOTA_J2534_DEVICE"),
     "baud": baud,
     "detail": "J2534 provider loaded; hardware is opened only by a live command",
   }

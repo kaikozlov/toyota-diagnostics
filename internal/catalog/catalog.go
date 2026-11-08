@@ -90,7 +90,7 @@ type Stats struct {
 
 func Open(path string) (*DB, error) {
 	if path == "" {
-		return nil, errors.New("no catalog configured; pass --db PATH or set TOYOTA_CATALOG")
+		return nil, errors.New("no catalog configured; pass --db PATH or set TOYO_CATALOG")
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {

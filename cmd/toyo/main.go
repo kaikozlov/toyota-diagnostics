@@ -1,4 +1,4 @@
-// Command toyota is the native, indexed catalog CLI. Live operations reuse the
+// Command toyo is the native, indexed catalog CLI. Live operations reuse the
 // existing Python diagnostic transport through an exec bridge.
 package main
 
@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/kaikozlov/toyota-diagnostics/internal/appenv"
 	"github.com/kaikozlov/toyota-diagnostics/internal/bridge"
 	"github.com/kaikozlov/toyota-diagnostics/internal/catalog"
 	"github.com/kaikozlov/toyota-diagnostics/internal/terminal"
@@ -29,7 +30,7 @@ func run(args []string) error {
 	}
 	if len(rest) >= 2 && ((rest[0] == "did" && rest[1] == "list") || (rest[0] == "dtc" && rest[1] == "catalog")) {
 		if len(rest) < 3 && !opt.help {
-			return usagef("ecu", "%s %s needs an ECU, e.g. toyota %s %s frc", rest[0], rest[1], rest[0], rest[1])
+			return usagef("ecu", "%s %s needs an ECU, e.g. toyo %s %s frc", rest[0], rest[1], rest[0], rest[1])
 		}
 		action := "data"
 		if rest[0] == "dtc" {
@@ -81,7 +82,7 @@ func run(args []string) error {
 		return writeVersion(os.Stdout)
 	}
 	// Completion scripts are static and must not depend on a valid region
-	// or catalog (`TOYOTA_REGION=bogus toyota completion zsh`).
+	// or catalog (`TOYO_REGION=bogus toyo completion zsh`).
 	if len(rest) > 0 && rest[0] == "completion" {
 		return (&app{p: p, opt: opt}).completion(rest[1:])
 	}
@@ -155,8 +156,8 @@ func nativeHelp(p terminal.Printer, args []string) error {
 		return &catalog.NotFoundError{What: "command", Query: args[0], Suggestions: hints}
 	}
 	// Anything else uses the generic ECU shorthand page. That describes the
-	// grammar (`toyota ECU …`) and does not assert the token exists in a
-	// catalog, which is why `toyota help frc` stays useful offline.
+	// grammar (`toyo ECU …`) and does not assert the token exists in a
+	// catalog, which is why `toyo help frc` stays useful offline.
 	ecuShorthandHelp(p)
 	return nil
 }
@@ -185,7 +186,7 @@ func pageable(args []string) bool {
 	return true
 }
 
-// page shows long output through $TOYOTA_PAGER, $PAGER or less, the way git
+// page shows long output through $TOYO_PAGER, $PAGER or less, the way git
 // does, and prints short output directly.
 func page(buf *bytes.Buffer, height int) {
 	direct := func() { _, _ = io.Copy(os.Stdout, buf) }
@@ -193,7 +194,7 @@ func page(buf *bytes.Buffer, height int) {
 		direct()
 		return
 	}
-	command := os.Getenv("TOYOTA_PAGER")
+	command := appenv.Pager()
 	if command == "" {
 		command = os.Getenv("PAGER")
 	}

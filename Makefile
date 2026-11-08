@@ -1,8 +1,8 @@
 .PHONY: build test clean
 
-# Build the native CLI used by ./toyota.
+# Build the native CLI used by ./toyo.
 build:
-	go build -o build/toyota ./cmd/toyota
+	go build -o build/toyo ./cmd/toyo
 
 # Run the Go CLI and Python runtime test suites.
 test:
@@ -11,4 +11,4 @@ test:
 
 # Remove compiled binaries, preserving the generated catalog and other data.
 clean:
-	rm -f build/toyota build/toyota-linux-arm64 build/toyota-windows-amd64.exe
+	rm -f build/toyo build/toyo-linux-arm64 build/toyo-windows-amd64.exe

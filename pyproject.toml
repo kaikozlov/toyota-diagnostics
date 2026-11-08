@@ -1,7 +1,7 @@
 [project]
-name = "toyota-diagnostics"
+name = "toyo-cli"
 version = "0.1.0"
-description = "Toyota diagnostics CLI backed by clean metadata recovered from Techstream/GTS+"
+description = "Independent open-source diagnostics for Toyota vehicles, backed by clean metadata recovered from Techstream/GTS+"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [

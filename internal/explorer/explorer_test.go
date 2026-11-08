@@ -199,8 +199,8 @@ func TestOpensOnDecodedECUDirectory(t *testing.T) {
 	if strings.Contains(view(m), "GTS+") || strings.Contains(view(m), "2026") {
 		t.Fatalf("header should not brand the GTS+ release:\n%s", view(m))
 	}
-	if !strings.Contains(view(m), "toyota") || !strings.Contains(ansi.Strip(view(m)), "NA") {
-		t.Fatalf("header should be the toyota product and region:\n%s", view(m))
+	if !strings.Contains(view(m), "toyo") || !strings.Contains(ansi.Strip(view(m)), "NA") {
+		t.Fatalf("header should be the toyo product and region:\n%s", view(m))
 	}
 }
 

@@ -27,7 +27,7 @@ func compiledCLI(t *testing.T) string {
 			cliExeErr = err
 			return
 		}
-		path := filepath.Join(dir, "toyota")
+		path := filepath.Join(dir, "toyo")
 		cmd := exec.Command("go", "build", "-o", path, ".")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			cliExeErr = err
@@ -65,7 +65,7 @@ func TestCLIProcessExitAndStreams(t *testing.T) {
 	env := []string{"TOYOTA_CATALOG=/does/not/exist", "NO_COLOR=1"}
 
 	stdout, stderr, code := runCLI(t, env, "--version")
-	if code != 0 || !strings.HasPrefix(stdout, "toyota ") || stderr != "" {
+	if code != 0 || !strings.HasPrefix(stdout, "toyo ") || stderr != "" {
 		t.Fatalf("version: code=%d out=%q err=%q", code, stdout, stderr)
 	}
 
@@ -100,7 +100,7 @@ func TestCLIProcessExitAndStreams(t *testing.T) {
 	}
 
 	stdout, stderr, code = runCLI(t, append(env, "TOYOTA_REGION=bogus"), "completion", "zsh")
-	if code != 0 || !strings.Contains(stdout, "#compdef toyota") || stderr != "" {
+	if code != 0 || !strings.Contains(stdout, "#compdef toyo") || stderr != "" {
 		t.Fatalf("completion region: code=%d out=%q err=%q", code, stdout, stderr)
 	}
 
@@ -176,7 +176,7 @@ func TestCLIProcessFixtureOutput(t *testing.T) {
 	}
 
 	stdout, stderr, code = runCLI(t, append(base, "NO_COLOR=1"), "search", "frc")
-	if code != 0 || stderr != "" || !strings.Contains(stdout, "Nothing found") || !strings.Contains(stdout, "toyota frc opens") {
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "Nothing found") || !strings.Contains(stdout, "toyo frc opens") {
 		t.Fatalf("ecu hint: code=%d err=%q out=%q", code, stderr, stdout)
 	}
 }

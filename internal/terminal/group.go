@@ -56,5 +56,5 @@ func (p Printer) DID(e catalog.ECU, ident string, signals []catalog.ItemDetail) 
 			pad(p.dim(fit(r.value, valueW)), valueW) + "  " + p.dim(padLeft(r.id, idW))
 		p.println(strings.TrimRight(line, " "))
 	}
-	p.footer("toyota inspect ID decodes one signal")
+	p.footer("toyo inspect ID decodes one signal")
 }

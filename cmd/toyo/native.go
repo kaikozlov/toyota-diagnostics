@@ -44,7 +44,7 @@ func runNative(ctx context.Context, db *catalog.DB, p terminal.Printer, opt opti
 func (a *app) dispatch(args []string) error {
 	if len(args) == 0 {
 		if a.opt.json {
-			return usagef("", "--json needs a command, e.g. toyota search LTA --json")
+			return usagef("", "--json needs a command, e.g. toyo search LTA --json")
 		}
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
 			overview(a.p)
@@ -105,7 +105,7 @@ func (a *app) search(args []string) error {
 		if ecu, ok, err := a.db.ExactECU(a.ctx, a.opt.region, query); err != nil {
 			return err
 		} else if ok {
-			fmt.Fprintf(a.p.Out, "  toyota %s opens the %s.\n", ecu.Key, ecu.Name)
+			fmt.Fprintf(a.p.Out, "  toyo %s opens the %s.\n", ecu.Key, ecu.Name)
 		}
 	}
 	return nil
@@ -175,7 +175,7 @@ func (a *app) database(args []string) error {
 	return usagef("db", "unknown db command %q", sub)
 }
 
-// ecuCommand handles `toyota ecu …`, in either word order.
+// ecuCommand handles `toyo ecu …`, in either word order.
 func (a *app) ecuCommand(args []string) error {
 	if len(args) == 0 || args[0] == "list" {
 		return a.listECUs(strings.Join(args[min(1, len(args)):], " "))
@@ -186,7 +186,7 @@ func (a *app) ecuCommand(args []string) error {
 		}
 		return a.inECU(strings.Join(args[1:], " "), nil, false)
 	}
-	// Verb first: toyota ecu data frc LTA.
+	// Verb first: toyo ecu data frc LTA.
 	if len(args) >= 2 && isECUAction(args[0]) {
 		return a.inECU(args[1], append([]string{args[0]}, args[2:]...), false)
 	}
@@ -240,7 +240,7 @@ func exactECU(e catalog.ECU, ref string) bool {
 	return strings.EqualFold(e.Key, ref) || strings.EqualFold(e.Name, ref) || strconv.Itoa(e.CategoryID) == ref
 }
 
-// shorthand answers `toyota WORD …`. A known ECU opens that ECU; anything
+// shorthand answers `toyo WORD …`. A known ECU opens that ECU; anything
 // else is treated as a search, so a guess never dead-ends.
 func (a *app) shorthand(args []string) error {
 	ecu, err := a.db.ECU(a.ctx, a.opt.region, args[0])
@@ -250,7 +250,7 @@ func (a *app) shorthand(args []string) error {
 	case err != nil && !isLookupMiss(err):
 		return err
 	case len(args) > 1 && isECUAction(args[1]) && err != nil:
-		// "toyota frcc data": the ECU was the thing being asked about.
+		// "toyo frcc data": the ECU was the thing being asked about.
 		return err
 	}
 	return a.searchAnything(args)
@@ -280,7 +280,7 @@ func (a *app) searchAnything(args []string) error {
 	}
 	commands := commandHints(args[0])
 	if len(commands) > 0 && len(args) > 1 {
-		// "toyota serach LTA": the first word was meant as a command.
+		// "toyo serach LTA": the first word was meant as a command.
 		return &catalog.NotFoundError{What: "command", Query: args[0], Suggestions: commands}
 	}
 	miss := &catalog.NotFoundError{Query: query, Suggestions: commands}
@@ -540,7 +540,7 @@ func validateDB(args []string) error {
 func validateOffline(opt options, rest []string) error {
 	if len(rest) == 0 {
 		if opt.json {
-			return usagef("", "--json needs a command, e.g. toyota search LTA --json")
+			return usagef("", "--json needs a command, e.g. toyo search LTA --json")
 		}
 		return nil
 	}
