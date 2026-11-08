@@ -31,3 +31,15 @@ func TestClosestLimitsAndDeduplicates(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+func TestTyposAreSingleEditsNotPrefixes(t *testing.T) {
+	pool := []string{"search", "did", "customize", "monitor", "can", "inspect", "vehicle"}
+	if got := Typos("serach", pool, 2); !reflect.DeepEqual(got, []string{"search"}) {
+		t.Fatalf("serach: %v", got)
+	}
+	for _, q := range []string{"didactic", "customized", "monitoring", "canbus"} {
+		if got := Typos(q, pool, 2); got != nil {
+			t.Fatalf("%q should not look like a command typo: %v", q, got)
+		}
+	}
+}

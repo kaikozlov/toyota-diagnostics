@@ -53,30 +53,24 @@ func runComplete(words []string) error {
 	} else {
 		region = "NA"
 	}
-	dbPath := findDB(os.Getenv("TOYOTA_CATALOG"))
-	if dbPath == "" {
-		return nil
-	}
-	db, err := catalog.Open(dbPath)
-	if err != nil {
-		return nil
-	}
-	defer db.Close()
 	p := terminal.Printer{Out: os.Stdout}
-	a := &app{ctx: context.Background(), db: db, p: p, opt: options{region: region, limit: 50}}
+	a := &app{ctx: context.Background(), p: p, opt: options{region: region, limit: 50}}
+	if dbPath := findDB(os.Getenv("TOYOTA_CATALOG")); dbPath != "" {
+		if db, err := catalog.Open(dbPath); err == nil {
+			defer db.Close()
+			a.db = db
+			return a.complete(words)
+		}
+	}
 	return a.complete(words)
 }
 
 func (a *app) completion(args []string) error {
-	if len(args) != 1 {
-		return usagef("completion", "completion needs a shell: zsh, bash or fish")
+	if err := validateCompletion(args); err != nil {
+		return err
 	}
 	scripts := map[string]string{"zsh": zshCompletion, "bash": bashCompletion, "fish": fishCompletion}
-	script, ok := scripts[args[0]]
-	if !ok {
-		return usagef("completion", "unsupported shell %q; choose zsh, bash or fish", args[0])
-	}
-	fmt.Fprint(a.p.Out, script)
+	fmt.Fprint(a.p.Out, scripts[args[0]])
 	return nil
 }
 
@@ -113,7 +107,7 @@ func (a *app) complete(args []string) error {
 		out = []candidate{{"NA", "North America"}, {"EU", "Europe"}, {"JP", "Japan"}}
 	case prev == "--limit" || prev == "--db":
 	case strings.HasPrefix(cur, "-"):
-		out = []candidate{{"--region", "NA, EU or JP"}, {"--limit", "rows to show"}, {"--json", "structured output"}, {"--all", "include undecoded ECUs"}, {"--db", "alternate catalog"}, {"--help", "show help"}}
+		out = []candidate{{"--region", "NA, EU or JP"}, {"--limit", "rows to show"}, {"--json", "structured output"}, {"--all", "include undecoded ECUs"}, {"--db", "alternate catalog"}, {"--version", "print the CLI version"}, {"--help", "show help"}}
 	default:
 		out = a.candidates(positional)
 	}
@@ -133,6 +127,9 @@ func (a *app) complete(args []string) error {
 }
 
 func (a *app) ecuCandidates() []candidate {
+	if a.db == nil {
+		return nil
+	}
 	rows, err := a.db.ListECUs(a.ctx, a.opt.region, "", true, 5000)
 	if err != nil {
 		return nil
@@ -178,6 +175,9 @@ func (a *app) candidates(words []string) []candidate {
 		}
 	case "vehicle":
 		if len(words) == 1 {
+			if a.db == nil {
+				return []candidate{{"detect", "live: identify the connected car"}, {"mounted", "live: ECUs that answer"}}
+			}
 			vehicles, err := a.db.Vehicles(a.ctx, a.opt.region, "", 20000)
 			if err != nil {
 				return nil

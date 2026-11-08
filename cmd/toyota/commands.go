@@ -33,10 +33,11 @@ var nativeDocs = map[string]commandDoc{
 	},
 	"inspect": {
 		summary: "show one record by its search-result number",
-		usage:   []string{"toyota inspect ID", "toyota inspect ECU IDENT"},
+		usage:   []string{"toyota inspect ID", "toyota inspect ECU IDENT|TEXT…"},
 		examples: []terminal.HelpEntry{
 			{Usage: "toyota inspect 161299", Summary: "the number at the end of a search row"},
 			{Usage: "toyota inspect frc 0x1601", Summary: "same as toyota frc 0x1601"},
+			{Usage: "toyota inspect frc LTA control", Summary: "same as toyota frc LTA control"},
 		},
 		options: []terminal.HelpEntry{jsonOpt},
 	},
@@ -103,10 +104,6 @@ var nativeDocs = map[string]commandDoc{
 			{Usage: "toyota frc kinds", Summary: "kinds this ECU actually has"},
 		},
 		options: []terminal.HelpEntry{regionOpt, jsonOpt},
-	},
-	"version": {
-		summary: "print the CLI version",
-		usage:   []string{"toyota --version", "toyota version"},
 	},
 }
 

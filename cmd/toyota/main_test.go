@@ -42,7 +42,7 @@ func TestBridgePreservesOriginalLiveCommands(t *testing.T) {
 			t.Fatalf("live command was intercepted: %q", args)
 		}
 	}
-	for _, args := range [][]string{{"search", "LTA"}, {"vehicle", "Camry"}, {"frc"}, {"frc", "data", "steering"}, {"ecu", "list"}, {"db", "status"}, {"browse"}} {
+	for _, args := range [][]string{{"search", "LTA"}, {"vehicle", "Camry"}, {"frc"}, {"frc", "data", "steering"}, {"ecu", "list"}, {"db", "status"}, {"browse"}, {"version"}, {"version", "LTA"}, {"version", "monitor"}} {
 		if shouldBridge(args) {
 			t.Fatalf("native catalog command was bridged: %q", args)
 		}
@@ -146,7 +146,7 @@ func TestLiteralSearchOptions(t *testing.T) {
 
 func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
-	for _, args := range [][]string{{"--version"}, {"-V"}, {"version"}} {
+	for _, args := range [][]string{{"--version"}, {"-V"}} {
 		out, err := capture(func() error { return run(args) })
 		if err != nil {
 			t.Fatalf("%v: %v", args, err)
@@ -167,7 +167,6 @@ func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 		{[]string{"search"}, "search needs something to look for", "search"},
 		{[]string{"inspect"}, "inspect needs a record number", "inspect"},
 		{[]string{"inspect", "abc"}, "not a record number", "inspect"},
-		{[]string{"inspect", "frc", "0x1601", "extra"}, "record number or ECU IDENT", "inspect"},
 		{[]string{"browse", "--json"}, "browse is interactive", "browse"},
 		{[]string{"completion"}, "zsh, bash or fish", "completion"},
 		{[]string{"completion", "powershell"}, "unsupported shell", "completion"},
@@ -191,6 +190,22 @@ func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 	if err != nil || !strings.Contains(out, "#compdef toyota") {
 		t.Fatalf("completion zsh should work without a catalog: %q %v", out, err)
 	}
+	t.Setenv("TOYOTA_REGION", "bogus")
+	out, err = capture(func() error { return run([]string{"completion", "zsh"}) })
+	if err != nil || !strings.Contains(out, "#compdef toyota") {
+		t.Fatalf("completion zsh should ignore a bogus TOYOTA_REGION: %q %v", out, err)
+	}
+	t.Setenv("TOYOTA_REGION", "")
+
+	for _, phrase := range [][]string{{"didactic", "example"}, {"customized", "settings"}, {"monitoring", "LTA"}, {"canbus", "foo"}, {"version", "LTA"}} {
+		err := run(phrase)
+		if err == nil || strings.Contains(err.Error(), "unknown command") || strings.Contains(err.Error(), "takes no arguments") {
+			t.Fatalf("%v should need a catalog, not be treated as a command: %v", phrase, err)
+		}
+		if !strings.Contains(err.Error(), "catalog not found") && !strings.Contains(err.Error(), "/does/not/exist") {
+			t.Fatalf("%v: %v", phrase, err)
+		}
+	}
 
 	for _, args := range [][]string{{"help", "frc"}, {"frc", "--help"}, {"help", "nosuchcommand"}} {
 		out, err = capture(func() error { return run(args) })
@@ -203,7 +218,7 @@ func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 		t.Fatalf("help serach should correct a command typo: %v", err)
 	}
 
-	for _, args := range [][]string{{"--version", "search"}, {"version", "LTA"}, {"search", "--version"}} {
+	for _, args := range [][]string{{"--version", "search"}, {"search", "--version"}} {
 		if err := run(args); err == nil || !strings.Contains(err.Error(), "version takes no arguments") {
 			t.Fatalf("%v: %v", args, err)
 		}

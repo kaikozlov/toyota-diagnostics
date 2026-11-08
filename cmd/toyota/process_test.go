@@ -93,6 +93,25 @@ func TestCLIProcessExitAndStreams(t *testing.T) {
 	if code != 1 || stdout != "" || !strings.Contains(stderr, `unknown command "serach"`) || !strings.Contains(stderr, "did you mean") {
 		t.Fatalf("typo: code=%d out=%q err=%q", code, stdout, stderr)
 	}
+
+	stdout, stderr, code = runCLI(t, env, "didactic", "example")
+	if code != 1 || stdout != "" || strings.Contains(stderr, "unknown command") || !strings.Contains(stderr, "catalog not found") {
+		t.Fatalf("search phrase: code=%d out=%q err=%q", code, stdout, stderr)
+	}
+
+	stdout, stderr, code = runCLI(t, append(env, "TOYOTA_REGION=bogus"), "completion", "zsh")
+	if code != 0 || !strings.Contains(stdout, "#compdef toyota") || stderr != "" {
+		t.Fatalf("completion region: code=%d out=%q err=%q", code, stdout, stderr)
+	}
+
+	stdout, stderr, code = runCLI(t, env, "__complete", "")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "search") || !strings.Contains(stdout, "monitor") {
+		t.Fatalf("static complete: code=%d out=%q err=%q", code, stdout, stderr)
+	}
+	stdout, stderr, code = runCLI(t, env, "__complete", "-")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "--version") || !strings.Contains(stdout, "--json") {
+		t.Fatalf("flag complete: code=%d out=%q err=%q", code, stdout, stderr)
+	}
 }
 
 func TestCLIProcessFixtureOutput(t *testing.T) {
@@ -138,5 +157,16 @@ func TestCLIProcessFixtureOutput(t *testing.T) {
 	stdout, stderr, code = runCLI(t, append(base, "NO_COLOR=1"), "inspect", "3")
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "LTA Installation Availability") {
 		t.Fatalf("inspect: code=%d err=%q out=%q", code, stderr, stdout)
+	}
+
+	scoped, scopedErr, scopedCode := runCLI(t, append(base, "NO_COLOR=1"), "frc", "LTA", "control")
+	stdout, stderr, code = runCLI(t, append(base, "NO_COLOR=1"), "inspect", "frc", "LTA", "control")
+	if code != 0 || scopedCode != 0 || stdout != scoped || stderr != "" || scopedErr != "" {
+		t.Fatalf("inspect scoped: code=%d/%d out=%q vs %q err=%q/%q", code, scopedCode, stdout, scoped, stderr, scopedErr)
+	}
+
+	stdout, stderr, code = runCLI(t, append(base, "NO_COLOR=1"), "version")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "Software Version") {
+		t.Fatalf("version search: code=%d err=%q out=%q", code, stderr, stdout)
 	}
 }

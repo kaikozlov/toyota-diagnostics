@@ -77,20 +77,21 @@ func run(args []string) error {
 	if err := versionRequest(opt, rest); err != nil {
 		return err
 	}
-	if opt.version || (len(rest) == 1 && rest[0] == "version") {
+	if opt.version {
 		return writeVersion(os.Stdout)
+	}
+	// Completion scripts are static and must not depend on a valid region
+	// or catalog (`TOYOTA_REGION=bogus toyota completion zsh`).
+	if len(rest) > 0 && rest[0] == "completion" {
+		return (&app{p: p, opt: opt}).completion(rest[1:])
 	}
 	region, err := catalog.Region(opt.region)
 	if err != nil {
 		return usagef("", "%v", err)
 	}
 	opt.region = region
-	if err := usageWithoutCatalog(opt, rest); err != nil {
+	if err := validateOffline(opt, rest); err != nil {
 		return err
-	}
-	// Completion scripts are static; they should work on a fresh checkout.
-	if len(rest) > 0 && rest[0] == "completion" {
-		return (&app{p: p, opt: opt}).completion(rest[1:])
 	}
 	dbPath := findDB(opt.db)
 	if dbPath == "" {
@@ -150,7 +151,7 @@ func nativeHelp(p terminal.Printer, args []string) error {
 	}
 	// Longer unknown words that look like a command typo get a correction.
 	// Short collisions such as "frc" vs "ffd" are left alone.
-	if hints := commandHints(args[0]); len(hints) > 0 && len(args[0]) >= 5 {
+	if hints := commandHints(args[0]); len(hints) > 0 {
 		return &catalog.NotFoundError{What: "command", Query: args[0], Suggestions: hints}
 	}
 	// Anything else uses the generic ECU shorthand page. That describes the
@@ -160,18 +161,14 @@ func nativeHelp(p terminal.Printer, args []string) error {
 	return nil
 }
 
-// versionRequest reports extra operands given with --version/-V/version.
-// A bare version request returns nil; the caller then prints the version.
+// versionRequest reports extra operands given with --version or -V.
+// The bare word "version" is a catalog search, not a subcommand.
 func versionRequest(opt options, rest []string) error {
-	if !opt.version && (len(rest) == 0 || rest[0] != "version") {
+	if !opt.version {
 		return nil
 	}
-	extra := rest
-	if len(extra) > 0 && extra[0] == "version" {
-		extra = extra[1:]
-	}
-	if len(extra) > 0 {
-		return usagef("version", "version takes no arguments")
+	if len(rest) > 0 {
+		return usagef("", "version takes no arguments")
 	}
 	return nil
 }

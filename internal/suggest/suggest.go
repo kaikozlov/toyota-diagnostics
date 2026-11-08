@@ -105,3 +105,60 @@ func Closest(query string, candidates []string, n int) []string {
 	}
 	return out
 }
+
+// Typos returns up to n candidates that differ from query by one substitution,
+// insertion, deletion, or adjacent transposition. Prefix matches are excluded
+// so longer search words are not labeled as shorter commands.
+func Typos(query string, candidates []string, n int) []string {
+	q := normalize(query)
+	if q == "" || n <= 0 {
+		return nil
+	}
+	qr := []rune(q)
+	type scored struct {
+		text  string
+		score int
+	}
+	var found []scored
+	seen := map[string]bool{}
+	for _, text := range candidates {
+		c := normalize(text)
+		if c == "" || c == q || seen[text] {
+			continue
+		}
+		cr := []rune(c)
+		if abs(len(qr)-len(cr)) > 1 {
+			continue
+		}
+		if strings.HasPrefix(q, c) || strings.HasPrefix(c, q) {
+			continue
+		}
+		d := distance(qr, cr)
+		if d != 1 {
+			continue
+		}
+		seen[text] = true
+		found = append(found, scored{text, d})
+	}
+	sort.SliceStable(found, func(i, j int) bool {
+		if len(found[i].text) != len(found[j].text) {
+			return len(found[i].text) < len(found[j].text)
+		}
+		return found[i].text < found[j].text
+	})
+	if len(found) == 0 {
+		return nil
+	}
+	out := make([]string, 0, min(n, len(found)))
+	for i := 0; i < len(found) && i < n; i++ {
+		out = append(out, found[i].text)
+	}
+	return out
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
