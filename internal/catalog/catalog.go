@@ -221,10 +221,7 @@ func ftsTerm(word string) string {
 	if word == with {
 		return "(" + quoted(word) + " OR " + quoted(bare) + ")"
 	}
-	if word == bare {
-		return "(" + quoted(word) + " OR " + quoted(with) + ")"
-	}
-	return "(" + quoted(word) + " OR " + quoted(with) + " OR " + quoted(bare) + ")"
+	return "(" + quoted(word) + " OR " + quoted(with) + ")"
 }
 
 // normalizeIdent folds hex DID spellings so 0x1601, 1601 and 0X1601 agree.
@@ -234,6 +231,9 @@ func normalizeIdent(s string) string {
 
 // hexBare reports a 3–8 digit hex identifier, after stripping a leading 0x.
 // Shorter tokens stay ordinary words so "be" or "a" are not treated as DIDs.
+// That also means search does not treat "22" and "0x22" as the same DID:
+// two hex digits are below the floor. Leading zeros are kept ("01601" is
+// not "1601"). English words that are hex (ace, dead) still expand.
 func hexBare(s string) (string, bool) {
 	s = normalizeIdent(s)
 	if len(s) < 3 || len(s) > 8 {
@@ -302,9 +302,13 @@ func (d *DB) search(ctx context.Context, region string, category int, kind, quer
 		return []Item{}, nil
 	}
 	ident := queryIdent(query)
-	// Identifier hits (0x optional) lead; then an exact display name; then an
-	// ECU key match; then BM25 over name (10), detail (1), identifier (3).
-	// Remaining keys keep equal scores in a stable order.
+	identPrefix := ""
+	if ident != "" {
+		identPrefix = ident + "%"
+	}
+	// Exact IDs lead prefix-of-identifier hits, which lead prose BM25
+	// (name 10, detail 1, identifier 3). An exact display name stays a
+	// literal match above ECU-key boosts. Ties stay stable.
 	rows, err := d.db.QueryContext(ctx, `
 SELECT i.id, i.kind, i.region, i.category_id, coalesce(e.key,''), coalesce(e.name,''),
        i.identifier, i.name, i.detail
@@ -315,12 +319,13 @@ WHERE items_fts MATCH ? AND i.region=? AND (?=0 OR i.category_id=?) AND (?='' OR
 ORDER BY CASE WHEN ? != '' AND replace(lower(i.identifier),'0x','') = ? THEN 0
               WHEN lower(i.identifier)=lower(?) THEN 0
               WHEN lower(i.name)=lower(?) THEN 1
-              WHEN lower(e.key)=lower(?) AND i.kind='ecu' THEN 2
-              WHEN lower(e.key)=lower(?) THEN 3
-              ELSE 4 END,
+              WHEN ? != '' AND replace(lower(i.identifier),'0x','') LIKE ? THEN 2
+              WHEN lower(e.key)=lower(?) AND i.kind='ecu' THEN 3
+              WHEN lower(e.key)=lower(?) THEN 4
+              ELSE 5 END,
          bm25(items_fts, 10.0, 1.0, 3.0),
          i.kind, i.category_id, i.identifier, i.id
-LIMIT ?`, match, region, category, category, kind, kind, ident, ident, query, query, query, query, limit)
+LIMIT ?`, match, region, category, category, kind, kind, ident, ident, query, query, ident, identPrefix, query, query, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -492,6 +497,46 @@ func (d *DB) suggestECUs(ctx context.Context, region, query string) []string {
 		}
 	}
 	return out
+}
+
+// ExactECU reports an ECU only when query is its key, category id, or full
+// display name (case-insensitive). Unlike ECU, a unique substring is not
+// enough, so "Front" or "2" do not resolve Front Recognition Camera 2.
+func (d *DB) ExactECU(ctx context.Context, region, query string) (ECU, bool, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return ECU{}, false, nil
+	}
+	region, err := Region(region)
+	if err != nil {
+		return ECU{}, false, err
+	}
+	rows, err := d.db.QueryContext(ctx, selectECUs+` WHERE region=? AND (lower(key)=lower(?) OR cast(category_id as text)=? OR lower(name)=lower(?))`,
+		region, query, query, query)
+	if err != nil {
+		return ECU{}, false, err
+	}
+	defer rows.Close()
+	var hit []ECU
+	for rows.Next() {
+		row, err := scanECU(rows)
+		if err != nil {
+			return ECU{}, false, err
+		}
+		hit = append(hit, row)
+	}
+	if err := rows.Err(); err != nil {
+		return ECU{}, false, err
+	}
+	for _, e := range hit {
+		if strings.EqualFold(e.Key, query) || strconv.Itoa(e.CategoryID) == query {
+			return e, true, nil
+		}
+	}
+	if len(hit) == 1 {
+		return hit[0], true, nil
+	}
+	return ECU{}, false, nil
 }
 
 func (d *DB) ECU(ctx context.Context, region, query string) (ECU, error) {

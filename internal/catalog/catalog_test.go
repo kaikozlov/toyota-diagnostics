@@ -40,6 +40,8 @@ INSERT INTO items VALUES(2,'NA',498,'did','0x1601','LTA Switch Condition Flag','
 INSERT INTO items VALUES(3,'NA',498,'ffd-signal','0x5285','Arbitration result_lateral ID','TSS3 Operation FFD','{}');
 INSERT INTO items VALUES(4,'NA',0,'adu-signal','0x1593','Arbitration result Lateral ID','ADAS recorder','{}');
 INSERT INTO items VALUES(5,'NA',0,'did','0xFFFF','Mentions 1601 only in the title','also 1601 in detail','{}');
+INSERT INTO items VALUES(6,'NA',0,'did','0x160','Exact short 160','','{}');
+INSERT INTO items VALUES(7,'NA',0,'did','0x16010','Longer 1601 prefix sibling','','{}');
 CREATE VIRTUAL TABLE items_fts USING fts5(name,detail,identifier,content='items',content_rowid='id',tokenize='unicode61',prefix='2 3 4');
 INSERT INTO items_fts(items_fts) VALUES('rebuild');
 `
@@ -49,7 +51,7 @@ INSERT INTO items_fts(items_fts) VALUES('rebuild');
 	if _, err := db.Exec("CREATE TABLE item_payloads(item_id INTEGER PRIMARY KEY,data BLOB)"); err != nil {
 		t.Fatal(err)
 	}
-	for id, payload := range map[int]string{1: `{"name":"LTA Control Condition","bit_start":3,"unit":"deg"}`, 2: `{}`, 3: `{}`, 4: `{}`, 5: `{}`} {
+	for id, payload := range map[int]string{1: `{"name":"LTA Control Condition","bit_start":3,"unit":"deg"}`, 2: `{}`, 3: `{}`, 4: `{}`, 5: `{}`, 6: `{}`, 7: `{}`} {
 		var buffer bytes.Buffer
 		writer := zlib.NewWriter(&buffer)
 		if _, err := writer.Write([]byte(payload)); err != nil {
@@ -226,6 +228,114 @@ func TestSearchRanksExactIdentifiersBeforeTextMentions(t *testing.T) {
 		if !sawMention {
 			t.Fatalf("%q should still find the title mention: %#v", q, rows)
 		}
+	}
+}
+
+func TestSearchRanksExactIDBeforeIdentifierPrefixBeforeProse(t *testing.T) {
+	d := fixture(t)
+	ctx := context.Background()
+
+	rows, err := d.Search(ctx, "NA", "160", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := identifiers(rows)
+	if len(ids) < 4 || ids[0] != "0x160" {
+		t.Fatalf("exact 0x160 should lead prefix hits: %v", ids)
+	}
+	if i, j := pos("0x1601", ids), pos("0x160", ids); i < 0 || i < j {
+		t.Fatalf("prefix 0x1601 must not outrank exact 0x160: %v", ids)
+	}
+	if i, j := pos("0xFFFF", ids), pos("0x1601", ids); i < 0 || i < j {
+		t.Fatalf("prose mention must not outrank identifier prefix: %v", ids)
+	}
+
+	limited, err := d.Search(ctx, "NA", "160", 1)
+	if err != nil || len(limited) != 1 || limited[0].Identifier != "0x160" {
+		t.Fatalf("limit 1 should keep the exact ID: %#v %v", limited, err)
+	}
+	limited, err = d.Search(ctx, "NA", "160", 2)
+	if err != nil || len(limited) != 2 || limited[0].Identifier != "0x160" {
+		t.Fatalf("limit 2 should keep the exact ID first: %#v %v", limited, err)
+	}
+	second := normalizeIdent(limited[1].Identifier)
+	if limited[1].Identifier == "0xFFFF" || second == "160" || !strings.HasPrefix(second, "160") {
+		t.Fatalf("limit 2 second row should be an identifier prefix, not prose: %#v", limited)
+	}
+
+	for _, q := range []string{"1601", "0X1601"} {
+		rows, err = d.Search(ctx, "NA", q, 10)
+		if err != nil {
+			t.Fatal(q, err)
+		}
+		ids = identifiers(rows)
+		if got := ids[:3]; got[0] != "0x1601" || got[1] != "0x1601" || got[2] != "0x16010" {
+			t.Fatalf("%q exact IDs must precede a longer prefix: %v", q, ids)
+		}
+		if i, j := pos("0xFFFF", ids), pos("0x16010", ids); i < 0 || i < j {
+			t.Fatalf("%q mention before prefix: %v", q, ids)
+		}
+		limited, err = d.Search(ctx, "NA", q, 2)
+		if err != nil || len(limited) != 2 || limited[0].Identifier != "0x1601" || limited[1].Identifier != "0x1601" {
+			t.Fatalf("%q limit 2 should stay on the exact DID: %#v %v", q, limited, err)
+		}
+	}
+}
+
+func identifiers(rows []Item) []string {
+	out := make([]string, len(rows))
+	for i, row := range rows {
+		out[i] = row.Identifier
+	}
+	return out
+}
+
+func pos(id string, ids []string) int {
+	for i, got := range ids {
+		if got == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestHexIdentifierSearchLimitations(t *testing.T) {
+	if ftsQuery("22") != `"22"*` || ftsQuery("0x22") != `"0x22"*` {
+		t.Fatalf("two-digit DIDs stay literal: %q %q", ftsQuery("22"), ftsQuery("0x22"))
+	}
+	if ftsQuery("dead") != `("dead"* OR "0xdead"*)` || ftsQuery("ace") != `("ace"* OR "0xace"*)` {
+		t.Fatalf("hex words still expand: %q %q", ftsQuery("dead"), ftsQuery("ace"))
+	}
+	if ftsQuery("01601") != `("01601"* OR "0x01601"*)` {
+		t.Fatalf("leading zeros stay in the token: %q", ftsQuery("01601"))
+	}
+	rows, err := fixture(t).Search(context.Background(), "NA", "01601", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.Identifier == "0x1601" || row.Identifier == "0x160" {
+			t.Fatalf("leading zeros are not numeric-equivalent to %s: %#v", row.Identifier, rows)
+		}
+	}
+}
+
+func TestExactECUIgnoresUniqueSubstrings(t *testing.T) {
+	d := fixture(t)
+	ctx := context.Background()
+	for _, q := range []string{"frc", "FRC", "498", "Front Recognition Camera 2"} {
+		ecu, ok, err := d.ExactECU(ctx, "NA", q)
+		if err != nil || !ok || ecu.Key != "frc" {
+			t.Fatalf("%q: %+v %v %v", q, ecu, ok, err)
+		}
+	}
+	for _, q := range []string{"Front", "2", "Recognition", "Camera"} {
+		if _, ok, err := d.ExactECU(ctx, "NA", q); err != nil || ok {
+			t.Fatalf("%q should not be an exact ECU: ok=%v err=%v", q, ok, err)
+		}
+	}
+	if _, err := d.ECU(ctx, "NA", "Front"); err != nil {
+		t.Fatal("ECU() still accepts a unique substring for other callers:", err)
 	}
 }
 
