@@ -25,14 +25,17 @@ const (
 	resultLimit  = 300
 	debounce     = 60 * time.Millisecond
 	previewWidth = 110 // terminals at least this wide get the side preview
+	chipMaxWidth = 16
 )
 
 var regions = []string{"NA", "EU", "JP"}
 
 type kindFilter struct{ kind, label string }
 
-var filters = []kindFilter{
-	{"", "all"}, {"did", "data"}, {"dtc", "dtc"}, {"active-test", "test"}, {"ecu", "ecu"},
+// preferredFilters is the display order for well-known families. Only kinds
+// that exist in the current scope are shown.
+var preferredFilters = []kindFilter{
+	{"did", "data"}, {"dtc", "dtc"}, {"active-test", "test"}, {"ecu", "ecu"},
 	{"vehicle", "vehicle"}, {"function", "func"}, {"plugin", "plugin"}, {"utility", "utility"},
 	{"ffd-signal", "ffd"}, {"adu-signal", "adu"},
 }
@@ -60,13 +63,35 @@ type previewResult struct {
 	data previewData
 }
 
+type filterChip struct {
+	index        int
+	label        string
+	line, x0, x1 int
+}
+
+type hitAction int
+
+const (
+	hitNone hitAction = iota
+	hitFilter
+	hitRow
+	hitPreview
+	hitBack
+)
+
+type hit struct {
+	action hitAction
+	index  int
+}
+
 type model struct {
-	db              *catalog.DB
-	region, release string
-	input           textinput.Model
-	scope           *catalog.ECU
-	filter          int
-	filters         []kindFilter
+	db      *catalog.DB
+	region  string
+	input   textinput.Model
+	scope   *catalog.ECU
+	filter  int
+	filters []kindFilter
+	chips   []filterChip
 
 	rows     []catalog.Item
 	index    int
@@ -81,11 +106,12 @@ type model struct {
 	preview    string
 	previewTop int
 
-	detail   bool
-	viewport viewport.Model
+	detail    bool
+	viewport  viewport.Model
+	mouseDown hit
 }
 
-func newModel(db *catalog.DB, region, release string) model {
+func newModel(db *catalog.DB, region string) model {
 	input := textinput.New()
 	input.Prompt = "/ "
 	styles := input.Styles()
@@ -94,21 +120,83 @@ func newModel(db *catalog.DB, region, release string) model {
 	input.SetStyles(styles)
 	input.CharLimit = 180
 	input.Focus()
-	m := model{db: db, region: region, release: release, input: input, width: 100, height: 28, viewport: viewport.New(viewport.WithWidth(96), viewport.WithHeight(20))}
-	m.filters = append([]kindFilter(nil), filters...)
-	kinds, err := db.Kinds(context.Background(), "", 0)
-	m.err = err
-	seen := make(map[string]bool)
-	for _, f := range m.filters {
-		seen[f.kind] = true
-	}
-	for _, kind := range kinds {
-		if !seen[kind] {
-			m.filters = append(m.filters, kindFilter{kind, terminal.KindLabel(kind)})
-		}
-	}
+	m := model{db: db, region: region, input: input, width: 100, height: 28, viewport: viewport.New(viewport.WithWidth(96), viewport.WithHeight(20))}
+	m.loadFilters()
 	m.layout()
 	return m
+}
+
+func (m *model) loadFilters() {
+	prev := ""
+	if m.filter >= 0 && m.filter < len(m.filters) {
+		prev = m.filters[m.filter].kind
+	}
+	category := 0
+	if m.scope != nil {
+		category = m.scope.CategoryID
+	}
+	kinds, err := m.db.Kinds(context.Background(), m.region, category)
+	if err != nil {
+		m.err = err
+		kinds = nil
+	}
+	present := make(map[string]bool, len(kinds))
+	for _, kind := range kinds {
+		present[kind] = true
+	}
+	hasVehicle := false
+	if m.scope == nil {
+		if vehicles, err := m.db.Vehicles(context.Background(), m.region, "", 1); err == nil {
+			hasVehicle = len(vehicles) > 0
+		}
+	}
+
+	next := []kindFilter{{"", "all"}}
+	seen := map[string]bool{"": true}
+	for _, f := range preferredFilters {
+		if f.kind == "vehicle" {
+			if hasVehicle {
+				next = append(next, f)
+				seen[f.kind] = true
+			}
+			continue
+		}
+		if present[f.kind] {
+			if m.scope != nil && (f.kind == "ecu" || f.kind == "vehicle") {
+				continue
+			}
+			next = append(next, f)
+			seen[f.kind] = true
+		}
+	}
+	for _, kind := range kinds {
+		if seen[kind] || kind == "" {
+			continue
+		}
+		if m.scope != nil && (kind == "ecu" || kind == "vehicle") {
+			continue
+		}
+		next = append(next, kindFilter{kind, compactLabel(terminal.KindLabel(kind), chipMaxWidth)})
+	}
+	m.filters = next
+	m.filter = 0
+	for i, f := range m.filters {
+		if f.kind == prev {
+			m.filter = i
+			break
+		}
+	}
+}
+
+func compactLabel(label string, width int) string {
+	label = strings.TrimSpace(label)
+	if width < 1 {
+		width = 1
+	}
+	if ansi.StringWidth(label) <= width {
+		return label
+	}
+	return ansi.Truncate(label, width, "…")
 }
 
 func (m model) Init() tea.Cmd { return tea.Batch(textinput.Blink, m.load()) }
@@ -155,7 +243,7 @@ func fetch(ctx context.Context, db *catalog.DB, region string, scope *catalog.EC
 		}
 		return rows, nil
 	}
-	return nil, nil
+	return db.ListItems(ctx, region, 0, kind, resultLimit)
 }
 
 func stats(e catalog.ECU) string {
@@ -228,7 +316,31 @@ func vehiclePreview(ctx context.Context, db *catalog.DB, it catalog.Item) previe
 
 func (m model) wide() bool { return m.width >= previewWidth }
 
-func (m model) bodyHeight() int { return max(1, m.height-7) }
+func (m model) filterLineCount() int {
+	if n := len(m.filterLines()); n > 0 {
+		return n
+	}
+	return 1
+}
+
+func (m model) filterLines() []int {
+	seen := map[int]bool{}
+	var lines []int
+	for _, c := range m.chips {
+		if !seen[c.line] {
+			seen[c.line] = true
+			lines = append(lines, c.line)
+		}
+	}
+	return lines
+}
+
+func (m model) chromeHeight() int {
+	// title+blank, search, filter rows, blank, hints
+	return 5 + m.filterLineCount()
+}
+
+func (m model) bodyHeight() int { return max(1, m.height-m.chromeHeight()) }
 
 func (m model) listWidth() int {
 	if !m.wide() {
@@ -238,6 +350,12 @@ func (m model) listWidth() int {
 }
 
 func (m model) previewWidth() int { return max(10, m.width-m.listWidth()-8) }
+
+func (m model) searchY() int { return 2 }
+
+func (m model) filterTop() int { return 3 }
+
+func (m model) bodyTop() int { return m.filterTop() + m.filterLineCount() + 1 }
 
 func (m *model) layout() {
 	m.width, m.height = max(20, m.width), max(8, m.height)
@@ -252,7 +370,29 @@ func (m *model) layout() {
 	if m.scope != nil {
 		m.input.Placeholder = "Search inside " + m.scope.Key + "…"
 	}
+	m.layoutFilters()
 	m.renderPreview()
+}
+
+func (m *model) layoutFilters() {
+	width := max(8, m.width)
+	inner := max(1, width-2)
+	m.chips = m.chips[:0]
+	line, x := 0, 1
+	for i, f := range m.filters {
+		label := compactLabel(f.label, min(chipMaxWidth, inner))
+		w := ansi.StringWidth(label)
+		if x > 1 && x+w > width {
+			line++
+			x = 1
+		}
+		if x+w > width {
+			label = compactLabel(label, max(1, width-x))
+			w = ansi.StringWidth(label)
+		}
+		m.chips = append(m.chips, filterChip{index: i, label: label, line: line, x0: x, x1: x + w})
+		x += w + 2
+	}
 }
 
 func (m *model) renderPreview() {
@@ -331,6 +471,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyPressMsg:
 		return m.key(msg)
+	case tea.MouseClickMsg:
+		return m.mousePress(msg.Mouse())
+	case tea.MouseReleaseMsg:
+		return m.mouseRelease(msg.Mouse())
+	case tea.MouseWheelMsg:
+		return m.mouseWheel(msg.Mouse())
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -341,13 +487,25 @@ func (m model) move(delta int) (model, tea.Cmd) {
 	if len(m.rows) == 0 {
 		return m, nil
 	}
-	next := max(0, min(len(m.rows)-1, m.index+delta))
-	if next == m.index {
+	return m.moveTo(max(0, min(len(m.rows)-1, m.index+delta)))
+}
+
+func (m model) moveTo(next int) (model, tea.Cmd) {
+	if next < 0 || next >= len(m.rows) || next == m.index {
 		return m, nil
 	}
 	m.index, m.previewTop = next, 0
 	m.dataKey, m.preview = "", ""
 	return m, m.loadPreview()
+}
+
+func (m model) shiftFilter(delta int) (model, tea.Cmd) {
+	if len(m.filters) == 0 {
+		return m, nil
+	}
+	n := len(m.filters)
+	m.filter = (m.filter + delta%n + n) % n
+	return m.refresh(false)
 }
 
 func (m model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -390,13 +548,18 @@ func (m model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "shift+down":
 		m.previewTop += 3
 		return m, nil
-	case "tab", "shift+tab":
-		step := 1
-		if key == "shift+tab" {
-			step = len(m.filters) - 1
+	case "tab":
+		return m.shiftFilter(1)
+	case "shift+tab":
+		return m.shiftFilter(-1)
+	case "left":
+		if m.input.Value() == "" {
+			return m.shiftFilter(-1)
 		}
-		m.filter = (m.filter + step) % len(m.filters)
-		return m.refresh(false)
+	case "right":
+		if m.input.Value() == "" {
+			return m.shiftFilter(1)
+		}
 	case "ctrl+r":
 		for i, r := range regions {
 			if r == m.region {
@@ -405,6 +568,7 @@ func (m model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.scope = nil
+		m.loadFilters()
 		m.layout()
 		return m.refresh(false)
 	case "backspace":
@@ -412,30 +576,7 @@ func (m model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.leaveScope()
 		}
 	case "enter":
-		it, ok := m.selection()
-		if !ok {
-			return m, nil
-		}
-		if it.Kind == "ecu" && it.ECU != "" {
-			e, err := m.db.ECU(context.Background(), it.Region, it.ECU)
-			if err != nil {
-				m.err = err
-				return m, nil
-			}
-			m.scope = &e
-			m.input.SetValue("")
-			m.filter = 0
-			m.layout()
-			return m.refresh(false)
-		}
-		m.detail = true
-		m.viewport.GotoTop()
-		if m.dataKey == keyOf(it) {
-			m.renderPreview()
-			return m, nil
-		}
-		m.viewport.SetContent("  Loading…")
-		return m, m.loadPreview()
+		return m.openSelection()
 	}
 	before := m.input.Value()
 	var cmd tea.Cmd
@@ -447,18 +588,159 @@ func (m model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m model) openSelection() (model, tea.Cmd) {
+	it, ok := m.selection()
+	if !ok {
+		return m, nil
+	}
+	if it.Kind == "ecu" && it.ECU != "" {
+		e, err := m.db.ECU(context.Background(), it.Region, it.ECU)
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		m.scope = &e
+		m.input.SetValue("")
+		m.filter = 0
+		m.loadFilters()
+		m.layout()
+		return m.refresh(false)
+	}
+	m.detail = true
+	m.viewport.GotoTop()
+	if m.dataKey == keyOf(it) {
+		m.renderPreview()
+		return m, nil
+	}
+	m.viewport.SetContent("  Loading…")
+	return m, m.loadPreview()
+}
+
 func (m model) leaveScope() (model, tea.Cmd) {
 	m.scope = nil
 	m.filter = 0
+	m.loadFilters()
 	m.layout()
 	return m.refresh(false)
+}
+
+func (m model) mousePress(ev tea.Mouse) (model, tea.Cmd) {
+	if ev.Button != tea.MouseLeft {
+		return m, nil
+	}
+	m.mouseDown = m.hitTest(ev.X, ev.Y)
+	return m, nil
+}
+
+func (m model) mouseRelease(ev tea.Mouse) (model, tea.Cmd) {
+	if ev.Button != tea.MouseLeft {
+		return m, nil
+	}
+	down := m.mouseDown
+	m.mouseDown = hit{}
+	up := m.hitTest(ev.X, ev.Y)
+	if down.action == hitNone || down.action != up.action || down.index != up.index {
+		return m, nil
+	}
+	return m.activate(up)
+}
+
+func (m model) mouseWheel(ev tea.Mouse) (model, tea.Cmd) {
+	delta := 0
+	switch ev.Button {
+	case tea.MouseWheelUp:
+		delta = -1
+	case tea.MouseWheelDown:
+		delta = 1
+	default:
+		return m, nil
+	}
+	if m.detail {
+		if delta < 0 {
+			m.viewport.ScrollUp(3)
+		} else {
+			m.viewport.ScrollDown(3)
+		}
+		return m, nil
+	}
+	if m.hitTest(ev.X, ev.Y).action == hitPreview {
+		if delta < 0 {
+			m.previewTop = max(0, m.previewTop-3)
+		} else {
+			m.previewTop += 3
+		}
+		return m, nil
+	}
+	return m.move(delta)
+}
+
+func (m model) activate(h hit) (model, tea.Cmd) {
+	switch h.action {
+	case hitFilter:
+		if h.index < 0 || h.index >= len(m.filters) || h.index == m.filter {
+			return m, nil
+		}
+		m.filter = h.index
+		return m.refresh(false)
+	case hitRow:
+		if h.index == m.index {
+			return m.openSelection()
+		}
+		return m.moveTo(h.index)
+	case hitBack:
+		if m.scope != nil {
+			return m.leaveScope()
+		}
+	}
+	return m, nil
+}
+
+func (m model) hitTest(x, y int) hit {
+	if m.detail {
+		return hit{action: hitPreview}
+	}
+	if y == m.searchY() && m.scope != nil {
+		w := ansi.StringWidth(m.scope.Key)
+		if x >= 1 && x < 1+w {
+			return hit{action: hitBack}
+		}
+	}
+	if y >= m.filterTop() && y < m.filterTop()+m.filterLineCount() {
+		line := y - m.filterTop()
+		for _, c := range m.chips {
+			if c.line == line && x >= c.x0 && x < c.x1 {
+				return hit{action: hitFilter, index: c.index}
+			}
+		}
+		return hit{}
+	}
+	bodyTop := m.bodyTop()
+	if y >= bodyTop && y < bodyTop+m.bodyHeight() {
+		if m.wide() && x >= m.listWidth() {
+			return hit{action: hitPreview}
+		}
+		if len(m.rows) == 0 {
+			return hit{}
+		}
+		h := m.bodyHeight()
+		start := max(0, m.index-h/2)
+		start = max(0, min(start, len(m.rows)-h))
+		row := start + (y - bodyTop)
+		if row >= 0 && row < len(m.rows) {
+			return hit{action: hitRow, index: row}
+		}
+	}
+	return hit{}
 }
 
 // ----- view -----------------------------------------------------------------
 
 // clip guarantees no line is wider than the terminal, whatever it holds.
-func clip(s string, width int) string {
+func clip(s string, width, height int) string {
 	lines := strings.Split(s, "\n")
+	if height > 0 && len(lines) > height {
+		lines = lines[:height]
+	}
 	for i, line := range lines {
 		if ansi.StringWidth(line) > width {
 			lines[i] = ansi.Truncate(line, width, "…")
@@ -468,14 +750,15 @@ func clip(s string, width int) string {
 }
 
 func (m model) View() tea.View {
-	v := tea.NewView(clip(m.view(), m.width))
+	v := tea.NewView(clip(m.view(), m.width, m.height))
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
 func (m model) view() string {
 	var b strings.Builder
-	title := terminal.StyleAccent.Render("toyota") + "  " + terminal.StyleDim.Render(m.region+" · GTS+ "+m.release)
+	title := terminal.StyleAccent.Render("toyota") + "  " + terminal.StyleDim.Render(m.region)
 	b.WriteString(" " + title + "\n\n")
 	if m.detail {
 		b.WriteString(m.viewport.View() + "\n")
@@ -494,30 +777,38 @@ func (m model) view() string {
 }
 
 func (m model) tabs() string {
-	render := func(from int) string {
-		var parts []string
-		for n := range m.filters {
-			i := (from + n) % len(m.filters)
-			if i == m.filter {
-				parts = append(parts, terminal.StyleAccent.Underline(true).Render(m.filters[i].label))
-			} else {
-				parts = append(parts, terminal.StyleDim.Render(m.filters[i].label))
-			}
-		}
-		return " " + strings.Join(parts, "  ")
+	if len(m.chips) == 0 {
+		return " "
 	}
-	line := render(0)
-	if ansi.StringWidth(line) > m.width {
-		// Too narrow for every filter: rotate so the active one leads.
-		return render(m.filter)
+	n := m.filterLineCount()
+	lines := make([]string, n)
+	for i := 0; i < n; i++ {
+		var line strings.Builder
+		col := 0
+		for _, c := range m.chips {
+			if c.line != i {
+				continue
+			}
+			if c.x0 > col {
+				line.WriteString(strings.Repeat(" ", c.x0-col))
+			}
+			if c.index == m.filter {
+				line.WriteString(terminal.StyleAccent.Underline(true).Render(c.label))
+			} else {
+				line.WriteString(terminal.StyleDim.Render(c.label))
+			}
+			col = c.x1
+		}
+		lines[i] = line.String()
 	}
 	if status := m.status(); status != "" {
-		room := m.width - lipgloss.Width(line) - lipgloss.Width(status) - 2
+		last := n - 1
+		room := m.width - ansi.StringWidth(lines[last]) - ansi.StringWidth(status) - 2
 		if room >= 2 {
-			line += strings.Repeat(" ", room) + terminal.StyleDim.Render(status)
+			lines[last] += strings.Repeat(" ", room) + terminal.StyleDim.Render(status)
 		}
 	}
-	return line
+	return strings.Join(lines, "\n")
 }
 
 func (m model) status() string {
@@ -533,10 +824,16 @@ func (m model) status() string {
 	if len(m.rows) >= resultLimit {
 		n = fmt.Sprintf("first %d", resultLimit)
 	}
+	kind := ""
+	if m.filter >= 0 && m.filter < len(m.filters) {
+		kind = m.filters[m.filter].kind
+	}
 	switch {
-	case m.query() == "" && m.scope == nil && m.filters[m.filter].kind != "vehicle":
+	case m.query() == "" && m.scope == nil && (kind == "" || kind == "ecu"):
 		return n + " ECUs with decoded catalogs"
-	case m.query() == "" && m.scope != nil:
+	case m.query() == "" && m.scope == nil && kind == "vehicle":
+		return n + " models"
+	case m.query() == "":
 		return n + " records"
 	}
 	return n + " results"
@@ -551,9 +848,10 @@ func (m model) hints() string {
 		leave = "esc back"
 	}
 	for _, text := range []string{
-		" ↑↓ move   tab filter   enter open   ctrl+r region   " + leave,
-		" ↑↓ move   tab filter   enter open   " + leave,
-		" ↑↓   tab   enter   " + leave,
+		" ↑↓ move   ←→ filter   tab filter   enter open   click select   ctrl+r region   " + leave,
+		" ↑↓ move   ←→ filter   tab filter   enter open   ctrl+r region   " + leave,
+		" ↑↓ move   ←→ filter   tab filter   enter open   " + leave,
+		" ↑↓   ←→   tab   enter   " + leave,
 	} {
 		if ansi.StringWidth(text) <= m.width {
 			return terminal.StyleDim.Render(text)
@@ -587,6 +885,10 @@ func padTo(s string, w int) string {
 
 func (m model) emptyMessage() string {
 	query := m.query()
+	kind, label := "", ""
+	if m.filter >= 0 && m.filter < len(m.filters) {
+		kind, label = m.filters[m.filter].kind, m.filters[m.filter].label
+	}
 	switch {
 	case m.err != nil:
 		return terminal.StyleError.Render(m.err.Error())
@@ -598,10 +900,14 @@ func (m model) emptyMessage() string {
 			msg += " Backspace leaves " + m.scope.Key + " to search everywhere."
 		}
 		return terminal.StyleDim.Render(msg)
-	case m.filters[m.filter].kind != "":
-		return terminal.StyleDim.Render("Type to search " + m.filters[m.filter].label + " records.")
+	case m.scope != nil && kind != "":
+		return terminal.StyleDim.Render("No " + label + " records in " + m.scope.Key + ".")
+	case m.scope != nil:
+		return terminal.StyleDim.Render("No records in " + m.scope.Key + ".")
+	case kind != "" && kind != "ecu":
+		return terminal.StyleDim.Render("No " + label + " records in " + m.region + ".")
 	}
-	return terminal.StyleDim.Render("Type to search signals, trouble codes, Active Tests, ECUs and vehicles.")
+	return terminal.StyleDim.Render("No ECUs with decoded catalogs in " + m.region + ".")
 }
 
 func (m model) listLines(h int) []string {
@@ -719,11 +1025,7 @@ func (m model) previewLines(h int) []string {
 
 // Run opens the explorer on in/out.
 func Run(db *catalog.DB, region string, in io.Reader, out io.Writer) error {
-	release, err := db.Meta(context.Background(), "release")
-	if err != nil {
-		return err
-	}
-	p := tea.NewProgram(newModel(db, region, release), tea.WithInput(in), tea.WithOutput(out))
-	_, err = p.Run()
+	p := tea.NewProgram(newModel(db, region), tea.WithInput(in), tea.WithOutput(out))
+	_, err := p.Run()
 	return err
 }

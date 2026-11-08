@@ -30,19 +30,25 @@ INSERT INTO meta VALUES('schema','toyota-diagnostics-sqlite-v2'),('release','tes
 CREATE TABLE ecus (region TEXT,category_id INTEGER,key TEXT,name TEXT,database_name TEXT,generation INTEGER,support_mode TEXT,catalog_member TEXT,counts TEXT);
 INSERT INTO ecus VALUES('NA',498,'frc','Front Recognition Camera 2','FRC_P5.ddb',20,'p5-standard','catalogs/NA/498.json','{"signals":1,"dtcs":1}');
 INSERT INTO ecus VALUES('NA',405,'eps','Power Steering','EMPS_P5.ddb',20,'p5-standard',null,'{}');
+INSERT INTO ecus VALUES('NA',80,'airbag','SRS Airbag','AIRBAG_P5.ddb',20,'p5-standard','catalogs/NA/80.json','{"dtcs":1}');
+INSERT INTO ecus VALUES('NA',999,'blank','Empty Catalog Member','BLANK_P5.ddb',20,'p5-standard','catalogs/NA/999.json','{}');
+INSERT INTO ecus VALUES('NA',60,'ds','Driving Support','DS_P5.ddb',20,'p5-standard','catalogs/NA/60.json','{"signals":1}');
 CREATE TABLE vehicles (region TEXT,vehicle_type INTEGER,name TEXT,install_set_ids TEXT);
 INSERT INTO vehicles VALUES('NA',12704,'Camry HV','[1]');
 CREATE TABLE vehicle_ecus (region TEXT, vehicle_type INTEGER, install_set_id INTEGER, category_id INTEGER, route_selector INTEGER, connection_frame_id INTEGER, route_key TEXT, request_address INTEGER, address_extension INTEGER, transport_kind TEXT);
 CREATE TABLE items (id INTEGER PRIMARY KEY,region TEXT,category_id INTEGER,kind TEXT,identifier TEXT,name TEXT,detail TEXT);
 INSERT INTO items VALUES(1,'NA',498,'did','0x1601','LTA Control Condition','');
 INSERT INTO items VALUES(2,'NA',498,'dtc','U0131','Lost Communication with Power Steering','No Signal');
+INSERT INTO items VALUES(3,'NA',80,'dtc','B1650','Airbag Occupant Classification','');
+INSERT INTO items VALUES(4,'NA',60,'did','0x6401','Driving Support Status','');
+INSERT INTO items VALUES(5,'NA',60,'active-test-support-data-definitions','ATSDD-01','PCS Support Data Definitions','');
 CREATE VIRTUAL TABLE items_fts USING fts5(name,detail,identifier,content='items',content_rowid='id',tokenize='unicode61',prefix='2 3 4');
 INSERT INTO items_fts(items_fts) VALUES('rebuild');
 CREATE TABLE item_payloads(item_id INTEGER PRIMARY KEY,data BLOB NOT NULL);`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for id, payload := range map[int]string{1: lta, 2: `{"code":"U013100","failure":"No Signal"}`} {
+	for id, payload := range map[int]string{1: lta, 2: `{"code":"U013100","failure":"No Signal"}`, 3: `{"code":"B165000"}`, 4: `{"name":"Driving Support Status"}`, 5: `{"name":"PCS Support Data Definitions"}`} {
 		var buffer bytes.Buffer
 		writer := zlib.NewWriter(&buffer)
 		writer.Write([]byte(payload))
@@ -83,7 +89,7 @@ func settle(t *testing.T, m model, cmd tea.Cmd) model {
 
 func opened(t *testing.T, width, height int) model {
 	t.Helper()
-	m := newModel(fixture(t), "NA", "test")
+	m := newModel(fixture(t), "NA")
 	m, _ = update(m, tea.WindowSizeMsg{Width: width, Height: height})
 	m.revision++
 	m = settle(t, m, m.load())
@@ -100,13 +106,51 @@ func typed(t *testing.T, m model, text string) model {
 	return settle(t, m, m.load())
 }
 
+func selectECU(t *testing.T, m model, key string) model {
+	t.Helper()
+	for i, row := range m.rows {
+		if row.ECU == key {
+			m.index = i
+			return m
+		}
+	}
+	t.Fatalf("missing ECU %s in %+v", key, m.rows)
+	return m
+}
+
+func filterKinds(m model) []string {
+	out := make([]string, len(m.filters))
+	for i, f := range m.filters {
+		out[i] = f.kind
+	}
+	return out
+}
+
+func clickAt(m model, x, y int) (model, tea.Cmd) {
+	m, _ = update(m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	return update(m, tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
+}
+
 func TestOpensOnDecodedECUDirectory(t *testing.T) {
 	m := opened(t, 90, 24)
-	if len(m.rows) != 1 || m.rows[0].ECU != "frc" {
-		t.Fatalf("directory should list decoded ECUs only: %+v", m.rows)
+	seen := map[string]bool{}
+	for _, row := range m.rows {
+		seen[row.ECU] = true
 	}
-	if view := view(m); !strings.Contains(view, "Front Recognition Camera 2") || !strings.Contains(view, "1 data") {
+	if !seen["frc"] || !seen["airbag"] || !seen["blank"] || !seen["ds"] {
+		t.Fatalf("directory missing decoded ECUs: %+v", m.rows)
+	}
+	if seen["eps"] {
+		t.Fatalf("declaration-only ECU should stay hidden: %+v", m.rows)
+	}
+	if view := view(m); !strings.Contains(view, "Front Recognition Camera 2") {
 		t.Fatal(view)
+	}
+	if strings.Contains(view(m), "GTS+") || strings.Contains(view(m), "2026") {
+		t.Fatalf("header should not brand the GTS+ release:\n%s", view(m))
+	}
+	if !strings.Contains(view(m), "toyota") || !strings.Contains(ansi.Strip(view(m)), "NA") {
+		t.Fatalf("header should be the toyota product and region:\n%s", view(m))
 	}
 }
 
@@ -133,7 +177,7 @@ func TestSearchOpenDetailAndReturn(t *testing.T) {
 }
 
 func TestEnterOnECUScopesAndBackspaceLeaves(t *testing.T) {
-	m := opened(t, 90, 24)
+	m := selectECU(t, opened(t, 90, 24), "frc")
 	m, cmd := press(m, tea.KeyEnter)
 	if m.scope == nil || m.scope.Key != "frc" {
 		t.Fatal("enter on an ECU should scope to it")
@@ -168,10 +212,10 @@ func TestEscapeIsLayered(t *testing.T) {
 	if m.input.Value() != "" || quits(cmd) {
 		t.Fatal("first esc should clear the query")
 	}
-	m = opened(t, 90, 24)
+	m = selectECU(t, opened(t, 90, 24), "frc")
 	m, cmd = press(m, tea.KeyEnter)
 	m = settle(t, m, cmd)
-	if m.scope == nil {
+	if m.scope == nil || m.scope.Key != "frc" {
 		t.Fatal("expected to be inside an ECU")
 	}
 	m, cmd = press(m, tea.KeyEsc)
@@ -188,8 +232,8 @@ func TestFilterTabsNarrowResults(t *testing.T) {
 	before := len(m.rows)
 	m, cmd := press(m, tea.KeyTab) // data
 	m = settle(t, m, cmd)
-	if filters[m.filter].kind != "did" || len(m.rows) == 0 || len(m.rows) > before {
-		t.Fatalf("filter=%v rows=%+v", filters[m.filter], m.rows)
+	if m.filters[m.filter].kind != "did" || len(m.rows) == 0 || len(m.rows) > before {
+		t.Fatalf("filter=%v rows=%+v", m.filters[m.filter], m.rows)
 	}
 	for _, r := range m.rows {
 		if r.Kind != "did" {
@@ -275,5 +319,239 @@ func TestLayoutNeverOverflowsTheTerminal(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestHeaderOmitsGTSRelease(t *testing.T) {
+	plain := ansi.Strip(view(opened(t, 90, 24)))
+	if strings.Contains(plain, "GTS+") || strings.Contains(plain, "GTS") {
+		t.Fatalf("gts branding leaked into header:\n%s", plain)
+	}
+}
+
+func TestRootKindFilterListsRecordsWithoutQuery(t *testing.T) {
+	m := opened(t, 90, 24)
+	m, cmd := press(m, tea.KeyTab) // data exists at root
+	m = settle(t, m, cmd)
+	if m.filters[m.filter].kind != "did" {
+		t.Fatalf("expected data filter, got %v", filterKinds(m))
+	}
+	if len(m.rows) == 0 {
+		t.Fatal("root data filter should list DIDs, not ask for a query")
+	}
+	for _, row := range m.rows {
+		if row.Kind != "did" {
+			t.Fatalf("data filter leaked %s", row.Kind)
+		}
+	}
+	if strings.Contains(view(m), "Type to search") {
+		t.Fatalf("should not treat a populated kind as empty:\n%s", view(m))
+	}
+}
+
+func TestFiltersShowOnlyPresentKindsAndOmitEmptyECUScopes(t *testing.T) {
+	m := opened(t, 90, 24)
+	root := strings.Join(filterKinds(m), ",")
+	for _, kind := range []string{"", "did", "dtc", "vehicle", "active-test-support-data-definitions"} {
+		if !strings.Contains(","+root+",", ","+kind+",") {
+			t.Fatalf("root filters missing %q: %s", kind, root)
+		}
+	}
+	if strings.Contains(root, "plugin") {
+		t.Fatalf("absent kind should not appear at root: %s", root)
+	}
+	m = selectECU(t, m, "frc")
+	var cmd tea.Cmd
+	m, cmd = press(m, tea.KeyEnter)
+	m = settle(t, m, cmd)
+	scoped := strings.Join(filterKinds(m), ",")
+	if !strings.Contains(scoped, "did") || !strings.Contains(scoped, "dtc") {
+		t.Fatalf("frc should keep its kinds: %s", scoped)
+	}
+	if strings.Contains(scoped, "vehicle") || strings.Contains(scoped, "active-test-support-data-definitions") {
+		t.Fatalf("frc should not inherit kinds it does not have: %s", scoped)
+	}
+
+	m = selectECU(t, opened(t, 90, 24), "airbag")
+	m, cmd = press(m, tea.KeyEnter)
+	m = settle(t, m, cmd)
+	airbag := strings.Join(filterKinds(m), ",")
+	if strings.Contains(airbag, "did") {
+		t.Fatalf("airbag has no data records: %s", airbag)
+	}
+	if !strings.Contains(airbag, "dtc") {
+		t.Fatalf("airbag should expose dtc: %s", airbag)
+	}
+
+	m = selectECU(t, opened(t, 90, 24), "blank")
+	m, cmd = press(m, tea.KeyEnter)
+	m = settle(t, m, cmd)
+	if len(m.filters) != 1 || m.filters[0].kind != "" {
+		t.Fatalf("empty ECU should only offer all: %v", filterKinds(m))
+	}
+	if len(m.rows) != 0 || !strings.Contains(view(m), "No records in blank") {
+		t.Fatalf("empty ECU should say so:\n%s", view(m))
+	}
+}
+
+func TestFilterKeyboardIsNotTabOnly(t *testing.T) {
+	m := opened(t, 90, 24)
+	m, cmd := pressMsg(m, tea.KeyPressMsg{Code: tea.KeyRight})
+	m = settle(t, m, cmd)
+	if m.filters[m.filter].kind != "did" {
+		t.Fatalf("right arrow should move to data: %v", filterKinds(m))
+	}
+	m, cmd = pressMsg(m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	m = settle(t, m, cmd)
+	if m.filter != 0 {
+		t.Fatal("left arrow should return to all")
+	}
+	m = typed(t, opened(t, 90, 24), "LTA")
+	before := m.filter
+	m, _ = pressMsg(m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	if m.filter != before {
+		t.Fatal("left arrow must edit a nonempty search, not steal it as a filter key")
+	}
+}
+
+func TestMouseClickFilterAndPressReleaseSemantics(t *testing.T) {
+	m := opened(t, 90, 24)
+	var data, dtc filterChip
+	for _, c := range m.chips {
+		switch m.filters[c.index].kind {
+		case "did":
+			data = c
+		case "dtc":
+			dtc = c
+		}
+	}
+	if data.x1 == 0 || dtc.x1 == 0 {
+		t.Fatalf("missing chips: %+v", m.chips)
+	}
+	y := m.filterTop() + data.line
+	plain := ansi.Strip(strings.Split(view(m), "\n")[y])
+	if !strings.Contains(plain, "data") {
+		t.Fatalf("visual filter row %d missing data: %q", y, plain)
+	}
+	x := strings.Index(plain, "data")
+	if x < 0 || m.hitTest(x, y) != (hit{action: hitFilter, index: data.index}) {
+		t.Fatalf("hit test missed data at %d,%d: %+v (chip=%+v plain=%q)", x, y, m.hitTest(x, y), data, plain)
+	}
+	m, cmd := clickAt(m, x, y)
+	m = settle(t, m, cmd)
+	if m.filters[m.filter].kind != "did" || len(m.rows) == 0 {
+		t.Fatalf("clicking data should list DIDs: filter=%v rows=%+v", m.filters[m.filter], m.rows)
+	}
+
+	m = opened(t, 90, 24)
+	m, _ = update(m, tea.MouseClickMsg{X: data.x0, Y: m.filterTop() + data.line, Button: tea.MouseLeft})
+	m, cmd = update(m, tea.MouseReleaseMsg{X: dtc.x0, Y: m.filterTop() + dtc.line, Button: tea.MouseLeft})
+	if cmd != nil {
+		t.Fatal("press on one chip and release on another must not change the filter")
+	}
+	if m.filter != 0 {
+		t.Fatalf("drag-off should keep all, got %v", m.filters[m.filter])
+	}
+}
+
+func TestMouseRowSelectWheelAndOpen(t *testing.T) {
+	m := opened(t, 90, 24)
+	if len(m.rows) < 2 {
+		t.Fatal(m.rows)
+	}
+	target := -1
+	for i, row := range m.rows {
+		if row.ECU == "frc" {
+			target = i
+			break
+		}
+	}
+	h := m.hitTest(4, m.bodyTop()+target)
+	if h.action != hitRow || h.index != target {
+		// first visible row is index 0 when index is 0 and list is short
+		h = hit{action: hitRow, index: target}
+	}
+	y := m.bodyTop()
+	// Find the screen row for the target using the same windowing as the list.
+	height := m.bodyHeight()
+	start := max(0, m.index-height/2)
+	start = max(0, min(start, len(m.rows)-height))
+	y += target - start
+	if m.hitTest(4, y) != (hit{action: hitRow, index: target}) {
+		t.Fatalf("row hit %d,%d = %+v want row %d", 4, y, m.hitTest(4, y), target)
+	}
+	m, cmd := clickAt(m, 4, y)
+	if m.index != target {
+		t.Fatalf("click should select row %d, got %d", target, m.index)
+	}
+	if cmd != nil {
+		m, _ = update(m, cmd())
+	}
+	m, cmd = clickAt(m, 4, y)
+	if m.scope == nil || m.scope.Key != "frc" {
+		t.Fatal("second click on the selected ECU should open it")
+	}
+	m = settle(t, m, cmd)
+
+	m = opened(t, 90, 24)
+	m, cmd = update(m, tea.MouseWheelMsg{X: 4, Y: m.bodyTop(), Button: tea.MouseWheelDown})
+	if m.index != 1 {
+		t.Fatalf("wheel should move the list, index=%d", m.index)
+	}
+	if cmd != nil {
+		m, _ = update(m, cmd())
+	}
+}
+
+func TestRegionCycleAndSearchNoResults(t *testing.T) {
+	m := opened(t, 90, 24)
+	key := tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}
+	if key.String() != "ctrl+r" {
+		t.Fatalf("ctrl+r encoding changed: %q", key.String())
+	}
+	m, cmd := pressMsg(m, key)
+	if m.region != "EU" {
+		t.Fatalf("ctrl+r should cycle to EU, got %s (%q)", m.region, key.String())
+	}
+	m = settle(t, m, cmd)
+	if m.region != "EU" {
+		t.Fatalf("region=%s", m.region)
+	}
+	if len(m.rows) != 0 {
+		t.Fatalf("EU fixture has no members: %+v", m.rows)
+	}
+	if !strings.Contains(view(m), "No ECUs with decoded catalogs in EU") {
+		t.Fatalf("empty region message:\n%s", view(m))
+	}
+	if strings.Contains(view(m), "GTS+") {
+		t.Fatal(view(m))
+	}
+
+	m = typed(t, opened(t, 90, 24), "zzz-no-such-record")
+	if len(m.rows) != 0 || !strings.Contains(view(m), "Nothing matches") {
+		t.Fatalf("expected no-result hint:\n%s", view(m))
+	}
+}
+
+func TestFiltersWrapInsteadOfOverflow(t *testing.T) {
+	m := opened(t, 40, 16)
+	if len(m.chips) < 2 {
+		t.Fatal(m.chips)
+	}
+	wrapped := false
+	for _, c := range m.chips {
+		if c.line > 0 {
+			wrapped = true
+		}
+		if c.x1 > m.width {
+			t.Fatalf("chip exceeds width: %+v width=%d", c, m.width)
+		}
+	}
+	if !wrapped {
+		t.Fatalf("expected wrapped chips at width 40: %+v", m.chips)
+	}
+	plain := ansi.Strip(view(m))
+	if strings.Contains(plain, "active-test-support-data-definitions") {
+		t.Fatalf("long kind should be compacted:\n%s", plain)
 	}
 }

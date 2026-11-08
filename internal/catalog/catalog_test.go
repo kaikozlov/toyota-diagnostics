@@ -583,3 +583,26 @@ func TestVehicleECUCounts(t *testing.T) {
 		t.Fatalf("%v %v", counts, err)
 	}
 }
+
+func TestListItemsBrowsesWithoutQuery(t *testing.T) {
+	db := fixture(t)
+	rows, err := db.ListItems(context.Background(), "NA", 0, "did", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected DID rows without a search term")
+	}
+	for _, row := range rows {
+		if row.Kind != "did" {
+			t.Fatalf("kind filter leaked %s", row.Kind)
+		}
+	}
+	scoped, err := db.ListItems(context.Background(), "NA", 498, "did", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scoped) == 0 {
+		t.Fatal("expected FRC DIDs")
+	}
+}
