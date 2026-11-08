@@ -27,23 +27,23 @@ func TestParseOptionsAnywhere(t *testing.T) {
 	}
 }
 
-func TestBridgePreservesOriginalLiveCommands(t *testing.T) {
+func TestNativeDiagnosticCommandRouting(t *testing.T) {
 	for _, args := range [][]string{
 		{"monitor", "frc", "LTA"}, {"ecu", "frc", "monitor", "LTA"},
 		{"frc", "read", "0x1601"}, {"dtc", "scan"}, {"active-test", "run", "frc", "1", "--execute"},
-		{"--vehicle", "12704", "frc"}, {"vehicle", "mounted"}, {"transport", "status"},
+		{"vehicle", "mounted"}, {"transport", "status"},
 		{"uds", "raw", "0x763", "0x22", "1033"}, {"ffd", "image", "list"},
 	} {
 		_, cmd, err := parse(args)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !shouldBridge(cmd) {
+		if !runtimeCommand(cmd) {
 			t.Fatalf("live command was intercepted: %q", args)
 		}
 	}
-	for _, args := range [][]string{{"search", "LTA"}, {"vehicle", "Camry"}, {"frc"}, {"frc", "data", "steering"}, {"ecu", "list"}, {"db", "status"}, {"browse"}, {"version"}, {"version", "LTA"}, {"version", "monitor"}} {
-		if shouldBridge(args) {
+	for _, args := range [][]string{{"search", "LTA"}, {"vehicle", "Camry"}, {"frc"}, {"frc", "data", "steering"}, {"ecu", "list"}, {"db", "status"}, {"browse"}, {"version"}, {"version", "LTA"}} {
+		if runtimeCommand(args) {
 			t.Fatalf("native catalog command was bridged: %q", args)
 		}
 	}
@@ -99,22 +99,26 @@ func TestNativeRejectsUnknownOptions(t *testing.T) {
 	if err := run([]string{"search", "LTA", "--limt", "10"}); err == nil || !strings.Contains(err.Error(), "unknown option") {
 		t.Fatal(err)
 	}
-	if shouldBridge([]string{"--bogus", "frc"}) {
+	if runtimeCommand([]string{"--bogus", "frc"}) {
 		t.Fatal("unknown option routed to Python")
 	}
-	if !shouldBridge([]string{"ecu", "frc", "ffd", "list"}) {
+	if !runtimeCommand([]string{"ecu", "frc", "ffd", "list"}) {
 		t.Fatal("FFD shorthand intercepted")
 	}
 }
 
 func TestRuntimeSharedOptionsAndAliases(t *testing.T) {
 	for _, tc := range []struct{ input, want []string }{
-		{[]string{"--json", "vehicle", "show", "--region", "EU"}, []string{"--region", "EU", "vehicle", "show", "--json"}},
-		{[]string{"ecu", "read", "frc", "0x1601"}, []string{"ecu", "frc", "read", "0x1601"}},
+		{[]string{"ecu", "read", "frc", "0x1601"}, []string{"did", "read", "frc", "0x1601"}},
+		{[]string{"frc", "monitor", "LTA"}, []string{"monitor", "frc", "LTA"}},
 	} {
-		if got := runtimeArgs(tc.input); !reflect.DeepEqual(got, tc.want) {
+		if got := normalizeRuntime(tc.input); !reflect.DeepEqual(got, tc.want) {
 			t.Fatalf("%v != %v", got, tc.want)
 		}
+	}
+	opts, args, err := parseRuntime([]string{"--vehicle", "12704", "did", "read", "frc", "--bus=1", "0x1601"})
+	if err != nil || opts.value("vehicle", "") != "12704" || opts.value("bus", "") != "1" || !reflect.DeepEqual(args, []string{"did", "read", "frc", "0x1601"}) {
+		t.Fatalf("%+v %v %v", opts, args, err)
 	}
 }
 
@@ -145,6 +149,8 @@ func TestLiteralSearchOptions(t *testing.T) {
 }
 
 func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("TOYOTA_DIAGNOSTICS_ROOT", "")
 	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
 	for _, args := range [][]string{{"--version"}, {"-V"}} {
 		out, err := capture(func() error { return run(args) })

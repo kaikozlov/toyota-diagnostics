@@ -1,5 +1,4 @@
-// Command toyo is the native, indexed catalog CLI. Live operations reuse the
-// existing Python diagnostic transport through an exec bridge.
+// Command toyo browses the indexed catalog and runs vehicle diagnostics.
 package main
 
 import (
@@ -15,7 +14,6 @@ import (
 	"golang.org/x/term"
 
 	"github.com/kaikozlov/toyota-diagnostics/internal/appenv"
-	"github.com/kaikozlov/toyota-diagnostics/internal/bridge"
 	"github.com/kaikozlov/toyota-diagnostics/internal/catalog"
 	"github.com/kaikozlov/toyota-diagnostics/internal/terminal"
 )
@@ -43,7 +41,7 @@ func run(args []string) error {
 		rest = rest[1:]
 		args = append(append([]string{}, rest...), "--help")
 	}
-	// A bare help request for a bridged command answers from the Go command
+	// A bare help request for a live command answers from the Go command
 	// table, in the house style. Anything deeper (operands, more flags) still
 	// reaches the runtime's own --help.
 	if opt.help && len(rest) == 1 {
@@ -53,11 +51,8 @@ func run(args []string) error {
 			return nil
 		}
 	}
-	if shouldBridge(rest) {
-		if opt.dbSet {
-			return usagef("", "--db selects the offline catalog; use --registry for runtime commands")
-		}
-		return bridge.Exec(runtimeArgs(args))
+	if runtimeCommand(rest) {
+		return runRuntime(opt, rest)
 	}
 	p := terminal.New(os.Stdout)
 	if opt.help {
@@ -223,7 +218,14 @@ func page(buf *bytes.Buffer, height int) {
 }
 
 // report prints err to stderr and returns the process exit code.
+type exitStatus int
+
+func (s exitStatus) Error() string { return fmt.Sprintf("diagnostic result status %d", int(s)) }
+
 func report(err error) int {
+	if status, ok := err.(exitStatus); ok {
+		return int(status)
+	}
 	p := terminal.New(os.Stderr)
 	p.Failure(err)
 	var usage *usageError
