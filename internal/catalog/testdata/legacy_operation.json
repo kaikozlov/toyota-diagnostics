@@ -1,0 +1,71 @@
+{
+  "active_test_pattern_key": 1,
+  "bit_end": 7,
+  "bit_start": 0,
+  "caution_id": 0,
+  "comment_id": 0,
+  "data_limits_mode": 0,
+  "data_max": 255,
+  "data_max_monitor_key": 0,
+  "data_min": 64,
+  "data_min_monitor_key": 0,
+  "help_id": 10001,
+  "id": 1,
+  "info_id": 12157,
+  "initial_value": 128,
+  "initial_value_mode": 1,
+  "initial_value_monitor_key": 0,
+  "name_string_index": 301,
+  "pattern_match_count": 1,
+  "physical_data_key": 115,
+  "presentation_pattern": 2,
+  "primary_key": 1,
+  "prohibition_id": 13321,
+  "kind": "active_test",
+  "name": "Injector volume",
+  "execution": "metadata_only",
+  "runtime_boundary": "Initial value/limits and support-dependent request operations require live reads. Symbolic request encoding is decoded; stop scheduling, transport framing and active executor selection are not supplied by this metadata.",
+  "signal_info": {
+    "$signal_info": 1
+  },
+  "source": "Engine_P3.ddb",
+  "table": 11,
+  "record": 0,
+  "pattern": {
+    "auto_continuation_time": 0,
+    "button_size": 0,
+    "key_invalid_flag": 0,
+    "key_operation_pattern": 9,
+    "lock_time": 0,
+    "maintenance_time": 0,
+    "pattern_display_key": 0,
+    "pattern_key": 1,
+    "repeat_enabled": 1,
+    "repeat_interval": 3000,
+    "timeout_parameter": 0,
+    "source": "Engine_P3.ddb",
+    "table": 12,
+    "record": 0
+  },
+  "request_program": {
+    "encoded": 2,
+    "request_identifier": 1,
+    "constant_or_mask": 255,
+    "generation_7": "identifier-only request; program is bypassed",
+    "nibble_order": "least_significant_first",
+    "variant_boundary": "Base encoder substitutes timeout 6 when table12 +8 is zero; P4 override uses zero literally and implements opcode14. Support operations require generation low5=4 and live DID support bytes.",
+    "service_by_generation_low5": {
+      "1": 109,
+      "2": 109,
+      "7": 61,
+      "default": 48
+    },
+    "support_required": false,
+    "operations": [
+      {
+        "opcode": 2,
+        "operation": "value_low_byte"
+      }
+    ]
+  }
+}

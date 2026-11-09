@@ -200,6 +200,10 @@ func (p Printer) nameDetail(name, detail string, w int, terms []string) string {
 
 // title prints the subject on the left and context flush right.
 func (p Printer) title(left, right string) {
+	if right == "" {
+		p.println(left)
+		return
+	}
 	gap := p.measure() - width(left) - width(right)
 	if gap < 2 {
 		p.println(left)

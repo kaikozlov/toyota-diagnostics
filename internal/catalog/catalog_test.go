@@ -1,102 +1,62 @@
 package catalog
 
 import (
-	"bytes"
-	"compress/zlib"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	"github.com/kaikozlov/toyota-diagnostics/internal/catalog/catalogtest"
 )
 
 func fixture(t *testing.T) *DB {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "catalog.sqlite")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	schema := `
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-INSERT INTO meta VALUES ('schema','toyota-diagnostics-sqlite-v2'),('source_schema','toyota-diagnostics-bundle-v4'),('release','test'),('default_region','NA'),('member_count','2');
-CREATE TABLE ecus (region TEXT,category_id INTEGER,key TEXT,name TEXT,database_name TEXT,generation INTEGER,support_mode TEXT,catalog_member TEXT,counts TEXT);
-INSERT INTO ecus VALUES('NA',498,'frc','Front Recognition Camera 2','FRC_P5.ddb',20,'p5-standard','catalogs/NA/498.json','{"dids":1,"signals":2}');
-INSERT INTO ecus VALUES('NA',405,'eps','Power Steering','EMPS_P5.ddb',20,'p5-standard',null,'{}');
-INSERT INTO ecus VALUES('NA',317,'eps_317','EPS','EPS_P4.ddb',4,'p4',null,'{}');
-INSERT INTO ecus VALUES('NA',372,'engine','Engine','ENGINE_P5.ddb',20,'p5-standard',null,'{}');
-CREATE TABLE vehicles (region TEXT,vehicle_type INTEGER,name TEXT,install_set_ids TEXT);
-CREATE TABLE vehicle_ecus (region TEXT, vehicle_type INTEGER, install_set_id INTEGER, category_id INTEGER, route_selector INTEGER, connection_frame_id INTEGER, route_key TEXT, request_address INTEGER, address_extension INTEGER, transport_kind TEXT);
-INSERT INTO vehicle_ecus VALUES('NA',12704,8119,498,18,0,'498:18',1938,0,'iso15765-phase-family');
-INSERT INTO vehicles VALUES('NA',12704,'Camry HV','[8119,8120]');
-INSERT INTO vehicles VALUES('NA',12999,'Camry','[3]');
-CREATE TABLE items (id INTEGER PRIMARY KEY,region TEXT,category_id INTEGER,kind TEXT,identifier TEXT,name TEXT,detail TEXT,payload TEXT);
-INSERT INTO items VALUES(1,'NA',498,'did','0x1601','LTA Control Condition','','{"name":"LTA Control Condition","bit_start":3,"unit":"deg"}');
-INSERT INTO items VALUES(2,'NA',498,'did','0x1601','LTA Switch Condition Flag','','{}');
-INSERT INTO items VALUES(3,'NA',498,'ffd-signal','0x5285','Arbitration result_lateral ID','TSS3 Operation FFD','{}');
-INSERT INTO items VALUES(4,'NA',0,'adu-signal','0x1593','Arbitration result Lateral ID','ADAS recorder','{}');
-INSERT INTO items VALUES(5,'NA',0,'did','0xFFFF','Mentions 1601 only in the title','also 1601 in detail','{}');
-INSERT INTO items VALUES(6,'NA',0,'did','0x160','Exact short 160','','{}');
-INSERT INTO items VALUES(7,'NA',0,'did','0x16010','Longer 1601 prefix sibling','','{}');
-INSERT INTO items VALUES(20,'NA',372,'ecu','engine','Engine','Powertrain ECU','{}');
-CREATE VIRTUAL TABLE items_fts USING fts5(name,detail,identifier,content='items',content_rowid='id',tokenize='unicode61',prefix='2 3 4');
-INSERT INTO items_fts(items_fts) VALUES('rebuild');
-`
-	if _, err := db.Exec(schema); err != nil {
-		t.Fatal(err)
-	}
-	addMixedDomainSearchRows(t, db)
-	if _, err := db.Exec("INSERT INTO items_fts(items_fts) VALUES('rebuild')"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec("CREATE TABLE item_payloads(item_id INTEGER PRIMARY KEY,data BLOB)"); err != nil {
-		t.Fatal(err)
-	}
-	for id, payload := range map[int]string{1: `{"name":"LTA Control Condition","bit_start":3,"unit":"deg"}`, 2: `{}`, 3: `{}`, 4: `{}`, 5: `{}`, 6: `{}`, 7: `{}`} {
-		var buffer bytes.Buffer
-		writer := zlib.NewWriter(&buffer)
-		if _, err := writer.Write([]byte(payload)); err != nil {
-			t.Fatal(err)
-		}
-		if err := writer.Close(); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.Exec("INSERT INTO item_payloads VALUES (?,?)", id, buffer.Bytes()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	d, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { d.Close() })
-	return d
+	return openFixture(t, fixtureCatalog(t))
 }
 
-func addMixedDomainSearchRows(t *testing.T, db *sql.DB) {
+// fixtureCatalog is the shared search fixture before it is finished, so a test
+// can add records first.
+func fixtureCatalog(t *testing.T) *catalogtest.Catalog {
 	t.Helper()
+	c := catalogtest.New(t)
+	for _, e := range []catalogtest.ECU{
+		{Category: 498, Key: "frc", Name: "Front Recognition Camera 2", Database: "FRC_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/498.json", Counts: `{"dids":1,"signals":2}`},
+		{Category: 405, Key: "eps", Name: "Power Steering", Database: "EMPS_P5.ddb", Generation: 20, SupportMode: "p5-standard"},
+		{Category: 317, Key: "eps_317", Name: "EPS", Database: "EPS_P4.ddb", Generation: 4, SupportMode: "p4"},
+		{Category: 372, Key: "engine", Name: "Engine", Database: "ENGINE_P5.ddb", Generation: 20, SupportMode: "p5-standard"},
+	} {
+		c.ECU(e)
+	}
+	c.Route(catalogtest.Route{Category: 498, Selector: 18, Request: 1938, Response: 1946, Transport: "iso15765-phase-family"})
+	c.Install("NA", 8119, 498, 18, 0, true)
+	c.Vehicle("NA", 12704, "Camry HV", 8119, 8120)
+	c.Vehicle("NA", 12999, "Camry", 3)
+	c.Item(
+		catalogtest.Item{ID: 1, Category: 498, Kind: "did", Identifier: "0x1601", Name: "LTA Control Condition", Payload: map[string]any{"name": "LTA Control Condition", "bit_start": 3, "unit": "deg"}},
+		catalogtest.Item{ID: 2, Category: 498, Kind: "did", Identifier: "0x1601", Name: "LTA Switch Condition Flag"},
+		catalogtest.Item{ID: 3, Category: 498, Kind: "ffd-signal", Identifier: "0x5285", Name: "Arbitration result_lateral ID", Detail: "TSS3 Operation FFD"},
+		catalogtest.Item{ID: 4, Kind: "adu-signal", Identifier: "0x1593", Name: "Arbitration result Lateral ID", Detail: "ADAS recorder"},
+		catalogtest.Item{ID: 5, Kind: "did", Identifier: "0xFFFF", Name: "Mentions 1601 only in the title", Detail: "also 1601 in detail"},
+		catalogtest.Item{ID: 6, Kind: "did", Identifier: "0x160", Name: "Exact short 160"},
+		catalogtest.Item{ID: 7, Kind: "did", Identifier: "0x16010", Name: "Longer 1601 prefix sibling"},
+		catalogtest.Item{ID: 20, Category: 372, Kind: "ecu", Identifier: "engine", Name: "Engine", Detail: "Powertrain ECU"},
+	)
+	addMixedDomainSearchRows(c)
+	return c
+}
+
+func addMixedDomainSearchRows(c *catalogtest.Catalog) {
 	for n := 140; n <= 180; n++ {
-		id := 1000 + n
 		ident := strconv.Itoa(n)
-		_, err := db.Exec("INSERT INTO items VALUES(?, 'NA', 0, 'support-query', ?, ?, '', '{}')",
-			id, ident, "Support query "+ident)
-		if err != nil {
-			t.Fatal(err)
-		}
+		c.Item(catalogtest.Item{ID: int64(1000 + n), Kind: "support-query", Identifier: ident, Name: "Support query " + ident})
 	}
 	for i := 0; i < 25; i++ {
-		_, err := db.Exec("INSERT INTO items VALUES(?, 'NA', 0, 'did', ?, 'Engine', '', '{}')",
-			2000+i, fmt.Sprintf("0xE%03X", i))
-		if err != nil {
-			t.Fatal(err)
-		}
+		c.Item(catalogtest.Item{ID: int64(2000 + i), Kind: "did", Identifier: fmt.Sprintf("0xE%03X", i), Name: "Engine"})
 	}
 }
 
@@ -166,26 +126,42 @@ func TestCategoryLookupAndSourcePreservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, _ := json.Marshal(s)
-	if !strings.Contains(string(encoded), `"source_schema":"toyota-diagnostics-bundle-v4"`) {
-		t.Fatal(string(encoded))
+	if s.Release != "test" || s.DefaultRegion != "NA" || s.Items != 74 || s.Vehicles != 2 || s.ECUs != 4 {
+		t.Fatalf("%+v", s)
 	}
 	if err := d.Verify(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestInvalidSQLiteSchema(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "invalid.db")
-	db, err := sql.Open("sqlite", path)
+func TestOpenRejectsFilesThatAreNotToyoCatalogs(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, text string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	text := write("text.sqlite", "not a database at all, just some text that is long enough")
+	if _, err := Open(text); err == nil || !strings.Contains(err.Error(), "not a toyo catalog") {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "other.sqlite")
+	db, err := sql.Open("sqlite", other)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("CREATE TABLE meta(key TEXT,value TEXT); INSERT INTO meta VALUES('schema','bad')"); err != nil {
+	if _, err := db.Exec("CREATE TABLE meta(key TEXT,value TEXT)"); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
-	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "schema") {
+	if _, err := Open(other); err == nil || !strings.Contains(err.Error(), "not a toyo catalog") {
+		t.Fatal(err)
+	}
+	c := catalogtest.New(t)
+	c.Exec("ALTER TABLE vehicle_definitions DROP COLUMN install_count")
+	if _, err := Open(c.Path()); err == nil || !strings.Contains(err.Error(), "install_count") {
 		t.Fatal(err)
 	}
 }

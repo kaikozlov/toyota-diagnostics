@@ -239,9 +239,12 @@ func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 		t.Fatalf("a missing --db path should name the file: %v", err)
 	}
 	t.Setenv("TOYOTA_CATALOG", "")
+	t.Setenv("TOYO_ROOT", "")
+	t.Setenv("TOYOTA_DIAGNOSTICS_ROOT", "")
+	t.Chdir(t.TempDir())
 	err = run([]string{"search", "LTA"})
-	if err == nil || !strings.Contains(err.Error(), "ghidra_rh850_analysis") || !strings.Contains(err.Error(), "--db PATH") {
-		t.Fatalf("a missing catalog should say how to create or point at one: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "git lfs pull") || !strings.Contains(err.Error(), "--db PATH") {
+		t.Fatalf("a missing catalog should say how to download or point at one: %v", err)
 	}
 }
 

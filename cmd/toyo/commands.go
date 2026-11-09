@@ -85,7 +85,6 @@ var nativeDocs = map[string]commandDoc{
 		usage:   []string{"toyo db [status]", "toyo db verify"},
 		options: []terminal.HelpEntry{
 			{Usage: "--db PATH", Summary: "use another catalog (or $TOYO_CATALOG)"},
-			{Usage: "--bundle PATH", Summary: "matching source bundle, same schema/release (or $TOYO_BUNDLE)"},
 			jsonOpt,
 		},
 	},
@@ -363,7 +362,7 @@ func overview(p terminal.Printer) {
 			{Usage: "toyo COMMAND --help", Summary: "did, rid, uds, can, ffd, observe, customize, …"},
 		}},
 	}, []string{
-		"--region NA|EU|JP   --limit N   --json   --all   --db PATH   --bundle PATH   --version",
+		"--region NA|EU|JP   --limit N   --json   --all   --db PATH   --version",
 		"toyo help COMMAND for details · toyo completion zsh for tab completion",
 	})
 }

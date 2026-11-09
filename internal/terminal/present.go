@@ -369,10 +369,9 @@ func (p Printer) Vehicle(v catalog.Vehicle, candidates []catalog.VehicleECU) {
 
 // Stats prints the catalog's provenance and size.
 func (p Printer) Stats(dbPath string, s catalog.Stats) {
-	p.title(p.accent("catalog")+"  "+p.bold("GTS+ "+s.Release), p.dim(s.Schema))
+	p.title(p.accent("catalog")+"  "+p.bold("GTS+ "+s.Release), "")
 	p.println()
 	p.kv("File", dbPath)
-	p.kv("Source", s.SourceSchema)
 	p.kv("Members", count(s.Members))
 	p.kv("Records", count(s.Items))
 	p.kv("Vehicles", count(s.Vehicles))

@@ -56,7 +56,7 @@ func TestSearchRowsAlignAtEveryWidth(t *testing.T) {
 func TestUnfamiliarKindsStayAligned(t *testing.T) {
 	rows := []catalog.Item{
 		{ID: 1, Kind: "did", ECU: "frc", Identifier: "0x1202", Name: "Known kind"},
-		{ID: 2, Kind: "future-kind-from-a-newer-catalog", ECU: "frc", Identifier: "0x1203", Name: "Kind from a newer catalog"},
+		{ID: 2, Kind: "unlabeled-record-kind-with-a-long-name", ECU: "frc", Identifier: "0x1203", Name: "Kind without a label"},
 	}
 	out := plain(100, func(p Printer) { p.Search("kind", "NA", rows, false) })
 	col := -1
@@ -69,7 +69,7 @@ func TestUnfamiliarKindsStayAligned(t *testing.T) {
 			col = i
 		}
 	}
-	if !strings.Contains(out, "future-kind-f") {
+	if !strings.Contains(out, "unlabeled-rec") {
 		t.Fatal(out)
 	}
 }

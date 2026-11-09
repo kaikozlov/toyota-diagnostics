@@ -114,7 +114,7 @@ func (p Printer) Item(it catalog.ItemDetail) {
 		p.hintLines(fmt.Sprintf("record #%d", it.ID))
 		return
 	}
-	p.footer(fmt.Sprintf("record #%d", it.ID), "--json prints the complete source record")
+	p.footer(fmt.Sprintf("record #%d", it.ID), "--json prints the complete diagnostic record")
 }
 
 func bits(start, end int64) string {

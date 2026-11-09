@@ -2,16 +2,15 @@
 package catalog
 
 import (
-	"bytes"
-	"compress/zlib"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
+	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -21,12 +20,38 @@ import (
 	"github.com/kaikozlov/toyota-diagnostics/internal/suggest"
 )
 
-const schema = "toyota-diagnostics-sqlite-v2"
-
 type DB struct {
-	db     *sql.DB
-	Path   string
-	bundle *Bundle
+	supportMembers        cachedMetadata
+	supportQueries        cachedMetadata
+	supportFreezeQueries  cachedMetadata
+	supportGroups         cachedMetadata
+	didMembership         membershipCache
+	dtcMembership         membershipCache
+	displayMembership     membershipCache
+	db                    *sql.DB
+	Path                  string
+	signalRecords         cachedMetadata
+	vehicleIndexRecords   cachedMetadata
+	topologyRecords       cachedMetadata
+	diagnosticCodes       cachedMetadata
+	operationDefinitions  cachedMetadata
+	operationPlans        cachedMetadata
+	behaviorCodes         cachedMetadata
+	signalObservations    cachedMetadata
+	nativeRecorders       [6]cachedMetadata
+	decodedMonitors       [13]cachedMetadata
+	legacyFreezeSignals   cachedMetadata
+	legacyOperations      cachedMetadata
+	legacyConditions      cachedMetadata
+	legacyResponses       cachedMetadata
+	legacyDynamics        cachedMetadata
+	documentCache         cachedDocument
+	ecuConfigurationCache cachedDocument
+	workStandards         cachedMetadata
+	workPatterns          cachedMetadata
+	workFactors           cachedMetadata
+	decodedStatements     workStatementCache
+	workStatements        workStatementCache
 }
 
 type Item struct {
@@ -79,8 +104,6 @@ type VehicleECU struct {
 }
 
 type Stats struct {
-	Schema        string `json:"schema"`
-	SourceSchema  string `json:"source_schema"`
 	Release       string `json:"release"`
 	DefaultRegion string `json:"default_region"`
 	Members       int    `json:"members"`
@@ -89,9 +112,22 @@ type Stats struct {
 	ECUs          int    `json:"ecus"`
 }
 
+// ErrLFSPointer reports a checkout whose catalog was never downloaded.
+var ErrLFSPointer = errors.New("Git LFS pointer, not the catalog; run git lfs pull in the checkout, or pass --db PATH")
+
 func Open(path string) (*DB, error) {
 	if path == "" {
 		return nil, errors.New("no catalog configured; pass --db PATH or set TOYO_CATALOG")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	var header [64]byte
+	n, _ := f.Read(header[:])
+	f.Close()
+	if strings.HasPrefix(string(header[:n]), "version https://git-lfs.github.com/spec/v1") {
+		return nil, fmt.Errorf("%s: %w", path, ErrLFSPointer)
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -103,29 +139,56 @@ func Open(path string) (*DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	d := &DB{db: db, Path: abs}
-	var version string
-	if err := db.QueryRow("SELECT value FROM meta WHERE key='schema'").Scan(&version); err != nil {
+	if err := requireTables(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("invalid Toyota catalog %s: %w", abs, err)
+		return nil, fmt.Errorf("%s is not a toyo catalog (%v)", abs, err)
 	}
-	if version != schema {
-		db.Close()
-		return nil, fmt.Errorf("unsupported Toyota catalog schema %q (want %q)", version, schema)
+	return &DB{db: db, Path: abs}, nil
+}
+
+// requiredColumns are the tables and columns every read path depends on. A
+// file without them is not a toyo catalog, so Open refuses it up front.
+var requiredColumns = map[string]string{
+	"meta":                  "key,value",
+	"ecus":                  "region,category_id,key,name,database_name,generation,support_mode,catalog_member,counts",
+	"item_occurrences":      "id,region_id,category_id,record_id,document_id,pointer_id",
+	"search_records":        "id,kind_id,identifier_id,name_id,detail_id",
+	"search_kinds":          "id,name",
+	"search_regions":        "id,name",
+	"text_values":           "id,value",
+	"owner_ranges":          "region_id,category_id,first_id,last_id",
+	"item_count_rows":       "region_id,category_id,kind_id,count",
+	"items_fts":             "rowid,name,detail,identifier",
+	"source_documents":      "id,member,data",
+	"source_document_parts": "document_id,pointer_id,data",
+	"source_pointers":       "id,pointer",
+	"vehicle_definitions":   "id,region_id,vehicle_type,name_id,install_count",
+}
+
+func requireTables(db *sql.DB) error {
+	tables := make([]string, 0, len(requiredColumns))
+	for table := range requiredColumns {
+		tables = append(tables, table)
 	}
-	return d, nil
+	sort.Strings(tables)
+	for _, table := range tables {
+		rows, err := db.Query("SELECT " + requiredColumns[table] + " FROM " + table + " LIMIT 0")
+		if err != nil {
+			if strings.Contains(err.Error(), "file is not a database") {
+				return errors.New("not an SQLite database")
+			}
+			return fmt.Errorf("%s: %v", table, err)
+		}
+		rows.Close()
+	}
+	return nil
 }
 
 func (d *DB) Close() error {
-	var err error
-	if d.bundle != nil {
-		err = d.bundle.Close()
-		d.bundle = nil
-	}
 	if d.db != nil {
-		err = errors.Join(err, d.db.Close())
+		return d.db.Close()
 	}
-	return err
+	return nil
 }
 
 func (d *DB) Meta(ctx context.Context, key string) (string, error) {
@@ -140,7 +203,6 @@ func (d *DB) Stats(ctx context.Context) (Stats, error) {
 		key string
 		dst *string
 	}{
-		{"schema", &s.Schema}, {"source_schema", &s.SourceSchema},
 		{"release", &s.Release}, {"default_region", &s.DefaultRegion},
 	} {
 		value, err := d.Meta(ctx, row.key)
@@ -160,7 +222,7 @@ func (d *DB) Stats(ctx context.Context) (Stats, error) {
 	for _, row := range []struct {
 		table string
 		dst   *int
-	}{{"items", &s.Items}, {"vehicles", &s.Vehicles}, {"ecus", &s.ECUs}} {
+	}{{"item_occurrences", &s.Items}, {"vehicle_definitions", &s.Vehicles}, {"ecus", &s.ECUs}} {
 		n, err := d.rowCount(ctx, row.table)
 		if err != nil {
 			return s, err
@@ -643,7 +705,7 @@ func (d *DB) ECUItems(ctx context.Context, e ECU, kind, query string, limit int)
 	}
 	pattern := "%" + escapeLike(query) + "%"
 	rows, err := d.db.QueryContext(ctx, `
-SELECT id,kind,region,category_id,identifier,name,detail FROM items
+SELECT id,kind,region,category_id,identifier,name,detail FROM owner_items
 WHERE region=? AND category_id=? AND kind=? AND
 (identifier LIKE ? ESCAPE '\' OR name LIKE ? ESCAPE '\' OR detail LIKE ? ESCAPE '\')
 ORDER BY identifier COLLATE NOCASE, id LIMIT ?`,
@@ -672,7 +734,7 @@ func (d *DB) ItemsByIdentifier(ctx context.Context, e ECU, ident string) ([]Item
 		return nil, nil
 	}
 	rows, err := d.db.QueryContext(ctx, `
-SELECT id,kind,region,category_id,identifier,name,detail FROM items
+SELECT id,kind,region,category_id,identifier,name,detail FROM owner_items
 WHERE region=? AND category_id=? AND kind NOT IN ('ecu','vehicle')
   AND replace(lower(identifier),'0x','')=?
 ORDER BY kind, id`, e.Region, e.CategoryID, want)
@@ -723,7 +785,7 @@ func (d *DB) ECURecords(ctx context.Context, e ECU, kind string, limit int) ([]I
 		limit = 5000
 	}
 	rows, err := d.db.QueryContext(ctx, `
-SELECT id,kind,region,category_id,identifier,name,detail FROM items
+SELECT id,kind,region,category_id,identifier,name,detail FROM owner_items
 WHERE region=? AND category_id=? AND kind NOT IN ('ecu','vehicle') AND (?='' OR kind=?)
 ORDER BY kind, identifier COLLATE NOCASE, id LIMIT ?`, e.Region, e.CategoryID, kind, kind, limit)
 	if err != nil {
@@ -752,12 +814,48 @@ func (d *DB) ListItems(ctx context.Context, region string, category int, kind st
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.db.QueryContext(ctx, `
-SELECT i.id,i.kind,i.region,i.category_id,coalesce(e.key,''),coalesce(e.name,''),i.identifier,i.name,i.detail
-FROM items i LEFT JOIN ecus e ON e.region=i.region AND e.category_id=i.category_id
-WHERE i.region=? AND (?=0 OR i.category_id=?) AND (?='' OR i.kind=?)
-ORDER BY i.kind, i.identifier COLLATE NOCASE, i.id LIMIT ?`,
-		region, category, category, kind, kind, limit)
+	if kind == "" {
+		// Kind is the leading sort key. Read only enough ordered families to
+		// fill the page instead of sorting every record in the region.
+		kinds, err := d.Kinds(ctx, region, category)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]Item, 0)
+		for _, family := range kinds {
+			if family == "" {
+				return nil, fmt.Errorf("catalog contains an empty record kind")
+			}
+			rows, err := d.ListItems(ctx, region, category, family, limit-len(out))
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, rows...)
+			if len(out) >= limit {
+				break
+			}
+		}
+		return out, nil
+	}
+	query := `SELECT i.id,i.kind,i.region,i.category_id,coalesce(e.key,''),coalesce(e.name,''),i.identifier,i.name,i.detail
+FROM owner_items i LEFT JOIN ecus e ON e.region=i.region AND e.category_id=i.category_id
+WHERE i.region=?`
+	args := []any{region}
+	if category != 0 {
+		query += " AND i.category_id=?"
+		args = append(args, category)
+	}
+	if kind != "" {
+		query += " AND i.kind=?"
+		args = append(args, kind)
+		if category == 0 {
+			query += kindOwnerPredicate
+			args = append(args, region, kind)
+		}
+	}
+	query += " ORDER BY i.kind,i.identifier COLLATE NOCASE,i.id LIMIT ?"
+	args = append(args, limit)
+	rows, err := d.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -846,7 +944,7 @@ ORDER BY v.category_id, v.route_selector, v.install_set_id`, v.Region, v.Type)
 // VehicleECUCounts maps each vehicle type to how many distinct ECUs its
 // install sets declare, in one pass.
 func (d *DB) VehicleECUCounts(ctx context.Context, region string) (map[int]int, error) {
-	rows, err := d.db.QueryContext(ctx, `SELECT vehicle_type, count(DISTINCT category_id) FROM vehicle_ecus WHERE region=? GROUP BY vehicle_type`, region)
+	rows, err := d.db.QueryContext(ctx, `SELECT vehicle_type,ecu_count FROM vehicle_ecu_counts WHERE region=?`, region)
 	if err != nil {
 		return nil, err
 	}
@@ -866,29 +964,24 @@ func (d *DB) VehicleECUCounts(ctx context.Context, region string) (map[int]int, 
 // current catalog; callers should not carry them across catalog replacements.
 func (d *DB) Item(ctx context.Context, id int64) (ItemDetail, error) {
 	var result ItemDetail
-	var compressed []byte
-	err := d.db.QueryRowContext(ctx, `SELECT i.id,i.kind,i.region,i.category_id,
- coalesce(e.key,''),coalesce(e.name,''),i.identifier,i.name,i.detail,p.data
- FROM items i JOIN item_payloads p ON p.item_id=i.id LEFT JOIN ecus e ON e.region=i.region AND e.category_id=i.category_id
- WHERE i.id=?`, id).Scan(&result.ID, &result.Kind, &result.Region, &result.CategoryID,
-		&result.ECU, &result.ECUName, &result.Identifier, &result.Name, &result.Detail, &compressed)
+	err := d.db.QueryRowContext(ctx, `SELECT id,kind,region,category_id,identifier,name,detail
+ FROM items WHERE id=?`, id).Scan(&result.ID, &result.Kind, &result.Region, &result.CategoryID,
+		&result.Identifier, &result.Name, &result.Detail)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, fmt.Errorf("no catalog item %d", id)
 	}
 	if err != nil {
 		return result, err
 	}
-	reader, err := zlib.NewReader(bytes.NewReader(compressed))
+	// A LEFT JOIN to a derived ECU view can materialize every ECU before
+	// selecting one item. This owner lookup stays indexed.
+	err = d.db.QueryRowContext(ctx, `SELECT key,name FROM ecus WHERE region=? AND category_id=?`, result.Region, result.CategoryID).Scan(&result.ECU, &result.ECUName)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return result, err
+	}
+	payload, err := d.itemPayloadBytes(ctx, id)
 	if err != nil {
 		return result, fmt.Errorf("invalid payload for catalog item %d: %w", id, err)
-	}
-	defer reader.Close()
-	payload, err := io.ReadAll(reader)
-	if err != nil {
-		return result, fmt.Errorf("read catalog item %d: %w", id, err)
-	}
-	if !json.Valid(payload) {
-		return result, fmt.Errorf("invalid payload for catalog item %d", id)
 	}
 	result.Payload = json.RawMessage(payload)
 	return result, nil

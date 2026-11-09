@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -131,8 +130,10 @@ func (r *runtimeApp) canCommand(a []string) error {
 		if r.profile.Vehicle == nil {
 			return fmt.Errorf("CAN topology requires --vehicle TYPE")
 		}
-		key := strconv.Itoa(runtimeNumber(r.profile.Vehicle["vehicle_type"]))
-		rows := runtimeRows(runtimeMap(r.profile.Regional["can_topology"])[key])
+		rows, err := r.db.VehicleTopology(r.ctx, r.profile.Region, runtimeNumber(r.profile.Vehicle["vehicle_type"]))
+		if err != nil {
+			return err
+		}
 		if len(rows) == 0 {
 			return fmt.Errorf("catalog does not carry GTS CAN topology for this vehicle")
 		}

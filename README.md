@@ -1,40 +1,15 @@
 # toyo-cli
 
-Independent open-source diagnostics for Toyota vehicles. Not affiliated with
-or endorsed by Toyota Motor Corporation.
+Open-source diagnostics for Toyota vehicles. Not affiliated with or endorsed by Toyota Motor Corporation.
 
-`toyo` reads a recovered Techstream/GTS+ catalog: ECUs, Data List signals,
-trouble codes, Active Tests, vehicles, and related records. This repository
-does not ship Toyota DLL, DDB, or EXE files, and it does not ship the SQLite
-catalog. You generate that catalog from the sibling `ghidra_rh850_analysis`
-tree.
-
-Offline catalog work is local. It needs no car, no Panda, and no Python.
-Catalog browsing, decoding, planning, and live diagnostics all run in Go
-over the same SQLite catalog. Python is used only by the private raw-CAN
-Panda adapter; J2534 is native Go.
+`toyo` uses a catalog of ECUs, Data List signals, trouble codes, Active Tests, vehicles, and related records.
 
 ## Run it
 
 You need Go 1.27.3. From this checkout, `./toyo` builds `build/toyo` the first
-time you run it.
-
-Put the generated catalog at `build/catalog.sqlite` (ignored, not source).
-From `ghidra_rh850_analysis` next to this tree:
-
-```bash
-tools/gts bundle sqlite --out ../toyota-diagnostics/build/catalog.sqlite
-```
-
-If the catalog lives somewhere else, pass `--db PATH` or set `TOYO_CATALOG`.
-SQLite-only live use has explicit `--vehicle`, exported request addresses,
-inferred RX (`TX+8`), and no session/support tables. A matching `--bundle`
-or `TOYO_BUNDLE` (same schema and release) overlays those lost fields,
-including recovered response/legislated addresses on matching route keys.
-Unmatched bundles are rejected. `TOYO_REGION` selects `NA`, `EU`, or `JP`.
-The older `TOYOTA_*` names for these settings still work.
-
-`toyo help` works without a catalog.
+time you run it. The database ships through Git LFS; run `git lfs pull` if
+you cloned without downloading LFS files. `--db PATH` or `TOYO_CATALOG` picks
+another database, and `TOYO_REGION` picks `NA`, `EU`, or `JP`.
 
 ```bash
 ./toyo help
@@ -61,7 +36,7 @@ change the filter only when the search box is empty.
 Commands listed under Live in `toyo help` — monitor, scan, DTC, Active Tests,
 and the rest — need a vehicle link. They are not required for browsing the
 catalog. Offline commands and J2534 need no Python. For Panda, point
-`TOYO_PYTHON` (or the older `TOYOTA_PYTHON`) at an environment that already
+`TOYO_PYTHON` (or `TOYOTA_PYTHON`) at an environment that already
 has upstream Panda. On a comma, that adapter reuses `/usr/local/venv` and
 `/data/openpilot`; do not create another diagnostics virtualenv.
 

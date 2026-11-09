@@ -15,7 +15,6 @@ import (
 type options struct {
 	db        string
 	dbSet     bool
-	bundle    string
 	region    string
 	json      bool
 	help      bool
@@ -40,7 +39,7 @@ func usagef(command, format string, args ...any) error {
 }
 
 func parse(args []string) (options, []string, error) {
-	opt := options{db: appenv.Catalog(), bundle: appenv.Bundle(), region: "NA", limit: 50, literalAt: -1}
+	opt := options{db: appenv.Catalog(), region: "NA", limit: 50, literalAt: -1}
 	if r := appenv.Region(); r != "" {
 		opt.region = r
 	}
@@ -59,7 +58,7 @@ func parse(args []string) (options, []string, error) {
 			key = token
 		}
 		switch key {
-		case "--db", "--bundle", "--region", "--limit":
+		case "--db", "--region", "--limit":
 			if !strings.Contains(token, "=") {
 				i++
 				if i >= len(args) {
@@ -71,8 +70,6 @@ func parse(args []string) (options, []string, error) {
 			case "--db":
 				opt.db = value
 				opt.dbSet = true
-			case "--bundle":
-				opt.bundle = value
 			case "--region":
 				opt.region = value
 			case "--limit":
@@ -114,18 +111,19 @@ func findDB(explicit string) string {
 		return p
 	}
 	var candidates []string
-	if wd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, wd)
+	// Prefer this installation over an unrelated checkout in the working directory.
+	if root := appenv.Root(); root != "" {
+		candidates = append(candidates, root)
 	}
 	if exe, err := os.Executable(); err == nil {
 		candidates = append(candidates, filepath.Dir(exe))
 	}
-	if root := appenv.Root(); root != "" {
-		candidates = append(candidates, root)
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, wd)
 	}
 	for _, start := range candidates {
 		for dir := start; ; dir = filepath.Dir(dir) {
-			p := filepath.Join(dir, "build", "catalog.sqlite")
+			p := filepath.Join(dir, "catalog", "catalog.sqlite")
 			if info, err := os.Stat(p); err == nil && !info.IsDir() {
 				return p
 			}
@@ -144,7 +142,7 @@ func encode(value any) error {
 	return enc.Encode(value)
 }
 
-var errNoCatalog = errors.New("runtime catalog not found (build/catalog.sqlite); generate it from ghidra_rh850_analysis with `tools/gts bundle sqlite --out build/catalog.sqlite`, or pass --db PATH")
+var errNoCatalog = errors.New("catalog/catalog.sqlite not found; run git lfs pull in the checkout, or pass --db PATH")
 
 func isLiveVerb(s string) bool { return s == "monitor" || s == "read" || s == "watch" }
 

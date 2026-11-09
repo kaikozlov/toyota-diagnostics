@@ -1,49 +1,19 @@
 package main
 
 import (
-	"bytes"
-	"compress/zlib"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/kaikozlov/toyota-diagnostics/internal/catalog"
 	"github.com/kaikozlov/toyota-diagnostics/internal/diagnostic"
 	"github.com/kaikozlov/toyota-diagnostics/internal/transport"
 )
 
 func readApp(t *testing.T, document map[string]any) *runtimeApp {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "read.sqlite")
-	db, e := sql.Open("sqlite", path)
-	if e != nil {
-		t.Fatal(e)
-	}
-	_, e = db.Exec("CREATE TABLE meta(key TEXT,value TEXT); INSERT INTO meta VALUES ('schema','toyota-diagnostics-sqlite-v2'); CREATE TABLE runtime_documents(member TEXT PRIMARY KEY,data BLOB); CREATE TABLE item_sources(item_id INTEGER PRIMARY KEY,member TEXT,pointer TEXT); CREATE TABLE item_payloads(item_id INTEGER PRIMARY KEY,data BLOB)")
-	if e != nil {
-		t.Fatal(e)
-	}
-	raw, e := json.Marshal(document)
-	if e != nil {
-		t.Fatal(e)
-	}
-	var b bytes.Buffer
-	w := zlib.NewWriter(&b)
-	w.Write(raw)
-	w.Close()
-	if _, e = db.Exec("INSERT INTO runtime_documents VALUES('ecu.json',?)", b.Bytes()); e != nil {
-		t.Fatal(e)
-	}
-	db.Close()
-	c, e := catalog.Open(path)
-	if e != nil {
-		t.Fatal(e)
-	}
-	t.Cleanup(func() { c.Close() })
+	c := openDocument(t, "ecu.json", document)
 	p := &diagnostic.Profile{DB: c, Region: "NA", Index: map[string]any{}, Regional: map[string]any{"selected_categories": map[string]any{"405": map[string]any{"catalog_member": "ecu.json"}}}, ECUs: []diagnostic.EcuSpec{{Key: "eps", Name: "Steering", CategoryID: 405}}}
 	return &runtimeApp{ctx: context.Background(), db: c, profile: p, opt: runtimeOptions{values: map[string][]string{}, flags: map[string]bool{}, json: true}}
 }

@@ -26,14 +26,14 @@ func TestProductCommandIdentity(t *testing.T) {
 	}
 }
 
-func TestToyoEnvOverridesLegacyAlias(t *testing.T) {
-	t.Setenv("TOYOTA_CATALOG", "/legacy.sqlite")
+func TestToyoEnvOverridesAlias(t *testing.T) {
+	t.Setenv("TOYOTA_CATALOG", "/alias.sqlite")
 	t.Setenv("TOYO_CATALOG", "/preferred.sqlite")
 	if got := appenv.Catalog(); got != "/preferred.sqlite" {
 		t.Fatalf("preferred catalog %q", got)
 	}
 	t.Setenv("TOYO_CATALOG", "")
-	if got := appenv.Catalog(); got != "/legacy.sqlite" {
-		t.Fatalf("legacy catalog %q", got)
+	if got := appenv.Catalog(); got != "/alias.sqlite" {
+		t.Fatalf("alias catalog %q", got)
 	}
 }
