@@ -2,62 +2,23 @@ package catalog
 
 import (
 	"bytes"
-	"compress/zlib"
 	"context"
-	"database/sql"
-	"encoding/json"
 	"testing"
+
+	"github.com/kaikozlov/toyota-diagnostics/internal/catalog/catalogtest"
 )
 
-// New exported capabilities must remain queryable without a consumer allowlist.
+// Every stored record kind is queryable without a consumer allowlist.
 func TestExpandedCatalogKinds(t *testing.T) {
-	d := fixture(t)
+	c := fixtureCatalog(t)
 	ctx := context.Background()
-	path := d.Path
-	if err := d.Close(); err != nil {
-		t.Fatal(err)
-	}
-	writable, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer writable.Close()
 	kinds := []string{"data-list", "generic-ffd-signal", "rob-code", "rob-signal", "command", "selector", "active-test-group", "customize-group", "customize-item", "customize-probe", "legacy-pid", "legacy-did", "legacy-freeze-frame", "legacy-active-test"}
 	for n, kind := range kinds {
-		id := int64(100 + n)
-		payload, err := json.Marshal(map[string]any{"name": "CoverageMarker", "semantic_status": "partial", "nested": map[string]any{"field": 7}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var compressed bytes.Buffer
-		writer := zlib.NewWriter(&compressed)
-		if _, err := writer.Write(payload); err != nil {
-			t.Fatal(err)
-		}
-		if err := writer.Close(); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := writable.Exec("INSERT INTO items VALUES(?, 'NA', 498, ?, 'sample', 'CoverageMarker', 'partial', ?)", id, kind, string(payload)); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := writable.Exec("INSERT INTO item_payloads VALUES(?, ?)", id, compressed.Bytes()); err != nil {
-			t.Fatal(err)
-		}
+		c.Item(catalogtest.Item{ID: int64(100 + n), Category: 498, Kind: kind, Identifier: "sample", Name: "CoverageMarker", Detail: "partial",
+			Payload: map[string]any{"name": "CoverageMarker", "semantic_status": "partial", "nested": map[string]any{"field": 7}}})
 	}
-	if _, err := writable.Exec(`UPDATE ecus SET counts='{"signals":1,"items_by_kind":{"rob-signal":1}}' WHERE region='NA' AND category_id=498`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writable.Exec("INSERT INTO items_fts(items_fts) VALUES('rebuild')"); err != nil {
-		t.Fatal(err)
-	}
-	if err := writable.Close(); err != nil {
-		t.Fatal(err)
-	}
-	d, err = Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
+	c.Exec(`UPDATE ecus SET counts='{"signals":1,"items_by_kind":{"rob-signal":1}}' WHERE region='NA' AND category_id=498`)
+	d := openFixture(t, c)
 	ecu, err := d.ECU(ctx, "NA", "frc")
 	if err != nil {
 		t.Fatal(err)

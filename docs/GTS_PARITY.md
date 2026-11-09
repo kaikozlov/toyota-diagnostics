@@ -1,16 +1,14 @@
 # GTS+ parity roadmap
 
-This document tracks `toyota-diagnostics` against the pinned current Toyota GTS+ corpus used by `ghidra_rh850_analysis`.
+This document tracks diagnostic parity against the Toyota GTS+ release represented by the shipped catalog.
 
 Current comparison target: **GTS+ 2026.03.002.02** from the 2026-06-18 distribution.
 
-The reverse-engineering source of truth remains `ghidra_rh850_analysis`. This repository consumes its public SQLite projection (`tools/gts bundle sqlite`) and implements runtime behavior; that exporter does not store `index.json` or a `runtime_documents` table.
-
-SQLite-only live use therefore has explicit vehicle selection, exported physical request addresses, inferred response addresses (`request+8`), and default/absent session control. A matching source bundle (`--bundle`, same `schema` and `release` as `meta.source_schema` / `meta.release`) can overlay lost session, support, topology, and per-route response/legislated fields when the route key matches. Unmatched or unidentified bundles are rejected rather than mixed with the projection. Without those overlay fields, legislated functional-clear completeness is unknown (not complete), and monitor skips session enter when no lifecycle metadata is present.
+The shipped catalog contains diagnostic facts and runtime definitions, not the research extraction graph. This repository implements runtime behavior without requiring another checkout.
 
 ## Current baseline
 
-The universal bundle already preserves the current Toyota resolver and routing model well:
+The database already preserves the current Toyota resolver and routing model well:
 
 - NA/EU/JP vehicle databases and VIN decision tables;
 - all **2,136 Toyota ECU category identities per region**;
@@ -98,7 +96,7 @@ Still needed for GTS+ Health Check parity:
 
 ### 5. DTC and generic freeze-frame families
 
-Current DTC reading is the ordinary UDS `ReadDTCInformation` path plus catalog decoding, with recovered clear behavior. For ordinary current-P5 categories, the generated bundle exports `p5_dtc_snapshot` only when Toyota's actual role-`0xB5` fallback selects `GetEachFrzFrmDatP5_DT.dll` **and** that category has exact selector `0xCF = 19 04 00 00 00 FF -> 59 04`. Health Check substitutes each returned 24-bit DTC, requests all snapshot records (`0xFF`), and preserves Toyota's raw `record | identifier_count | DID | length | data` structure. On the selected Camry profile that contract is proven for 32 of 34 logical ECUs; categories without the exact frame remain `not_available` rather than receiving a generic UDS guess. The generated `generic_ffd` schema now also mirrors `CGetFrzFrmDatP5Base`: FFD-member monitor rows are selected by snapshot DID and the `0x02` membership flag, type61 supplies local support, type80 supplies optional same-record DID/bit conditions, and the OEM physical/unit/pattern metadata renders each admitted signal. Raw bytes remain in the snapshot alongside decoded values.
+Current DTC reading is the ordinary UDS `ReadDTCInformation` path plus catalog decoding, with recovered clear behavior. For ordinary current-P5 categories, the database stores `p5_dtc_snapshot` only when Toyota's actual role-`0xB5` fallback selects `GetEachFrzFrmDatP5_DT.dll` **and** that category has exact selector `0xCF = 19 04 00 00 00 FF -> 59 04`. Health Check substitutes each returned 24-bit DTC, requests all snapshot records (`0xFF`), and preserves Toyota's raw `record | identifier_count | DID | length | data` structure. On the selected Camry profile that contract is proven for 32 of 34 logical ECUs; categories without the exact frame remain `not_available` rather than receiving a generic UDS guess. The generated `generic_ffd` schema now also mirrors `CGetFrzFrmDatP5Base`: FFD-member monitor rows are selected by snapshot DID and the `0x02` membership flag, type61 supplies local support, type80 supplies optional same-record DID/bit conditions, and the OEM physical/unit/pattern metadata renders each admitted signal. Raw bytes remain in the snapshot alongside decoded values.
 
 Missing families/semantics include:
 - historical/pending/time-series DTC variants;
@@ -120,7 +118,7 @@ The biggest unlocks are:
 
 ### 7. Customize
 
-**Static catalog browsing and modern single-item execution are landed.** The universal bundle carries each region's current master-level `CustSignList` / `CustItem` / `PossibleToSet` / body-type-probe data as a lazy `customize/<region>/0.json` member. The CLI exposes `customize groups`, `customize items`, and `customize info`, preserving body type, OEM names/values, live target category, and current/write geometry without projecting Customize into ordinary ECU Data List tables.
+**Static catalog browsing and modern single-item execution are landed.** The database carries each region's current master-level `CustSignList` / `CustItem` / `PossibleToSet` / body-type-probe data as a lazy `customize/<region>/0.json` member. The CLI exposes `customize groups`, `customize items`, and `customize info`, preserving body type, OEM names/values, live target category, and current/write geometry without projecting Customize into ordinary ECU Data List tables.
 
 For installed standard P5/P6 targets, `customize read` and `customize set` reproduce current GTS `SetCustom`: P5/P6 DID support admission, selector-`0xCA` `22 <write_did>` current-data acquisition, exact MSB0 clear-and-OR field merge (including mode-1 preceding-byte support), selector-`0x74` `2E <write_did> || merged bytes`, and post-write re-read verification. All 1,933 current-generation NA rows fit the recovered merge modes 0/1; all 287 mode-1 rows are one-bit fields.
 
@@ -133,7 +131,7 @@ Remaining Customize gaps are narrower:
 
 ### 8. Utilities / registration / learning / calibration
 
-Current P5/P6 type-77 **Simple Operation Utility** execution is landed for standard Toyota support modes: the bundle exports the exact `D8/D9/DA` RoutineControl geometry and fixed command bytes, while the runtime follows the recovered category lifecycle and applies Toyota's live RID-support inventory before any acknowledged mutation. Generic category-0 utility/plugin-family browsing remains metadata-only.
+Current P5/P6 type-77 **Simple Operation Utility** execution is landed for standard Toyota support modes: the database stores the exact `D8/D9/DA` RoutineControl geometry and fixed command bytes, while the runtime follows the recovered category lifecycle and applies Toyota's live RID-support inventory before any acknowledged mutation. Generic category-0 utility/plugin-family browsing remains metadata-only.
 
 Remaining work:
 
@@ -172,7 +170,7 @@ TSS3 Operation/Image FFD remains a richer specialized decoder on top of its dedi
 
 ### 11. Live CAN Bus Check
 
-The bundle carries the OEM CAN Bus Check topology, but the CLI only renders that topology. It does not yet reproduce GTS+'s live network-health workflow or CAN-bus-specific DTC acquisition.
+The database carries the OEM CAN Bus Check topology, but the CLI only renders that topology. It does not yet reproduce GTS+'s live network-health workflow or CAN-bus-specific DTC acquisition.
 
 ### 12. Calibration Update Wizard / ECU reprogramming
 
@@ -186,7 +184,7 @@ The runtime intentionally has **no** flash workflow today. GTS+/CUW parity would
 - flash-recovery/resume state;
 - TIS/RKS authorization and calibration-file acquisition where Toyota requires them.
 
-Most of the static host-side machinery has already been recovered in `ghidra_rh850_analysis`, but this should come after diagnostic parity because a wrong diagnostic read is inconvenient while a wrong flash writer can strand an ECU.
+Firmware writing should come after diagnostic parity because a wrong diagnostic read is inconvenient while a wrong flash writer can strand an ECU.
 
 ### 13. Online Toyota/TIS services
 
@@ -230,7 +228,7 @@ The J2534 backend should support:
 - device discovery/selection;
 - `PassThruOpen` / `PassThruConnect` / filters / read/write / IOCTL configuration;
 - CAN and ISO15765 first, then ISO9141/ISO14230 if needed for older Toyota generations;
-- Toyota category routing from the same generated bundle used by Panda;
+- Toyota category routing from the same database used by Panda;
 - functional and physical addressing;
 - periodic tester-present where the Toyota lifecycle requires it;
 - raw CAN receive mode for capture where the VCI supports it.

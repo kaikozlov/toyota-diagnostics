@@ -2,33 +2,22 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/kaikozlov/toyota-diagnostics/internal/catalog/catalogtest"
 )
 
-func TestOperationListIsBoundedWithoutRuntimeDocuments(t *testing.T) {
-	cliFixture(t)
-	db, e := sql.Open("sqlite", os.Getenv("TOYOTA_CATALOG"))
-	if e != nil {
-		t.Fatal(e)
-	}
+func TestOperationListIsBounded(t *testing.T) {
+	c := cliCatalog(t)
 	for i := 9; i < 30; i++ {
-		_, e = db.Exec("INSERT INTO items SELECT ?,region,category_id,kind,identifier,name,detail FROM items WHERE id=5", i)
-		if e != nil {
-			t.Fatal(e)
-		}
-		_, e = db.Exec("INSERT INTO item_payloads SELECT ?,data FROM item_payloads WHERE item_id=5", i)
-		if e != nil {
-			t.Fatal(e)
-		}
+		c.Item(catalogtest.Item{ID: int64(i), Category: 498, Kind: "active-test", Identifier: "0xA429", Name: "LTA Steering Vibration", Detail: "routine executable", Payload: map[string]any{"kind": "routine", "execution": "executable"}})
 	}
-	db.Close()
+	useCatalog(t, c)
 	out := output(t, "active-test", "list", "--json", "--limit", "2")
 	var rows []map[string]any
-	if e = json.Unmarshal([]byte(out), &rows); e != nil {
+	if e := json.Unmarshal([]byte(out), &rows); e != nil {
 		t.Fatal(e)
 	}
 	if len(rows) != 2 || len(out) > 4096 {

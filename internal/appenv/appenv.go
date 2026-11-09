@@ -1,5 +1,5 @@
 // Package appenv reads toyo-cli settings from the process environment.
-// New TOYO_* names win; the older TOYOTA_* names remain accepted aliases.
+// TOYO_* names win over their TOYOTA_* aliases.
 package appenv
 
 import "os"
@@ -15,7 +15,6 @@ func First(keys ...string) string {
 }
 
 func Catalog() string      { return First("TOYO_CATALOG", "TOYOTA_CATALOG") }
-func Bundle() string       { return First("TOYO_BUNDLE", "TOYOTA_BUNDLE", "TOYOTA_CANONICAL_BUNDLE") }
 func Region() string       { return First("TOYO_REGION", "TOYOTA_REGION") }
 func Theme() string        { return First("TOYO_THEME", "TOYOTA_THEME") }
 func Pager() string        { return First("TOYO_PAGER", "TOYOTA_PAGER") }

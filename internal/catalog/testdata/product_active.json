@@ -1,0 +1,84 @@
+[
+  {
+    "kind": "$operation_frame",
+    "id": 1,
+    "value": {
+      "check": "44",
+      "comm_set": 1,
+      "frame": "0x279E",
+      "mask": "",
+      "name": "selector",
+      "receive_timeout": 1020,
+      "retry_count": 1,
+      "selector": "0x1",
+      "send": "04",
+      "session_requirement": "default"
+    }
+  },
+  {
+    "kind": "$operation_mask",
+    "id": 1,
+    "value": {
+      "start": "selected_bit_range_or_alternate",
+      "stop": "selected_bit_range_or_alternate",
+      "type67_rule": "mode 0 includes fully contained type-67 byte spans and sets MSB0 bit control_enable_bit_1based-1; L is the highest selected mask-byte index plus one. P5 mode 5 uses the first row with start_byte <= data_byte_offset < start_byte+width, data_byte_offset+data_byte_length <= start_byte+width and exact +0x0C/+0x0E bit bounds. A matched zero enable key returns C0040102; no matching mode-5 row yields L=0."
+    }
+  },
+  {
+    "kind": "$operation_encoding",
+    "id": 1,
+    "value": {
+      "adapter": "DiagAdaptation logical-value conversion writes these fields directly; SetValue is a separate native-caller path",
+      "engine_selection": "ordinary category generation low5bits 0x14/0x15 selects P5 and 0x16 selects P6; controller mode, multi-ECU flags and populated connection state can instead select Dual/Fuel. The category alone does not establish the loaded executor.",
+      "p5_supported": true,
+      "p6_supported": true,
+      "source_scope": "current main GTSPlus DataMonitorPhase5_DT.dll and DataMonitorPhase6_DT.dll",
+      "unsupported_status": "0xC0040102",
+      "value_input": "CStartActTstSnd raw u32 +0x24 and alternate u32 +0x28"
+    }
+  },
+  {
+    "kind": "$operation_base_frame",
+    "id": 1,
+    "value": {
+      "category_id": 372,
+      "comm_frame_id": "0x2AE2",
+      "comm_set": 1,
+      "comm_set_metadata": {
+        "comm_set_id": 1,
+        "exception_handler_flag": 0,
+        "exception_handler_id": 0,
+        "receive_timeout": 1020,
+        "retry_count": 1,
+        "send_parameter": 1000,
+        "unknown_word_0c": 0
+      },
+      "kind": "frame",
+      "receive_check": {
+        "bytes": "62",
+        "id": "0x2766",
+        "normalized_id": "0x56"
+      },
+      "receive_mask": {
+        "bytes": "ff",
+        "id": "0x278E",
+        "normalized_id": "0x7E"
+      },
+      "selector": "0xCA",
+      "send": {
+        "bytes": "22ffff",
+        "id": "0x2BF6",
+        "normalized_id": "0x4E6"
+      }
+    }
+  },
+  {
+    "kind": "$operation_conversion",
+    "id": 1,
+    "value": {
+      "formula": "raw8 = trunc_toward_zero((value_integer - offset) * div / mul) & 0xFF",
+      "source": "CommandDataLib.dll CStartActTstSnd::SetValue",
+      "value_integer": "engineering display value scaled by 10^decimal_point_count"
+    }
+  }
+]

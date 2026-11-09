@@ -124,9 +124,6 @@ func resolveVINRows(regional map[string]any, vin string, rx uint32) ([]map[strin
 		matched = selectRows(false)
 	}
 	categories := runtimeMap(regional["selected_categories"])
-	if categories == nil {
-		categories = runtimeMap(regional["categories"])
-	}
 	dispatch := runtimeMap(regional["vehicle_resolver_dispatch"])
 	phases := runtimeMap(dispatch["vin10_generation_low5"])
 	vehicles := runtimeMap(regional["vehicles"])

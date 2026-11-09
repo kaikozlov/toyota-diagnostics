@@ -1,119 +1,91 @@
 package explorer
 
 import (
-	"bytes"
-	"compress/zlib"
-	"database/sql"
+	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	_ "modernc.org/sqlite"
 
 	"github.com/kaikozlov/toyota-diagnostics/internal/catalog"
+	"github.com/kaikozlov/toyota-diagnostics/internal/catalog/catalogtest"
 )
 
 const lta = `{"name":"LTA Control Condition","decoder":"p5-linear-msb0-v1","bit_start":0,"bit_end":7,"mul":1,"div":1,"offset":0,"unit":"degrees","patterns":{"0":"OFF","1":"ON"}}`
 
 func fixture(t *testing.T) *catalog.DB {
 	t.Helper()
-	file := filepath.Join(t.TempDir(), "test.sqlite")
-	db, err := sql.Open("sqlite", file)
+	c := catalogtest.New(t)
+	for _, e := range []catalogtest.ECU{
+		{Category: 498, Key: "frc", Name: "Front Recognition Camera 2", Database: "FRC_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/498.json", Counts: "{\"signals\":1,\"dtcs\":1}"},
+		{Category: 405, Key: "eps", Name: "Power Steering", Database: "EMPS_P5.ddb", Generation: 20, SupportMode: "p5-standard", Counts: "{}"},
+		{Category: 80, Key: "airbag", Name: "SRS Airbag", Database: "AIRBAG_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/80.json", Counts: "{\"dtcs\":1}"},
+		{Category: 999, Key: "blank", Name: "Empty Catalog Member", Database: "BLANK_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/999.json", Counts: "{}"},
+		{Category: 60, Key: "ds", Name: "Driving Support", Database: "DS_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/60.json", Counts: "{\"signals\":1}"},
+		{Category: 400, Key: "aaa00", Name: "Pad ECU 00", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/400.json", Counts: "{}"},
+		{Category: 401, Key: "aaa01", Name: "Pad ECU 01", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/401.json", Counts: "{}"},
+		{Category: 402, Key: "aaa02", Name: "Pad ECU 02", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/402.json", Counts: "{}"},
+		{Category: 403, Key: "aaa03", Name: "Pad ECU 03", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/403.json", Counts: "{}"},
+		{Category: 404, Key: "aaa04", Name: "Pad ECU 04", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/404.json", Counts: "{}"},
+		{Category: 435, Key: "aaa05", Name: "Pad ECU 05", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/405.json", Counts: "{}"},
+		{Category: 406, Key: "aaa06", Name: "Pad ECU 06", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/406.json", Counts: "{}"},
+		{Category: 407, Key: "aaa07", Name: "Pad ECU 07", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/407.json", Counts: "{}"},
+		{Category: 408, Key: "aaa08", Name: "Pad ECU 08", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/408.json", Counts: "{}"},
+		{Category: 409, Key: "aaa09", Name: "Pad ECU 09", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/409.json", Counts: "{}"},
+		{Category: 410, Key: "aaa10", Name: "Pad ECU 10", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/410.json", Counts: "{}"},
+		{Category: 411, Key: "aaa11", Name: "Pad ECU 11", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/411.json", Counts: "{}"},
+		{Category: 412, Key: "aaa12", Name: "Pad ECU 12", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/412.json", Counts: "{}"},
+		{Category: 413, Key: "aaa13", Name: "Pad ECU 13", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/413.json", Counts: "{}"},
+		{Category: 414, Key: "aaa14", Name: "Pad ECU 14", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/414.json", Counts: "{}"},
+		{Category: 415, Key: "aaa15", Name: "Pad ECU 15", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/415.json", Counts: "{}"},
+		{Category: 416, Key: "aaa16", Name: "Pad ECU 16", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/416.json", Counts: "{}"},
+		{Category: 417, Key: "aaa17", Name: "Pad ECU 17", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/417.json", Counts: "{}"},
+		{Category: 418, Key: "aaa18", Name: "Pad ECU 18", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/418.json", Counts: "{}"},
+		{Category: 419, Key: "aaa19", Name: "Pad ECU 19", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/419.json", Counts: "{}"},
+		{Category: 420, Key: "aaa20", Name: "Pad ECU 20", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/420.json", Counts: "{}"},
+		{Category: 421, Key: "aaa21", Name: "Pad ECU 21", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/421.json", Counts: "{}"},
+		{Category: 422, Key: "aaa22", Name: "Pad ECU 22", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/422.json", Counts: "{}"},
+		{Category: 423, Key: "aaa23", Name: "Pad ECU 23", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/423.json", Counts: "{}"},
+		{Category: 424, Key: "aaa24", Name: "Pad ECU 24", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/424.json", Counts: "{}"},
+		{Category: 425, Key: "aaa25", Name: "Pad ECU 25", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/425.json", Counts: "{}"},
+		{Category: 426, Key: "aaa26", Name: "Pad ECU 26", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/426.json", Counts: "{}"},
+		{Category: 427, Key: "aaa27", Name: "Pad ECU 27", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/427.json", Counts: "{}"},
+		{Category: 428, Key: "aaa28", Name: "Pad ECU 28", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/428.json", Counts: "{}"},
+		{Category: 429, Key: "aaa29", Name: "Pad ECU 29", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/429.json", Counts: "{}"},
+	} {
+		c.ECU(e)
+	}
+	c.Vehicle("NA", 12704, "Camry HV", 1)
+	c.Item([]catalogtest.Item{
+		{ID: 1, Category: 498, Kind: "did", Identifier: "0x1601", Name: "LTA Control Condition", Payload: json.RawMessage(lta)},
+		{ID: 2, Category: 498, Kind: "dtc", Identifier: "U0131", Name: "Lost Communication with Power Steering", Detail: "No Signal", Payload: json.RawMessage(`{"code":"U013100","failure":"No Signal"}`)},
+		{ID: 3, Category: 80, Kind: "dtc", Identifier: "B1650", Name: "Airbag Occupant Classification", Payload: json.RawMessage(`{"code":"B165000"}`)},
+		{ID: 4, Category: 60, Kind: "did", Identifier: "0x6401", Name: "Driving Support Status", Payload: json.RawMessage(`{"name":"Driving Support Status"}`)},
+		{ID: 5, Category: 60, Kind: "active-test-support-data-definitions", Identifier: "ATSDD-01", Name: "PCS Support Data Definitions", Payload: json.RawMessage(`{"name":"PCS Support Data Definitions"}`)},
+		{ID: 6, Category: 60, Kind: "customize-group", Identifier: "CG-01", Name: "Air Conditioner Settings"},
+		{ID: 7, Category: 60, Kind: "customize-item", Identifier: "CI-01", Name: "Auto Recirculation"},
+		{ID: 8, Category: 60, Kind: "customize-probe", Identifier: "CP-01", Name: "Customize Probe"},
+		{ID: 9, Category: 60, Kind: "legacy-pid", Identifier: "0x0C", Name: "Legacy PID"},
+		{ID: 10, Category: 60, Kind: "legacy-did", Identifier: "0x0100", Name: "Legacy DID"},
+		{ID: 11, Category: 60, Kind: "legacy-freeze-frame", Identifier: "LFF-01", Name: "Legacy Freeze Frame"},
+		{ID: 12, Category: 60, Kind: "legacy-active-test", Identifier: "LAT-01", Name: "Legacy Active Test"},
+		{ID: 13, Category: 60, Kind: "rob-code", Identifier: "RC-01", Name: "ROB Code"},
+		{ID: 14, Category: 60, Kind: "rob-signal", Identifier: "RS-01", Name: "ROB Signal"},
+		{ID: 15, Category: 60, Kind: "generic-ffd-signal", Identifier: "0x1593", Name: "Generic FFD"},
+		{ID: 16, Category: 60, Kind: "group", Identifier: "GRP-01", Name: "Support Group"},
+		{ID: 17, Category: 60, Kind: "active-test-group", Identifier: "ATG-01", Name: "Active Test Group"},
+		{ID: 18, Category: 60, Kind: "ffd-signal", Identifier: "FFD-01", Name: "Freeze Frame Signal"},
+		{ID: 19, Category: 60, Kind: "active-test-source", Identifier: "ATS-01", Name: "Active Test Source"},
+	}...)
+	d, err := catalog.Open(c.Path())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`
-CREATE TABLE meta (key TEXT, value TEXT);
-INSERT INTO meta VALUES('schema','toyota-diagnostics-sqlite-v2'),('release','test');
-CREATE TABLE ecus (region TEXT,category_id INTEGER,key TEXT,name TEXT,database_name TEXT,generation INTEGER,support_mode TEXT,catalog_member TEXT,counts TEXT);
-INSERT INTO ecus VALUES('NA',498,'frc','Front Recognition Camera 2','FRC_P5.ddb',20,'p5-standard','catalogs/NA/498.json','{"signals":1,"dtcs":1}');
-INSERT INTO ecus VALUES('NA',405,'eps','Power Steering','EMPS_P5.ddb',20,'p5-standard',null,'{}');
-INSERT INTO ecus VALUES('NA',80,'airbag','SRS Airbag','AIRBAG_P5.ddb',20,'p5-standard','catalogs/NA/80.json','{"dtcs":1}');
-INSERT INTO ecus VALUES('NA',999,'blank','Empty Catalog Member','BLANK_P5.ddb',20,'p5-standard','catalogs/NA/999.json','{}');
-INSERT INTO ecus VALUES('NA',60,'ds','Driving Support','DS_P5.ddb',20,'p5-standard','catalogs/NA/60.json','{"signals":1}');
-INSERT INTO ecus VALUES('NA',400,'aaa00','Pad ECU 00','PAD_P5.ddb',20,'p5-standard','catalogs/NA/400.json','{}');
-INSERT INTO ecus VALUES('NA',401,'aaa01','Pad ECU 01','PAD_P5.ddb',20,'p5-standard','catalogs/NA/401.json','{}');
-INSERT INTO ecus VALUES('NA',402,'aaa02','Pad ECU 02','PAD_P5.ddb',20,'p5-standard','catalogs/NA/402.json','{}');
-INSERT INTO ecus VALUES('NA',403,'aaa03','Pad ECU 03','PAD_P5.ddb',20,'p5-standard','catalogs/NA/403.json','{}');
-INSERT INTO ecus VALUES('NA',404,'aaa04','Pad ECU 04','PAD_P5.ddb',20,'p5-standard','catalogs/NA/404.json','{}');
-INSERT INTO ecus VALUES('NA',405,'aaa05','Pad ECU 05','PAD_P5.ddb',20,'p5-standard','catalogs/NA/405.json','{}');
-INSERT INTO ecus VALUES('NA',406,'aaa06','Pad ECU 06','PAD_P5.ddb',20,'p5-standard','catalogs/NA/406.json','{}');
-INSERT INTO ecus VALUES('NA',407,'aaa07','Pad ECU 07','PAD_P5.ddb',20,'p5-standard','catalogs/NA/407.json','{}');
-INSERT INTO ecus VALUES('NA',408,'aaa08','Pad ECU 08','PAD_P5.ddb',20,'p5-standard','catalogs/NA/408.json','{}');
-INSERT INTO ecus VALUES('NA',409,'aaa09','Pad ECU 09','PAD_P5.ddb',20,'p5-standard','catalogs/NA/409.json','{}');
-INSERT INTO ecus VALUES('NA',410,'aaa10','Pad ECU 10','PAD_P5.ddb',20,'p5-standard','catalogs/NA/410.json','{}');
-INSERT INTO ecus VALUES('NA',411,'aaa11','Pad ECU 11','PAD_P5.ddb',20,'p5-standard','catalogs/NA/411.json','{}');
-INSERT INTO ecus VALUES('NA',412,'aaa12','Pad ECU 12','PAD_P5.ddb',20,'p5-standard','catalogs/NA/412.json','{}');
-INSERT INTO ecus VALUES('NA',413,'aaa13','Pad ECU 13','PAD_P5.ddb',20,'p5-standard','catalogs/NA/413.json','{}');
-INSERT INTO ecus VALUES('NA',414,'aaa14','Pad ECU 14','PAD_P5.ddb',20,'p5-standard','catalogs/NA/414.json','{}');
-INSERT INTO ecus VALUES('NA',415,'aaa15','Pad ECU 15','PAD_P5.ddb',20,'p5-standard','catalogs/NA/415.json','{}');
-INSERT INTO ecus VALUES('NA',416,'aaa16','Pad ECU 16','PAD_P5.ddb',20,'p5-standard','catalogs/NA/416.json','{}');
-INSERT INTO ecus VALUES('NA',417,'aaa17','Pad ECU 17','PAD_P5.ddb',20,'p5-standard','catalogs/NA/417.json','{}');
-INSERT INTO ecus VALUES('NA',418,'aaa18','Pad ECU 18','PAD_P5.ddb',20,'p5-standard','catalogs/NA/418.json','{}');
-INSERT INTO ecus VALUES('NA',419,'aaa19','Pad ECU 19','PAD_P5.ddb',20,'p5-standard','catalogs/NA/419.json','{}');
-INSERT INTO ecus VALUES('NA',420,'aaa20','Pad ECU 20','PAD_P5.ddb',20,'p5-standard','catalogs/NA/420.json','{}');
-INSERT INTO ecus VALUES('NA',421,'aaa21','Pad ECU 21','PAD_P5.ddb',20,'p5-standard','catalogs/NA/421.json','{}');
-INSERT INTO ecus VALUES('NA',422,'aaa22','Pad ECU 22','PAD_P5.ddb',20,'p5-standard','catalogs/NA/422.json','{}');
-INSERT INTO ecus VALUES('NA',423,'aaa23','Pad ECU 23','PAD_P5.ddb',20,'p5-standard','catalogs/NA/423.json','{}');
-INSERT INTO ecus VALUES('NA',424,'aaa24','Pad ECU 24','PAD_P5.ddb',20,'p5-standard','catalogs/NA/424.json','{}');
-INSERT INTO ecus VALUES('NA',425,'aaa25','Pad ECU 25','PAD_P5.ddb',20,'p5-standard','catalogs/NA/425.json','{}');
-INSERT INTO ecus VALUES('NA',426,'aaa26','Pad ECU 26','PAD_P5.ddb',20,'p5-standard','catalogs/NA/426.json','{}');
-INSERT INTO ecus VALUES('NA',427,'aaa27','Pad ECU 27','PAD_P5.ddb',20,'p5-standard','catalogs/NA/427.json','{}');
-INSERT INTO ecus VALUES('NA',428,'aaa28','Pad ECU 28','PAD_P5.ddb',20,'p5-standard','catalogs/NA/428.json','{}');
-INSERT INTO ecus VALUES('NA',429,'aaa29','Pad ECU 29','PAD_P5.ddb',20,'p5-standard','catalogs/NA/429.json','{}');
-CREATE TABLE vehicles (region TEXT,vehicle_type INTEGER,name TEXT,install_set_ids TEXT);
-INSERT INTO vehicles VALUES('NA',12704,'Camry HV','[1]');
-CREATE TABLE vehicle_ecus (region TEXT, vehicle_type INTEGER, install_set_id INTEGER, category_id INTEGER, route_selector INTEGER, connection_frame_id INTEGER, route_key TEXT, request_address INTEGER, address_extension INTEGER, transport_kind TEXT);
-CREATE TABLE items (id INTEGER PRIMARY KEY,region TEXT,category_id INTEGER,kind TEXT,identifier TEXT,name TEXT,detail TEXT);
-INSERT INTO items VALUES(1,'NA',498,'did','0x1601','LTA Control Condition','');
-INSERT INTO items VALUES(2,'NA',498,'dtc','U0131','Lost Communication with Power Steering','No Signal');
-INSERT INTO items VALUES(3,'NA',80,'dtc','B1650','Airbag Occupant Classification','');
-INSERT INTO items VALUES(4,'NA',60,'did','0x6401','Driving Support Status','');
-INSERT INTO items VALUES(5,'NA',60,'active-test-support-data-definitions','ATSDD-01','PCS Support Data Definitions','');
-INSERT INTO items VALUES(6,'NA',60,'customize-group','CG-01','Air Conditioner Settings','');
-INSERT INTO items VALUES(7,'NA',60,'customize-item','CI-01','Auto Recirculation','');
-INSERT INTO items VALUES(8,'NA',60,'customize-probe','CP-01','Customize Probe','');
-INSERT INTO items VALUES(9,'NA',60,'legacy-pid','0x0C','Legacy PID','');
-INSERT INTO items VALUES(10,'NA',60,'legacy-did','0x0100','Legacy DID','');
-INSERT INTO items VALUES(11,'NA',60,'legacy-freeze-frame','LFF-01','Legacy Freeze Frame','');
-INSERT INTO items VALUES(12,'NA',60,'legacy-active-test','LAT-01','Legacy Active Test','');
-INSERT INTO items VALUES(13,'NA',60,'rob-code','RC-01','ROB Code','');
-INSERT INTO items VALUES(14,'NA',60,'rob-signal','RS-01','ROB Signal','');
-INSERT INTO items VALUES(15,'NA',60,'generic-ffd-signal','0x1593','Generic FFD','');
-INSERT INTO items VALUES(16,'NA',60,'group','GRP-01','Support Group','');
-INSERT INTO items VALUES(17,'NA',60,'active-test-group','ATG-01','Active Test Group','');
-INSERT INTO items VALUES(18,'NA',60,'ffd-signal','FFD-01','Freeze Frame Signal','');
-INSERT INTO items VALUES(19,'NA',60,'active-test-source','ATS-01','Active Test Source','');
-CREATE VIRTUAL TABLE items_fts USING fts5(name,detail,identifier,content='items',content_rowid='id',tokenize='unicode61',prefix='2 3 4');
-INSERT INTO items_fts(items_fts) VALUES('rebuild');
-CREATE TABLE item_payloads(item_id INTEGER PRIMARY KEY,data BLOB NOT NULL);`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	payloads := map[int]string{1: lta, 2: `{"code":"U013100","failure":"No Signal"}`, 3: `{"code":"B165000"}`, 4: `{"name":"Driving Support Status"}`, 5: `{"name":"PCS Support Data Definitions"}`}
-	for id := 6; id <= 19; id++ {
-		payloads[id] = `{}`
-	}
-	for id, payload := range payloads {
-		var buffer bytes.Buffer
-		writer := zlib.NewWriter(&buffer)
-		writer.Write([]byte(payload))
-		writer.Close()
-		if _, err := db.Exec("INSERT INTO item_payloads VALUES(?,?)", id, buffer.Bytes()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	db.Close()
-	c, err := catalog.Open(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { c.Close() })
-	return c
+	t.Cleanup(func() { d.Close() })
+	return d
 }
 
 func view(m model) string { return m.View().Content }

@@ -106,7 +106,7 @@ func run(args []string) error {
 			if err := unknownCommandWithoutCatalog(rest); err != nil {
 				return err
 			}
-			return fmt.Errorf("catalog not found at %s; generate it from ghidra_rh850_analysis or pass --db PATH", dbPath)
+			return fmt.Errorf("catalog not found at %s; pass an existing catalog with --db PATH", dbPath)
 		}
 		return fmt.Errorf("cannot read catalog %s: %w", dbPath, err)
 	}

@@ -1,72 +1,70 @@
 package main
 
 import (
-	"bytes"
-	"compress/zlib"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/kaikozlov/toyota-diagnostics/internal/catalog"
+	"github.com/kaikozlov/toyota-diagnostics/internal/catalog/catalogtest"
 )
 
 // cliFixture builds a small catalog and points the CLI at it.
 func cliFixture(t *testing.T) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "catalog.sqlite")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	_, err = db.Exec(`
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-INSERT INTO meta VALUES ('schema','toyota-diagnostics-sqlite-v2'),('source_schema','toyota-diagnostics-bundle-v4'),('release','test'),('default_region','NA'),('member_count','2');
-CREATE TABLE ecus (region TEXT,category_id INTEGER,key TEXT,name TEXT,database_name TEXT,generation INTEGER,support_mode TEXT,catalog_member TEXT,counts TEXT);
-INSERT INTO ecus VALUES('NA',498,'frc','Front Recognition Camera 2','FRC_P5.ddb',20,'p5-standard','catalogs/NA/498.json','{"dids":2,"signals":3,"dtcs":1,"active_tests":1}');
-INSERT INTO ecus VALUES('NA',405,'eps','Power Steering','EMPS_P5.ddb',20,'p5-standard',null,'{}');
-INSERT INTO ecus VALUES('NA',317,'eps_317','EPS','EPS_P4.ddb',4,'p4',null,'{}');
-CREATE TABLE vehicles (region TEXT,vehicle_type INTEGER,name TEXT,install_set_ids TEXT);
-INSERT INTO vehicles VALUES('NA',12704,'Camry','[8119]'),('NA',12705,'Camry','[8120]'),('NA',12999,'Prius','[3]'),('NA',9999,'','[4]');
-CREATE TABLE vehicle_ecus (region TEXT, vehicle_type INTEGER, install_set_id INTEGER, category_id INTEGER, route_selector INTEGER, connection_frame_id INTEGER, route_key TEXT, request_address INTEGER, address_extension INTEGER, transport_kind TEXT);
-INSERT INTO vehicle_ecus VALUES('NA',12704,8119,498,18,0,'498:18',1938,0,'iso15765-phase-family');
-CREATE TABLE items (id INTEGER PRIMARY KEY,region TEXT,category_id INTEGER,kind TEXT,identifier TEXT,name TEXT,detail TEXT);
-INSERT INTO items VALUES(1,'NA',498,'did','0x1601','LTA Control Condition','');
-INSERT INTO items VALUES(2,'NA',498,'did','0x1601','LTA Switch Condition Flag','');
-INSERT INTO items VALUES(3,'NA',498,'did','0x1202','LTA Installation Availability','');
-INSERT INTO items VALUES(4,'NA',498,'dtc','U0131','Lost Communication with Power Steering','No Signal');
-INSERT INTO items VALUES(5,'NA',498,'active-test','0xA429','LTA Steering Vibration','routine executable');
-INSERT INTO items VALUES(6,'NA',0,'adu-signal','0x1B00','LTA main switch status','ADAS recorder');
-INSERT INTO items VALUES(7,'NA',0,'did','0x9999','Didactic example signal','');
-INSERT INTO items VALUES(8,'NA',0,'did','0x8888','Software Version','');
-CREATE VIRTUAL TABLE items_fts USING fts5(name,detail,identifier,content='items',content_rowid='id',tokenize='unicode61',prefix='2 3 4');
-INSERT INTO items_fts(items_fts) VALUES('rebuild');
-CREATE TABLE item_payloads(item_id INTEGER PRIMARY KEY,data BLOB);`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	payloads := map[int]string{
-		1: `{"decoder":"p5-linear-msb0-v1","bit_start":8,"bit_end":15,"patterns":{"0":"OFF","1":"ON"}}`,
-		2: `{"decoder":"p5-linear-msb0-v1","bit_start":0,"bit_end":7,"unit":"flag"}`,
-		3: `{"decoder":"p5-linear-msb0-v1","bit_start":13,"bit_end":13,"patterns":{"0":"Not Installed","1":"Installed"}}`,
-		4: `{"code":"U013100","failure":"No Signal"}`, 5: `{"kind":"routine","execution":"executable"}`, 6: `{}`,
-	}
-	for id, payload := range payloads {
-		var buf bytes.Buffer
-		w := zlib.NewWriter(&buf)
-		w.Write([]byte(payload))
-		w.Close()
-		if _, err := db.Exec("INSERT INTO item_payloads VALUES(?,?)", id, buf.Bytes()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("TOYOTA_CATALOG", path)
+	useCatalog(t, cliCatalog(t))
+}
+
+func useCatalog(t *testing.T, c *catalogtest.Catalog) {
+	t.Helper()
+	t.Setenv("TOYOTA_CATALOG", c.Path())
 	t.Setenv("TOYOTA_REGION", "")
+}
+
+// openDocument opens a catalog holding one source document.
+func openDocument(t *testing.T, member string, document map[string]any) *catalog.DB {
+	t.Helper()
+	c := catalogtest.New(t)
+	c.Document(member, document)
+	db, err := catalog.Open(c.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+// cliCatalog is the CLI fixture before it is finished.
+func cliCatalog(t *testing.T) *catalogtest.Catalog {
+	t.Helper()
+	c := catalogtest.New(t)
+	for _, e := range []catalogtest.ECU{
+		{Category: 498, Key: "frc", Name: "Front Recognition Camera 2", Database: "FRC_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/498.json", Counts: "{\"dids\":2,\"signals\":3,\"dtcs\":1,\"active_tests\":1}"},
+		{Category: 405, Key: "eps", Name: "Power Steering", Database: "EMPS_P5.ddb", Generation: 20, SupportMode: "p5-standard", Counts: "{}"},
+		{Category: 317, Key: "eps_317", Name: "EPS", Database: "EPS_P4.ddb", Generation: 4, SupportMode: "p4", Counts: "{}"},
+	} {
+		c.ECU(e)
+	}
+	c.Route(catalogtest.Route{Category: 498, Selector: 18, Request: 1938, Response: 1946, Transport: "iso15765-phase-family"})
+	c.Install("NA", 8119, 498, 18, 0, true)
+	c.Vehicle("NA", 12704, "Camry", 8119)
+	c.Vehicle("NA", 12705, "Camry", 8120)
+	c.Vehicle("NA", 12999, "Prius", 3)
+	c.Vehicle("NA", 9999, "", 4)
+	c.Item([]catalogtest.Item{
+		{ID: 1, Category: 498, Kind: "did", Identifier: "0x1601", Name: "LTA Control Condition", Payload: json.RawMessage(`{"decoder":"p5-linear-msb0-v1","bit_start":8,"bit_end":15,"patterns":{"0":"OFF","1":"ON"}}`)},
+		{ID: 2, Category: 498, Kind: "did", Identifier: "0x1601", Name: "LTA Switch Condition Flag", Payload: json.RawMessage(`{"decoder":"p5-linear-msb0-v1","bit_start":0,"bit_end":7,"unit":"flag"}`)},
+		{ID: 3, Category: 498, Kind: "did", Identifier: "0x1202", Name: "LTA Installation Availability", Payload: json.RawMessage(`{"decoder":"p5-linear-msb0-v1","bit_start":13,"bit_end":13,"patterns":{"0":"Not Installed","1":"Installed"}}`)},
+		{ID: 4, Category: 498, Kind: "dtc", Identifier: "U0131", Name: "Lost Communication with Power Steering", Detail: "No Signal", Payload: json.RawMessage(`{"code":"U013100","failure":"No Signal"}`)},
+		{ID: 5, Category: 498, Kind: "active-test", Identifier: "0xA429", Name: "LTA Steering Vibration", Detail: "routine executable", Payload: json.RawMessage(`{"kind":"routine","execution":"executable"}`)},
+		{ID: 6, Kind: "adu-signal", Identifier: "0x1B00", Name: "LTA main switch status", Detail: "ADAS recorder", Payload: json.RawMessage(`{}`)},
+		{ID: 7, Kind: "did", Identifier: "0x9999", Name: "Didactic example signal"},
+		{ID: 8, Kind: "did", Identifier: "0x8888", Name: "Software Version"},
+	}...)
+	return c
 }
 
 func output(t *testing.T, args ...string) string {

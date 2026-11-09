@@ -398,7 +398,7 @@ func StopTest(ctx context.Context, s *Session, p TestPlan, mask []byte, execute 
 	return r, e
 }
 
-// Runtime v4 retains every frame alternative rather than flattening to one.
+// The catalog keeps every frame alternative rather than flattening to one.
 // Only unanimous, fully materialized wire bytes are executable.
 func uniqueOperationFrame(v any, key string) any {
 	rows, ok := v.([]any)
