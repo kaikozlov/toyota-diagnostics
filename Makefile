@@ -1,8 +1,12 @@
-.PHONY: build test clean
+.PHONY: build build-comma test clean
 
 # Build the native CLI used by ./toyo.
 build:
 	go build -o build/toyo ./cmd/toyo
+
+# Cross-compile for comma devices (AGNOS, Linux ARM64).
+build-comma:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/toyo-linux-arm64 ./cmd/toyo
 
 # Run application and transport tests.
 test:
