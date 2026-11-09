@@ -35,7 +35,7 @@ func asUsage(err error, dest **usageError) bool {
 }
 
 func TestLiveHelpListsSupportedTransportFlags(t *testing.T) {
-	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
+	t.Setenv("TOYO_CATALOG", "/does/not/exist")
 	out, err := capture(func() error { return run([]string{"help", "monitor"}) })
 	if err != nil {
 		t.Fatal(err)

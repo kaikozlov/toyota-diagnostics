@@ -36,7 +36,7 @@ change the filter only when the search box is empty.
 Commands listed under Live in `toyo help` — monitor, scan, DTC, Active Tests,
 and the rest — need a vehicle link. They are not required for browsing the
 catalog. Offline commands and J2534 need no Python. For Panda, point
-`TOYO_PYTHON` (or `TOYOTA_PYTHON`) at an environment that already
+`TOYO_PYTHON` at an environment that already
 has upstream Panda. On a comma, that adapter reuses `/usr/local/venv` and
 `/data/openpilot`; do not create another diagnostics virtualenv.
 

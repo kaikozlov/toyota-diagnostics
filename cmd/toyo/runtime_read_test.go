@@ -52,7 +52,7 @@ func TestRuntimeParserRejectsUnknownAndMissingOptions(t *testing.T) {
 	}
 }
 func TestRawAndDTCStatusDoNotNeedCatalog(t *testing.T) {
-	t.Setenv("TOYOTA_CATALOG", "/missing/catalog.sqlite")
+	t.Setenv("TOYO_CATALOG", "/missing/catalog.sqlite")
 	out, e := capture(func() error { return run([]string{"dtc", "decode", "0x09", "--json"}) })
 	if e != nil || !strings.Contains(out, "CONFIRMED_DTC") {
 		t.Fatalf("%s %v", out, e)

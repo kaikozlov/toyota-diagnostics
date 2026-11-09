@@ -3,7 +3,6 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 bin="$root/build/toyo"
 export TOYO_ROOT="$root"
-export TOYOTA_DIAGNOSTICS_ROOT="$root"
 
 if command -v go >/dev/null 2>&1; then
   if [ ! -x "$bin" ] || [ "$root/go.mod" -nt "$bin" ] || [ "$root/go.sum" -nt "$bin" ] || \

@@ -20,8 +20,8 @@ func cliFixture(t *testing.T) {
 
 func useCatalog(t *testing.T, c *catalogtest.Catalog) {
 	t.Helper()
-	t.Setenv("TOYOTA_CATALOG", c.Path())
-	t.Setenv("TOYOTA_REGION", "")
+	t.Setenv("TOYO_CATALOG", c.Path())
+	t.Setenv("TOYO_REGION", "")
 }
 
 // openDocument opens a catalog holding one source document.
@@ -356,7 +356,7 @@ func TestCompletionScriptsAreEmitted(t *testing.T) {
 }
 
 func TestHelpIsPerCommandAndNeverNeedsACatalog(t *testing.T) {
-	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
+	t.Setenv("TOYO_CATALOG", "/does/not/exist")
 	overviewText := output(t, "help")
 	for _, want := range []string{"Explore", "Live", "toyo search TERM", "toyo monitor ECU"} {
 		if !strings.Contains(overviewText, want) {

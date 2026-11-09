@@ -61,8 +61,8 @@ func runCLI(t *testing.T, env []string, args ...string) (stdout, stderr string, 
 }
 
 func TestCLIProcessExitAndStreams(t *testing.T) {
-	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
-	env := []string{"TOYOTA_CATALOG=/does/not/exist", "NO_COLOR=1"}
+	t.Setenv("TOYO_CATALOG", "/does/not/exist")
+	env := []string{"TOYO_CATALOG=/does/not/exist", "NO_COLOR=1"}
 
 	stdout, stderr, code := runCLI(t, env, "--version")
 	if code != 0 || !strings.HasPrefix(stdout, "toyo ") || stderr != "" {
@@ -99,7 +99,7 @@ func TestCLIProcessExitAndStreams(t *testing.T) {
 		t.Fatalf("search phrase: code=%d out=%q err=%q", code, stdout, stderr)
 	}
 
-	stdout, stderr, code = runCLI(t, append(env, "TOYOTA_REGION=bogus"), "completion", "zsh")
+	stdout, stderr, code = runCLI(t, append(env, "TOYO_REGION=bogus"), "completion", "zsh")
 	if code != 0 || !strings.Contains(stdout, "#compdef toyo") || stderr != "" {
 		t.Fatalf("completion region: code=%d out=%q err=%q", code, stdout, stderr)
 	}
@@ -116,8 +116,8 @@ func TestCLIProcessExitAndStreams(t *testing.T) {
 
 func TestCLIProcessFixtureOutput(t *testing.T) {
 	cliFixture(t)
-	catalogPath := os.Getenv("TOYOTA_CATALOG")
-	base := []string{"TOYOTA_CATALOG=" + catalogPath, "TOYOTA_REGION="}
+	catalogPath := os.Getenv("TOYO_CATALOG")
+	base := []string{"TOYO_CATALOG=" + catalogPath, "TOYO_REGION="}
 
 	stdout, stderr, code := runCLI(t, append(base, "NO_COLOR=1"), "search", "LTA")
 	if code != 0 || stderr != "" {
