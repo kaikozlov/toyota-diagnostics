@@ -26,6 +26,8 @@ Run `go test ./...` before you push, then run `toyo` in a real terminal and look
 
 Tests are for things that can break: decoding, request building, safety gates, search ranking. Docs and wording need none.
 
+Benchmarks run against the shipped catalog. Measure before and after a performance change with `go test -run '^$' -bench . -count 10 ./... > new.txt` and compare with `go run golang.org/x/perf/cmd/benchstat@latest old.txt new.txt`.
+
 ## Writing it down
 
 - The README is for users: what it is and how to run it.
