@@ -9,9 +9,7 @@ import (
 func TestFindShippedCatalog(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TOYO_CATALOG", "")
-	t.Setenv("TOYOTA_CATALOG", "")
 	t.Setenv("TOYO_ROOT", "")
-	t.Setenv("TOYOTA_DIAGNOSTICS_ROOT", "")
 	t.Chdir(root)
 	if got := findDB(""); got != "" {
 		t.Fatalf("unexpected catalog: %s", got)
@@ -37,7 +35,6 @@ func TestFindShippedCatalog(t *testing.T) {
 
 func TestCheckoutRootWinsOverWorkingDirectory(t *testing.T) {
 	t.Setenv("TOYO_CATALOG", "")
-	t.Setenv("TOYOTA_CATALOG", "")
 	root, other := t.TempDir(), t.TempDir()
 	for _, dir := range []string{root, other} {
 		if err := os.MkdirAll(filepath.Join(dir, "catalog"), 0755); err != nil {

@@ -123,7 +123,7 @@ func TestJ2534RejectsBadFramesAndShortWrites(t *testing.T) {
 	}
 }
 func TestJ2534ExplicitProviderAndEnvironment(t *testing.T) {
-	t.Setenv("TOYOTA_J2534_LIBRARY", "environment.so")
+	t.Setenv("TOYO_J2534_LIBRARY", "environment.so")
 	rows := J2534Providers("explicit.so")
 	if len(rows) != 1 || rows[0].Library != "explicit.so" || rows[0].Source != "explicit" {
 		t.Fatal(rows)

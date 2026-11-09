@@ -35,7 +35,7 @@ func resolvePalette() palette {
 	}
 }
 
-// lightBackground honours TOYO_THEME (or TOYOTA_THEME), then the COLORFGBG convention
+// lightBackground honours TOYO_THEME, then the COLORFGBG convention
 // ("fg;bg", where bg 7 or 15 is a light terminal). Dark is the default.
 func lightBackground() bool {
 	switch strings.ToLower(appenv.Theme()) {

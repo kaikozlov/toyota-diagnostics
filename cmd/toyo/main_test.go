@@ -50,7 +50,7 @@ func TestNativeDiagnosticCommandRouting(t *testing.T) {
 }
 
 func TestNativeHelpDoesNotRequireCatalog(t *testing.T) {
-	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
+	t.Setenv("TOYO_CATALOG", "/does/not/exist")
 	for _, args := range [][]string{{"search", "--help"}, {"--region", "EU", "ecu", "--help"}, {"help", "inspect"}} {
 		output, err := capture(func() error { return run(args) })
 		if err != nil || !strings.Contains(output, "toyo") {
@@ -60,7 +60,7 @@ func TestNativeHelpDoesNotRequireCatalog(t *testing.T) {
 }
 
 func TestLiveCommandHelpRendersFromGoTable(t *testing.T) {
-	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
+	t.Setenv("TOYO_CATALOG", "/does/not/exist")
 	for _, args := range [][]string{{"help", "monitor"}, {"monitor", "--help"}, {"--help", "scan"}, {"health-check", "-h"}} {
 		output, err := capture(func() error { return run(args) })
 		if err != nil {
@@ -150,8 +150,8 @@ func TestLiteralSearchOptions(t *testing.T) {
 
 func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 	t.Chdir(t.TempDir())
-	t.Setenv("TOYOTA_DIAGNOSTICS_ROOT", "")
-	t.Setenv("TOYOTA_CATALOG", "/does/not/exist")
+	t.Setenv("TOYO_ROOT", "")
+	t.Setenv("TOYO_CATALOG", "/does/not/exist")
 	for _, args := range [][]string{{"--version"}, {"-V"}} {
 		out, err := capture(func() error { return run(args) })
 		if err != nil {
@@ -197,12 +197,12 @@ func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 	if err != nil || !strings.Contains(out, "#compdef toyo") {
 		t.Fatalf("completion zsh should work without a catalog: %q %v", out, err)
 	}
-	t.Setenv("TOYOTA_REGION", "bogus")
+	t.Setenv("TOYO_REGION", "bogus")
 	out, err = capture(func() error { return run([]string{"completion", "zsh"}) })
 	if err != nil || !strings.Contains(out, "#compdef toyo") {
-		t.Fatalf("completion zsh should ignore a bogus TOYOTA_REGION: %q %v", out, err)
+		t.Fatalf("completion zsh should ignore a bogus TOYO_REGION: %q %v", out, err)
 	}
-	t.Setenv("TOYOTA_REGION", "")
+	t.Setenv("TOYO_REGION", "")
 
 	for _, phrase := range [][]string{{"didactic", "example"}, {"customized", "settings"}, {"monitoring", "LTA"}, {"canbus", "foo"}, {"vehicles", "foo"}, {"version", "LTA"}} {
 		err := run(phrase)
@@ -238,9 +238,8 @@ func TestVersionAndUsageWorkWithoutCatalog(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "/does/not/exist") || !strings.Contains(err.Error(), "--db PATH") {
 		t.Fatalf("a missing --db path should name the file: %v", err)
 	}
-	t.Setenv("TOYOTA_CATALOG", "")
+	t.Setenv("TOYO_CATALOG", "")
 	t.Setenv("TOYO_ROOT", "")
-	t.Setenv("TOYOTA_DIAGNOSTICS_ROOT", "")
 	t.Chdir(t.TempDir())
 	err = run([]string{"search", "LTA"})
 	if err == nil || !strings.Contains(err.Error(), "git lfs pull") || !strings.Contains(err.Error(), "--db PATH") {

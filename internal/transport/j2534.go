@@ -85,7 +85,7 @@ func J2534Providers(explicit string) []J2534Provider {
 func jResolve(explicit string) (J2534Provider, error) {
 	rows := J2534Providers(explicit)
 	if len(rows) == 0 {
-		return J2534Provider{}, errors.New("no J2534 library found; pass --j2534-library PATH, set TOYO_J2534_LIBRARY or TOYOTA_J2534_LIBRARY, install a Windows PassThruSupport.04.04 provider, or install libopenmvci")
+		return J2534Provider{}, errors.New("no J2534 library found; pass --j2534-library PATH, set TOYO_J2534_LIBRARY, install a Windows PassThruSupport.04.04 provider, or install libopenmvci")
 	}
 	return rows[0], nil
 }

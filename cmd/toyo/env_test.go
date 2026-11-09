@@ -6,8 +6,7 @@ import (
 	"testing"
 )
 
-// Tests set the TOYOTA_* aliases; a developer's TOYO_* settings would win over
-// them, so clear those first.
+// Clear a developer's TOYO_* settings so they don't leak into tests.
 func TestMain(m *testing.M) {
 	for _, kv := range os.Environ() {
 		if key, _, _ := strings.Cut(kv, "="); strings.HasPrefix(key, "TOYO_") {
