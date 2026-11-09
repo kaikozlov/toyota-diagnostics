@@ -150,7 +150,7 @@ func ParseLifecycle(raw map[string]any, categoryID int) (*SessionLifecycle, erro
 	seq, ok := raw["enter_sequence"].([]any)
 	if !ok {
 		if raw["enter_extended"] == nil {
-			return nil, fmt.Errorf("missing recovered D1/D2 sequence")
+			return nil, fmt.Errorf("missing D1/D2 sequence")
 		}
 		seq = []any{ret, raw["enter_extended"]}
 	}
@@ -174,7 +174,7 @@ func ParseLifecycle(raw map[string]any, categoryID int) (*SessionLifecycle, erro
 		if spec != nil && spec["steps"] != nil {
 			steps, ok := spec["steps"].([]any)
 			if !ok || len(steps) != 1 || diagMap(steps[0]) == nil {
-				return nil, fmt.Errorf("keepalive requires one exactly recovered step")
+				return nil, fmt.Errorf("keepalive requires exactly one known step")
 			}
 			step := diagClone(diagMap(steps[0]))
 			step["interval_s"] = spec["interval_s"]
@@ -251,7 +251,7 @@ func (s *Session) control(ctx context.Context, v byte) error {
 func (s *Session) EnterExtended(ctx context.Context) error {
 	l := s.Lifecycle
 	if l == nil {
-		return fmt.Errorf("registry supplies no recovered session lifecycle")
+		return fmt.Errorf("registry supplies no session lifecycle")
 	}
 	if s.ActiveSession == l.ExtendedSession {
 		return nil
@@ -287,7 +287,7 @@ func (s *Session) EnterExtended(ctx context.Context) error {
 }
 func (s *Session) RestoreDefault(ctx context.Context) error {
 	if s.Lifecycle == nil {
-		return fmt.Errorf("registry supplies no recovered session lifecycle")
+		return fmt.Errorf("registry supplies no session lifecycle")
 	}
 	if e := s.control(ctx, s.Lifecycle.DefaultSession); e != nil {
 		return e
@@ -298,7 +298,7 @@ func (s *Session) RestoreDefault(ctx context.Context) error {
 }
 func (s *Session) Keepalive(ctx context.Context) error {
 	if s.Lifecycle == nil || s.Lifecycle.Keepalive == nil {
-		return fmt.Errorf("registry supplies no recovered keepalive")
+		return fmt.Errorf("registry supplies no keepalive")
 	}
 	k := s.Lifecycle.Keepalive
 	switch k.Kind {
@@ -340,7 +340,7 @@ func (s *Session) Close(ctx context.Context) error {
 	return e
 }
 
-// CommsetTimeouts accepts only recovered seconds, not raw Toyota CommSet units.
+// CommsetTimeouts accepts only seconds, not raw Toyota CommSet units.
 func CommsetTimeouts(sessionControl, operation map[string]any) (time.Duration, time.Duration, error) {
 	timeout, pending := 350*time.Millisecond, 2*time.Second
 	for _, source := range []map[string]any{sessionControl, operation} {

@@ -32,7 +32,7 @@
       "engine_selection": "ordinary category generation low5bits 0x14/0x15 selects P5 and 0x16 selects P6; controller mode, multi-ECU flags and populated connection state can instead select Dual/Fuel. The category alone does not establish the loaded executor.",
       "p5_supported": true,
       "p6_supported": true,
-      "source_scope": "current main GTSPlus DataMonitorPhase5_DT.dll and DataMonitorPhase6_DT.dll",
+      "source_scope": "phase 5 and phase 6 data monitors",
       "unsupported_status": "0xC0040102",
       "value_input": "CStartActTstSnd raw u32 +0x24 and alternate u32 +0x28"
     }
@@ -77,7 +77,7 @@
     "id": 1,
     "value": {
       "formula": "raw8 = trunc_toward_zero((value_integer - offset) * div / mul) & 0xFF",
-      "source": "CommandDataLib.dll CStartActTstSnd::SetValue",
+      "source": "active test set value",
       "value_integer": "engineering display value scaled by 10^decimal_point_count"
     }
   }

@@ -14,7 +14,7 @@ type commandDoc struct {
 	options  []terminal.HelpEntry
 }
 
-var regionOpt = terminal.HelpEntry{Usage: "--region NA|EU|JP", Summary: "GTS+ region (default NA, or $TOYO_REGION)"}
+var regionOpt = terminal.HelpEntry{Usage: "--region NA|EU|JP", Summary: "catalog region (default NA, or $TOYO_REGION)"}
 var jsonOpt = terminal.HelpEntry{Usage: "--json", Summary: "structured output for scripts"}
 var limitOpt = terminal.HelpEntry{Usage: "--limit N", Summary: "rows to show (default 50)"}
 
@@ -144,7 +144,7 @@ var liveDocs = map[string]commandDoc{
 		usage:   []string{"toyo observe ECU:ITEM…", "toyo observe PRESET"},
 		examples: []terminal.HelpEntry{
 			{Usage: "toyo observe engine:BATT frc:steer", Summary: "any ECUs, DID numbers or terms"},
-			{Usage: "toyo observe tss3-longitudinal", Summary: "a recovered preset"},
+			{Usage: "toyo observe tss3-longitudinal", Summary: "a built-in preset"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--interval S", Summary: "seconds between samples (default 0.25)"},
@@ -186,7 +186,7 @@ var liveDocs = map[string]commandDoc{
 		},
 	},
 	"can": {
-		summary: "GTS CAN topology, or capture raw frames",
+		summary: "CAN topology, or capture raw frames",
 		usage:   []string{"toyo can topology", "toyo can sniff ADDRESS…"},
 		examples: []terminal.HelpEntry{
 			{Usage: "toyo can topology", Summary: "the registry's bus map"},
@@ -299,7 +299,7 @@ var liveDocs = map[string]commandDoc{
 		}, liveLinkOpts...),
 	},
 	"active-test": {
-		summary: "browse, plan, run or stop recovered Active Tests",
+		summary: "browse, plan, run or stop Active Tests",
 		usage: []string{
 			"toyo active-test list [ECU]",
 			"toyo active-test plan ECU ITEM",
@@ -319,10 +319,10 @@ var liveDocs = map[string]commandDoc{
 		}, liveLinkOpts...),
 	},
 	"utility": {
-		summary: "browse and run recovered utility plans",
+		summary: "browse and run utility plans",
 		usage:   []string{"toyo utility list [ECU]", "toyo utility plan ITEM", "toyo utility run ECU ITEM"},
 		examples: []terminal.HelpEntry{
-			{Usage: "toyo utility plan allclear", Summary: "the recovered plan for a semantic utility"},
+			{Usage: "toyo utility plan allclear", Summary: "the plan for a semantic utility"},
 		},
 		options: append([]terminal.HelpEntry{
 			{Usage: "--kind direct|routine|simple_operation", Summary: "run: disambiguate the plan"},
@@ -342,7 +342,7 @@ var liveCommands = []string{
 }
 
 func overview(p terminal.Printer) {
-	p.Overview("Toyota diagnostics from the GTS+ catalog", []terminal.HelpGroup{
+	p.Overview("Toyota diagnostics", []terminal.HelpGroup{
 		{Title: "Explore", Entries: []terminal.HelpEntry{
 			{Usage: "toyo", Summary: "open the explorer"},
 			{Usage: "toyo search TERM…", Summary: "search signals, codes, tests, ECUs, vehicles"},

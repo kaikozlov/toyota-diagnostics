@@ -9,4 +9,3 @@ SHA-256 `ff09ef63a171bf7c8386435bf9f83c4a7b84af28aa605733423244060eee1091`
 Use `--db PATH` or `TOYO_CATALOG` to read a different file.
 
 When you replace it, commit only the final file. Git LFS keeps every revision.
-No Toyota DLL, DDB, or EXE files are included.

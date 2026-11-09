@@ -19,7 +19,7 @@ func readApp(t *testing.T, document map[string]any) *runtimeApp {
 }
 func TestNativeDecodeUsesSQLiteAndKeepsUnknownRaw(t *testing.T) {
 	signal := map[string]any{"name": "Steering Angle", "decoder": "p5-linear-msb0-v1", "bit_start": 0, "bit_end": 15, "signed": true, "mul": 15, "div": 1, "offset": 0, "decimal_point_count": 1, "unit": "deg"}
-	unknown := map[string]any{"name": "Unknown", "decoder": "unrecovered", "bit_start": 0, "bit_end": 15}
+	unknown := map[string]any{"name": "Unknown", "decoder": "unsupported", "bit_start": 0, "bit_end": 15}
 	r := readApp(t, map[string]any{"dids": map[string]any{"0x1037": []any{signal, unknown}}})
 	out, e := capture(func() error { return r.didCommand([]string{"did", "decode", "eps", "0x1037", "0001"}) })
 	if e != nil {

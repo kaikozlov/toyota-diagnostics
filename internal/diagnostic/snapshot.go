@@ -28,7 +28,7 @@ func SnapshotRoB(ctx context.Context, client RequestClient, command, metadata ma
 	signals := snapshotSignals(metadata, "did")
 	out["signal_decode"] = "raw_only"
 	if len(signals) > 0 {
-		out["signal_decode"] = "gts_current_p5"
+		out["signal_decode"] = "current_p5"
 	}
 	names := map[int]map[string]any{}
 	for _, row := range resolveRows(metadata["behavior_codes"]) {
@@ -655,7 +655,7 @@ func SnapshotFreezeFrames(ctx context.Context, client RequestClient, command map
 	out["signal_decode"] = "raw_only"
 	signals := snapshotSignals(metadata, "snapshot_did")
 	if len(signals) > 0 {
-		out["signal_decode"] = "gts_current_p5"
+		out["signal_decode"] = "current_p5"
 	}
 	results := []map[string]any{}
 	for _, d := range dtcs {
@@ -776,5 +776,5 @@ func NewSnapshot(profile, vehicle, region string, vehicleType, bus int, transpor
 			}
 		}
 	}
-	return map[string]any{"schema": SnapshotSchema, "captured_at": time.Now().UTC().Format(time.RFC3339Nano), "profile": profile, "vehicle": vehicle, "vehicle_type": vehicleType, "region": region, "logical_bus": bus, "transport": transport, "summary": summary, "ecus": ecus, "coverage": map[string]any{"mount_support": "recovered family-local support modes", "dtc": "UDS ReadDTCInformation", "identity": "exact exported generic_cid request where available", "generic_ffd": "current-P5 per-DTC snapshots and exported FFD semantics", "operation_history": "current-P5 RoB behavior/frame/record transport and exported semantics", "info_code": "not_implemented", "monitor_data": "not_implemented", "timestamp_data": "not_implemented"}}
+	return map[string]any{"schema": SnapshotSchema, "captured_at": time.Now().UTC().Format(time.RFC3339Nano), "profile": profile, "vehicle": vehicle, "vehicle_type": vehicleType, "region": region, "logical_bus": bus, "transport": transport, "summary": summary, "ecus": ecus, "coverage": map[string]any{"mount_support": "family-local support modes", "dtc": "UDS ReadDTCInformation", "identity": "exact exported generic_cid request where available", "generic_ffd": "current-P5 per-DTC snapshots and exported FFD semantics", "operation_history": "current-P5 RoB behavior/frame/record transport and exported semantics", "info_code": "not_implemented", "monitor_data": "not_implemented", "timestamp_data": "not_implemented"}}
 }

@@ -98,7 +98,7 @@ func MergeCustomizeValue(payload []byte, item map[string]any, value uint64) ([]b
 		return nil, e
 	}
 	if mode != 0 && mode != 1 {
-		return nil, fmt.Errorf("Customize merge mode %d is not recovered", mode)
+		return nil, fmt.Errorf("Customize merge mode %d is not supported", mode)
 	}
 	if a < 0 || b < a || b >= len(payload)*8 || b-a >= 64 {
 		return nil, fmt.Errorf("invalid Customize write geometry")

@@ -36,7 +36,7 @@ func TestWorkStandardSemanticHelp(t *testing.T) {
 		t.Fatal(help)
 	}
 	if _, exists := row["uninterpreted_bytes"]; exists {
-		t.Fatal("research field restored")
+		t.Fatal("unexpected uninterpreted_bytes")
 	}
 	if _, err = d.workStandard(context.Background(), 99); err == nil {
 		t.Fatal("missing definition accepted")

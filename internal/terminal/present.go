@@ -135,9 +135,6 @@ func (p Printer) ECU(e catalog.ECU) {
 	if e.Generation != nil {
 		meta = append(meta, fmt.Sprintf("generation %d", *e.Generation))
 	}
-	if e.Database != "" {
-		meta = append(meta, e.Database)
-	}
 	if len(meta) > 0 {
 		p.println("  " + p.dim(strings.Join(meta, " · ")))
 		p.println()
@@ -367,11 +364,12 @@ func (p Printer) Vehicle(v catalog.Vehicle, candidates []catalog.VehicleECU) {
 	}
 }
 
-// Stats prints the catalog's provenance and size.
+// Stats prints the catalog's release and size.
 func (p Printer) Stats(dbPath string, s catalog.Stats) {
-	p.title(p.accent("catalog")+"  "+p.bold("GTS+ "+s.Release), "")
+	p.title(p.accent("catalog"), "")
 	p.println()
 	p.kv("File", dbPath)
+	p.kv("Release", s.Release)
 	p.kv("Members", count(s.Members))
 	p.kv("Records", count(s.Items))
 	p.kv("Vehicles", count(s.Vehicles))

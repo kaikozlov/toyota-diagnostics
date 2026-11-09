@@ -1,4 +1,4 @@
-// Package catalog reads the indexed SQLite catalog of GTS+ records.
+// Package catalog reads the indexed SQLite diagnostic catalog.
 package catalog
 
 import (

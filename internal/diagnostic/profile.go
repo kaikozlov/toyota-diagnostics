@@ -112,7 +112,7 @@ func profileFromIndex(index map[string]any, region, vehicle string, bus int) (*P
 	region = strings.ToUpper(region)
 	regional := profileMap(profileMap(index["regions"])[region])
 	if regional == nil {
-		return nil, fmt.Errorf("unknown Toyota GTS region %q", region)
+		return nil, fmt.Errorf("unknown region %q", region)
 	}
 	categories := profileMap(regional["selected_categories"])
 	if categories == nil {

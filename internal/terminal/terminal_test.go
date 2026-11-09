@@ -120,7 +120,7 @@ func TestP6SignalDetailStaysDecoded(t *testing.T) {
 		  "extraction_mode":2,"flags":67,"graph_range":[0,79997],"list_member":true,"monitor_key":1,
 		  "mul":625,"name":"BATT Voltage","offset":0,"pattern_display":{},"pattern_display_key":0,
 		  "physical_data_key":115,"physical_range":[0.0,79.998],"primary_did":4098,"record":0,
-		  "sign_mode":0,"signal_info":{"div":512},"sort_key":210,"source":"Engine_CM_P6.ddb",
+		  "sign_mode":0,"signal_info":{"div":512},"sort_key":210,"source":"Engine_CM_P6",
 		  "support_condition":null,"table":62,"unit":"V","unit_key":7,"visibility_override":0}`)
 	out := plain(90, func(p Printer) { p.Item(it) })
 	for _, want := range []string{"0x1002", "bits 0–15", "16 wide", "0 … 79.998", "V", "p6-native-msb0-u32-v1"} {
@@ -180,8 +180,8 @@ func TestActiveTestSummarisesInsteadOfDumping(t *testing.T) {
 }
 
 func TestGenericRecordSummarisesStructures(t *testing.T) {
-	it := detail("plugin", "0x41", "GetDatMonSignalInfoP5_DT.dll", "p5_signal_info",
-		`{"dll":"GetDatMonSignalInfoP5_DT.dll","role":"p5_signal_info","occurrence":{"identity":"/Volumes/x","raw":"00"},"tags":["a","b"],"nothing":null,"empty":[]}`)
+	it := detail("plugin", "0x41", "Signal info", "p5_signal_info",
+		`{"binding":"signal_info","role":"p5_signal_info","occurrence":{"identity":"/Volumes/x","raw":"00"},"tags":["a","b"],"nothing":null,"empty":[]}`)
 	out := plain(100, func(p Printer) { p.Item(it) })
 	if !strings.Contains(out, "2 fields") || !strings.Contains(out, "a · b") || strings.Contains(out, "/Volumes") {
 		t.Fatal(out)
@@ -232,7 +232,7 @@ func TestFailureOffersWayForward(t *testing.T) {
 
 func TestECUHidesEmptyFamiliesAndIsHonestAboutUndecoded(t *testing.T) {
 	gen := 20
-	e := catalog.ECU{Region: "NA", CategoryID: 498, Key: "frc", Name: "Front Recognition Camera 2", Database: "FRC_P5.ddb",
+	e := catalog.ECU{Region: "NA", CategoryID: 498, Key: "frc", Name: "Front Recognition Camera 2", Database: "FRC_P5",
 		Generation: &gen, SupportMode: "p5-standard", CatalogMember: "x",
 		Counts: map[string]int{"signals": 283, "dids": 148, "dtcs": 58, "utilities": 0}}
 	var buf strings.Builder

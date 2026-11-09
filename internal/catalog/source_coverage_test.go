@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// These expectations come from decoded OEM rows, not project_document's output.
+// These expectations come from decoded source rows, not the product documents.
 // They include facts a lossy product projection would discard.
 // Runs against the shipped catalog by default; the environment variable can
 // select a newly generated artifact before it replaces the packaged database.
@@ -37,7 +37,7 @@ func TestDecodedSourceCoverage(t *testing.T) {
 	}{
 		// CVT_P4DK2 table41 record0 has nonzero bytes 70:72 outside decoded fields.
 		{"catalogs/NA/607.json", "/variable_drive/active_tests/0/uninterpreted_bytes", map[string]any{"0": "0000000000000000000000000000000000000000", "70": "0100", "84": "00", "89": "000000"}},
-		// Literal nonzero OEM bytes outside the decoded legacy-generation fields.
+		// Literal nonzero bytes outside the decoded legacy-generation fields.
 		{"catalogs/EU/118.json", "/legacy_records/79/uninterpreted_bytes", map[string]any{"70_73": "07000000"}},
 		{"catalogs/EU/234.json", "/dynamic_lsb/17/uninterpreted_bytes", map[string]any{"14_16": "360302"}},
 		{"catalogs/EU/234.json", "/legacy_records/1487/dynamic_lsb_records/0/uninterpreted_bytes", map[string]any{"14_16": "360302"}},

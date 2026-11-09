@@ -18,7 +18,7 @@ INSERT INTO "signal_infos" VALUES(1);
 CREATE TABLE text_values(id INTEGER PRIMARY KEY,value TEXT NOT NULL UNIQUE);
 INSERT INTO "text_values" VALUES(17508,'Injector volume');
 INSERT INTO "text_values" VALUES(17509,'metadata_only');
-INSERT INTO "text_values" VALUES(179971,'Engine_P3.ddb');
+INSERT INTO "text_values" VALUES(179971,'Engine_P3');
 INSERT INTO "text_values" VALUES(198218,'Initial value/limits and support-dependent request operations require live reads. Symbolic request encoding is decoded; stop scheduling, transport framing and active executor selection are not supplied by this metadata.');
 INSERT INTO "text_values" VALUES(198219,'value_low_byte');
 INSERT INTO "text_values" VALUES(198220,'identifier-only request; program is bypassed');

@@ -145,7 +145,7 @@ func (r *runtimeApp) didCommand(a []string) error {
 					return ce
 				}
 				if row["routine_id"] == nil {
-					return fmt.Errorf("routine %q has no recovered RID", q)
+					return fmt.Errorf("routine %q has no known RID", q)
 				}
 				id = runtimeNumber(row["routine_id"])
 				e = nil

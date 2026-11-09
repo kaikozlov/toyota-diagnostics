@@ -9,7 +9,7 @@ import (
 )
 
 // diagnosticCode reads decoded diagnostic facts. It does not interpret firmware
-// bytes or require any research/source reconstruction tables.
+// bytes.
 func (d *DB) diagnosticCode(ctx context.Context, id int64) (any, error) {
 	if id <= 0 {
 		return nil, fmt.Errorf("invalid diagnostic code reference %d", id)

@@ -28,7 +28,7 @@
   "signal_info": {
     "$signal_info": 1
   },
-  "source": "Engine_P3.ddb",
+  "source": "Engine_P3",
   "table": 11,
   "record": 0,
   "pattern": {
@@ -43,7 +43,7 @@
     "repeat_enabled": 1,
     "repeat_interval": 3000,
     "timeout_parameter": 0,
-    "source": "Engine_P3.ddb",
+    "source": "Engine_P3",
     "table": 12,
     "record": 0
   },

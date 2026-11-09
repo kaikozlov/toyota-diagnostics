@@ -22,7 +22,7 @@ func productFreezeFixture(t *testing.T) *DB {
 		cols = append(cols, k+" INTEGER NOT NULL DEFAULT 0")
 	}
 	_, err = conn.Exec(fmt.Sprintf(`CREATE TABLE text_values(id INTEGER PRIMARY KEY,value TEXT);
- INSERT INTO text_values VALUES(1,'name'),(2,''),(3,'gtsplus-104'),(4,'ECU.ddb');
+ INSERT INTO text_values VALUES(1,'name'),(2,''),(3,'layout-104'),(4,'ECU');
  CREATE TABLE legacy_freeze_definitions(id INTEGER PRIMARY KEY,name_id INTEGER,short_name_id INTEGER,layout_id INTEGER,physical_id INTEGER,%s,data_min REAL,data_max REAL,support_count INTEGER,dynamic_count INTEGER);
  CREATE TABLE legacy_freeze_entries(id INTEGER PRIMARY KEY,definition_id INTEGER,source_id INTEGER,table_number INTEGER,record_number INTEGER,unknown_id INTEGER);
  CREATE TABLE legacy_freeze_unknown_facts(id INTEGER PRIMARY KEY,bytes_34_3f BLOB,bytes_48_4b BLOB,bytes_56_57 BLOB,bytes_5e_5f BLOB,byte_67 INTEGER);

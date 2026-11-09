@@ -13,7 +13,7 @@ import (
 )
 
 func TestDTCSourceDisabledAndUnknown(t *testing.T) {
-	v := []any{int64(0), int64(0), int64(4), int64(65535), int64(255), int64(47), int64(2), nil, nil, nil, []byte{0x12, 0xff}, "ABS.ddb", int64(5), int64(0), "P0001", nil, "", nil, int64(1), nil, int64(23), int64(7), nil, int64(2), nil, int64(1)}
+	v := []any{int64(0), int64(0), int64(4), int64(65535), int64(255), int64(47), int64(2), nil, nil, nil, []byte{0x12, 0xff}, "ABS", int64(5), int64(0), "P0001", nil, "", nil, int64(1), nil, int64(23), int64(7), nil, int64(2), nil, int64(1)}
 	got, e := decodeDTCSourceValues(v)
 	if e != nil {
 		t.Fatal(e)
@@ -30,7 +30,7 @@ func TestDTCSourceDisabledAndUnknown(t *testing.T) {
 	}
 }
 func TestDTCSourcePackedAndUnknown(t *testing.T) {
-	v := []any{int64(2), int64(0), int64(0), int64(0), int64(0), nil, nil, int64(0), int64(255), int64(65535), []byte{0xff}, "ABS.ddb", int64(65), int64(0), "P1234-56", nil, nil, nil, nil, int64(0x123456), int64(47), int64(7), nil, nil, nil, int64(1)}
+	v := []any{int64(2), int64(0), int64(0), int64(0), int64(0), nil, nil, int64(0), int64(255), int64(65535), []byte{0xff}, "ABS", int64(65), int64(0), "P1234-56", nil, nil, nil, nil, int64(0x123456), int64(47), int64(7), nil, nil, nil, int64(1)}
 	got, e := decodeDTCSourceValues(v)
 	if e != nil {
 		t.Fatal(e)

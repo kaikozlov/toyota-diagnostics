@@ -239,7 +239,7 @@ func (r *runtimeApp) operations(args []string) error {
 			return e
 		}
 	}
-	if groups && (len(p.Refusals) != 1 || p.Refusals[0] != "runtime payload length not definitively recovered") {
+	if groups && (len(p.Refusals) != 1 || p.Refusals[0] != "runtime payload length not definitively known") {
 		return p.Err()
 	}
 	values := map[int]uint64{}
@@ -333,7 +333,7 @@ func (r *runtimeApp) operations(args []string) error {
 					minimum = 1
 				}
 				if len(value) < minimum {
-					return fmt.Errorf("utility value must supply at least the recovered minimum %d bytes", minimum)
+					return fmt.Errorf("utility value must supply at least the minimum %d bytes", minimum)
 				}
 			}
 			options.Value = value
@@ -650,7 +650,7 @@ func (r *runtimeApp) customizeOperations(args []string) error {
 }
 
 func (r *runtimeApp) operationPlan(ecu diagnostic.EcuSpec, p diagnostic.TestPlan, group bool) error {
-	materializable := diagnostic.CanMaterializeDirect(p) || diagnostic.CanMaterializeRoutine(p) || (group && len(p.Refusals) == 1 && p.Refusals[0] == "runtime payload length not definitively recovered")
+	materializable := diagnostic.CanMaterializeDirect(p) || diagnostic.CanMaterializeRoutine(p) || (group && len(p.Refusals) == 1 && p.Refusals[0] == "runtime payload length not definitively known")
 	if r.opt.json {
 		return r.output(map[string]any{"ecu": ecu.Key, "executed": false, "plan": p, "materializable": materializable})
 	}

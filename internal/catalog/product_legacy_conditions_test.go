@@ -24,7 +24,7 @@ func legacyConditionFixture(t *testing.T) *DB {
  CREATE TABLE legacy_dynamic_defs(id INTEGER PRIMARY KEY,monitor_key INTEGER,mul INTEGER,div INTEGER,bit_start INTEGER,bit_end INTEGER,pid INTEGER);
  CREATE TABLE legacy_dynamic_entries(id INTEGER PRIMARY KEY,definition_id INTEGER,record_number INTEGER,unknown_id INTEGER);
  CREATE TABLE legacy_dynamic_unknown_facts(id INTEGER PRIMARY KEY,range_14_16_id INTEGER,range_18_end_id INTEGER);
- INSERT INTO text_values VALUES(1,'ECU.ddb');
+ INSERT INTO text_values VALUES(1,'ECU');
  INSERT INTO legacy_condition_defs VALUES(1,1,10001,0,7,6,0,0,x''),(2,2,10002,0,7,4,0,0,x'ffbe');
  INSERT INTO legacy_condition_entries VALUES(1,1,1,9,0,1),(2,2,1,8,1,0);
  INSERT INTO legacy_response_defs VALUES(1,2,0,0,0);
@@ -85,11 +85,11 @@ func TestLegacySemanticRuntimeAndMissing(t *testing.T) {
 	}
 }
 func TestLegacyInvalidModeRemainsUnsupported(t *testing.T) {
-	row, err := legacyConditionValue([7]int64{1, 1, 0, 7, 99, 0, 0}, nil, false, "ECU.ddb", 8, 0, 0)
+	row, err := legacyConditionValue([7]int64{1, 1, 0, 7, 99, 0, 0}, nil, false, "ECU", 8, 0, 0)
 	if err != nil || row["query"] != nil || row["native_status"] != "invalid_geometry_or_mode" {
 		t.Fatal(row, err)
 	}
-	row, err = legacyConditionValue([7]int64{1, 1, 7, 0, 2, 0, 0}, []byte{1}, true, "ECU.ddb", 8, 0, 0)
+	row, err = legacyConditionValue([7]int64{1, 1, 7, 0, 2, 0, 0}, []byte{1}, true, "ECU", 8, 0, 0)
 	if err != nil || row["native_status"] != "invalid_geometry_or_mode" {
 		t.Fatal(row, err)
 	}
