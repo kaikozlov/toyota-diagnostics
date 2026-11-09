@@ -18,7 +18,7 @@ func signalFixture(t *testing.T) *DB {
 	t.Cleanup(func() { raw.Close() })
 	_, err = raw.Exec(`
 CREATE TABLE text_values(id INTEGER PRIMARY KEY,value TEXT);
-INSERT INTO text_values VALUES(1,'Voltage'),(2,'V'),(3,'p6-native-msb0-u32-v1'),(4,'fixed'),(5,'Engine.ddb'),(6,'0x1002'),(7,'p5-linear-msb0-v1'),(8,'0'),(9,'No'),(10,'1'),(11,'Yes');
+INSERT INTO text_values VALUES(1,'Voltage'),(2,'V'),(3,'p6-native-msb0-u32-v1'),(4,'fixed'),(5,'Engine'),(6,'0x1002'),(7,'p5-linear-msb0-v1'),(8,'0'),(9,'No'),(10,'1'),(11,'Yes');
 CREATE TABLE signal_labels(id INTEGER PRIMARY KEY,monitor_key INTEGER,name_id INTEGER,bit_start INTEGER,bit_end INTEGER);
 INSERT INTO signal_labels VALUES(1,9007199254740993,1,0,15);
 CREATE TABLE signal_pattern_sets(id INTEGER PRIMARY KEY,entry_count INTEGER);

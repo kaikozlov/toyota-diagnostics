@@ -51,7 +51,7 @@ func RunUtility(ctx context.Context, s *Session, p TestPlan, o RunOptions, suppo
 	return RunTest(ctx, s, p, o)
 }
 func MaterializeMultiDirect(ctx context.Context, s *Session, p TestPlan) (TestPlan, error) {
-	if p.Kind != "multi_direct" || p.RuntimeLength != 0 || len(p.Members) == 0 || len(p.Refusals) != 1 || p.Refusals[0] != "runtime payload length not definitively recovered" {
+	if p.Kind != "multi_direct" || p.RuntimeLength != 0 || len(p.Members) == 0 || len(p.Refusals) != 1 || p.Refusals[0] != "runtime payload length not definitively known" {
 		return p, p.Err()
 	}
 	if p.SessionRequirement == "extended" {

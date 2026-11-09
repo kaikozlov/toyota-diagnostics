@@ -135,7 +135,7 @@ func (r *runtimeApp) canCommand(a []string) error {
 			return err
 		}
 		if len(rows) == 0 {
-			return fmt.Errorf("catalog does not carry GTS CAN topology for this vehicle")
+			return fmt.Errorf("catalog does not carry CAN topology for this vehicle")
 		}
 		if len(rows) == 1 {
 			return r.output(rows[0])

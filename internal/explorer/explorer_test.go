@@ -20,41 +20,41 @@ func fixture(t *testing.T) *catalog.DB {
 	t.Helper()
 	c := catalogtest.New(t)
 	for _, e := range []catalogtest.ECU{
-		{Category: 498, Key: "frc", Name: "Front Recognition Camera 2", Database: "FRC_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/498.json", Counts: "{\"signals\":1,\"dtcs\":1}"},
-		{Category: 405, Key: "eps", Name: "Power Steering", Database: "EMPS_P5.ddb", Generation: 20, SupportMode: "p5-standard", Counts: "{}"},
-		{Category: 80, Key: "airbag", Name: "SRS Airbag", Database: "AIRBAG_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/80.json", Counts: "{\"dtcs\":1}"},
-		{Category: 999, Key: "blank", Name: "Empty Catalog Member", Database: "BLANK_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/999.json", Counts: "{}"},
-		{Category: 60, Key: "ds", Name: "Driving Support", Database: "DS_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/60.json", Counts: "{\"signals\":1}"},
-		{Category: 400, Key: "aaa00", Name: "Pad ECU 00", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/400.json", Counts: "{}"},
-		{Category: 401, Key: "aaa01", Name: "Pad ECU 01", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/401.json", Counts: "{}"},
-		{Category: 402, Key: "aaa02", Name: "Pad ECU 02", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/402.json", Counts: "{}"},
-		{Category: 403, Key: "aaa03", Name: "Pad ECU 03", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/403.json", Counts: "{}"},
-		{Category: 404, Key: "aaa04", Name: "Pad ECU 04", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/404.json", Counts: "{}"},
-		{Category: 435, Key: "aaa05", Name: "Pad ECU 05", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/405.json", Counts: "{}"},
-		{Category: 406, Key: "aaa06", Name: "Pad ECU 06", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/406.json", Counts: "{}"},
-		{Category: 407, Key: "aaa07", Name: "Pad ECU 07", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/407.json", Counts: "{}"},
-		{Category: 408, Key: "aaa08", Name: "Pad ECU 08", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/408.json", Counts: "{}"},
-		{Category: 409, Key: "aaa09", Name: "Pad ECU 09", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/409.json", Counts: "{}"},
-		{Category: 410, Key: "aaa10", Name: "Pad ECU 10", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/410.json", Counts: "{}"},
-		{Category: 411, Key: "aaa11", Name: "Pad ECU 11", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/411.json", Counts: "{}"},
-		{Category: 412, Key: "aaa12", Name: "Pad ECU 12", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/412.json", Counts: "{}"},
-		{Category: 413, Key: "aaa13", Name: "Pad ECU 13", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/413.json", Counts: "{}"},
-		{Category: 414, Key: "aaa14", Name: "Pad ECU 14", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/414.json", Counts: "{}"},
-		{Category: 415, Key: "aaa15", Name: "Pad ECU 15", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/415.json", Counts: "{}"},
-		{Category: 416, Key: "aaa16", Name: "Pad ECU 16", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/416.json", Counts: "{}"},
-		{Category: 417, Key: "aaa17", Name: "Pad ECU 17", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/417.json", Counts: "{}"},
-		{Category: 418, Key: "aaa18", Name: "Pad ECU 18", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/418.json", Counts: "{}"},
-		{Category: 419, Key: "aaa19", Name: "Pad ECU 19", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/419.json", Counts: "{}"},
-		{Category: 420, Key: "aaa20", Name: "Pad ECU 20", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/420.json", Counts: "{}"},
-		{Category: 421, Key: "aaa21", Name: "Pad ECU 21", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/421.json", Counts: "{}"},
-		{Category: 422, Key: "aaa22", Name: "Pad ECU 22", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/422.json", Counts: "{}"},
-		{Category: 423, Key: "aaa23", Name: "Pad ECU 23", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/423.json", Counts: "{}"},
-		{Category: 424, Key: "aaa24", Name: "Pad ECU 24", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/424.json", Counts: "{}"},
-		{Category: 425, Key: "aaa25", Name: "Pad ECU 25", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/425.json", Counts: "{}"},
-		{Category: 426, Key: "aaa26", Name: "Pad ECU 26", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/426.json", Counts: "{}"},
-		{Category: 427, Key: "aaa27", Name: "Pad ECU 27", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/427.json", Counts: "{}"},
-		{Category: 428, Key: "aaa28", Name: "Pad ECU 28", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/428.json", Counts: "{}"},
-		{Category: 429, Key: "aaa29", Name: "Pad ECU 29", Database: "PAD_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/429.json", Counts: "{}"},
+		{Category: 498, Key: "frc", Name: "Front Recognition Camera 2", Database: "FRC_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/498.json", Counts: "{\"signals\":1,\"dtcs\":1}"},
+		{Category: 405, Key: "eps", Name: "Power Steering", Database: "EMPS_P5", Generation: 20, SupportMode: "p5-standard", Counts: "{}"},
+		{Category: 80, Key: "airbag", Name: "SRS Airbag", Database: "AIRBAG_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/80.json", Counts: "{\"dtcs\":1}"},
+		{Category: 999, Key: "blank", Name: "Empty Catalog Member", Database: "BLANK_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/999.json", Counts: "{}"},
+		{Category: 60, Key: "ds", Name: "Driving Support", Database: "DS_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/60.json", Counts: "{\"signals\":1}"},
+		{Category: 400, Key: "aaa00", Name: "Pad ECU 00", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/400.json", Counts: "{}"},
+		{Category: 401, Key: "aaa01", Name: "Pad ECU 01", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/401.json", Counts: "{}"},
+		{Category: 402, Key: "aaa02", Name: "Pad ECU 02", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/402.json", Counts: "{}"},
+		{Category: 403, Key: "aaa03", Name: "Pad ECU 03", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/403.json", Counts: "{}"},
+		{Category: 404, Key: "aaa04", Name: "Pad ECU 04", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/404.json", Counts: "{}"},
+		{Category: 435, Key: "aaa05", Name: "Pad ECU 05", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/405.json", Counts: "{}"},
+		{Category: 406, Key: "aaa06", Name: "Pad ECU 06", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/406.json", Counts: "{}"},
+		{Category: 407, Key: "aaa07", Name: "Pad ECU 07", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/407.json", Counts: "{}"},
+		{Category: 408, Key: "aaa08", Name: "Pad ECU 08", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/408.json", Counts: "{}"},
+		{Category: 409, Key: "aaa09", Name: "Pad ECU 09", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/409.json", Counts: "{}"},
+		{Category: 410, Key: "aaa10", Name: "Pad ECU 10", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/410.json", Counts: "{}"},
+		{Category: 411, Key: "aaa11", Name: "Pad ECU 11", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/411.json", Counts: "{}"},
+		{Category: 412, Key: "aaa12", Name: "Pad ECU 12", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/412.json", Counts: "{}"},
+		{Category: 413, Key: "aaa13", Name: "Pad ECU 13", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/413.json", Counts: "{}"},
+		{Category: 414, Key: "aaa14", Name: "Pad ECU 14", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/414.json", Counts: "{}"},
+		{Category: 415, Key: "aaa15", Name: "Pad ECU 15", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/415.json", Counts: "{}"},
+		{Category: 416, Key: "aaa16", Name: "Pad ECU 16", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/416.json", Counts: "{}"},
+		{Category: 417, Key: "aaa17", Name: "Pad ECU 17", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/417.json", Counts: "{}"},
+		{Category: 418, Key: "aaa18", Name: "Pad ECU 18", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/418.json", Counts: "{}"},
+		{Category: 419, Key: "aaa19", Name: "Pad ECU 19", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/419.json", Counts: "{}"},
+		{Category: 420, Key: "aaa20", Name: "Pad ECU 20", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/420.json", Counts: "{}"},
+		{Category: 421, Key: "aaa21", Name: "Pad ECU 21", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/421.json", Counts: "{}"},
+		{Category: 422, Key: "aaa22", Name: "Pad ECU 22", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/422.json", Counts: "{}"},
+		{Category: 423, Key: "aaa23", Name: "Pad ECU 23", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/423.json", Counts: "{}"},
+		{Category: 424, Key: "aaa24", Name: "Pad ECU 24", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/424.json", Counts: "{}"},
+		{Category: 425, Key: "aaa25", Name: "Pad ECU 25", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/425.json", Counts: "{}"},
+		{Category: 426, Key: "aaa26", Name: "Pad ECU 26", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/426.json", Counts: "{}"},
+		{Category: 427, Key: "aaa27", Name: "Pad ECU 27", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/427.json", Counts: "{}"},
+		{Category: 428, Key: "aaa28", Name: "Pad ECU 28", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/428.json", Counts: "{}"},
+		{Category: 429, Key: "aaa29", Name: "Pad ECU 29", Database: "PAD_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/429.json", Counts: "{}"},
 	} {
 		c.ECU(e)
 	}
@@ -168,8 +168,8 @@ func TestOpensOnDecodedECUDirectory(t *testing.T) {
 	if view := view(m); !strings.Contains(view, "Pad ECU") && !strings.Contains(view, "Front Recognition Camera 2") {
 		t.Fatal(view)
 	}
-	if strings.Contains(view(m), "GTS+") || strings.Contains(view(m), "2026") {
-		t.Fatalf("header should not brand the GTS+ release:\n%s", view(m))
+	if strings.Contains(view(m), "2026") {
+		t.Fatalf("header should not show the catalog release:\n%s", view(m))
 	}
 	if !strings.Contains(view(m), "toyo") || !strings.Contains(ansi.Strip(view(m)), "NA") {
 		t.Fatalf("header should be the toyo product and region:\n%s", view(m))
@@ -347,13 +347,6 @@ func TestLayoutNeverOverflowsTheTerminal(t *testing.T) {
 				}
 			}
 		}
-	}
-}
-
-func TestHeaderOmitsGTSRelease(t *testing.T) {
-	plain := ansi.Strip(view(opened(t, 90, 24)))
-	if strings.Contains(plain, "GTS+") || strings.Contains(plain, "GTS") {
-		t.Fatalf("gts branding leaked into header:\n%s", plain)
 	}
 }
 
@@ -542,9 +535,6 @@ func TestRegionCycleAndSearchNoResults(t *testing.T) {
 	}
 	if !strings.Contains(view(m), "No ECUs with decoded catalogs in EU") {
 		t.Fatalf("empty region message:\n%s", view(m))
-	}
-	if strings.Contains(view(m), "GTS+") {
-		t.Fatal(view(m))
 	}
 
 	m = typed(t, opened(t, 90, 24), "zzz-no-such-record")

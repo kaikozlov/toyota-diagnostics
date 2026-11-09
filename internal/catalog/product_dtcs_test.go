@@ -18,7 +18,7 @@ func productDTCFixture(t *testing.T) *DB {
 	_, err = conn.Exec(`CREATE TABLE text_values(id INTEGER PRIMARY KEY,value TEXT UNIQUE);
  CREATE TABLE diagnostic_codes(id INTEGER PRIMARY KEY,code_id INTEGER,description_id INTEGER,comment_id INTEGER,failure_id INTEGER,identifier INTEGER,packed_code INTEGER,field_mask INTEGER);
  CREATE TABLE dtc_entries(id INTEGER PRIMARY KEY,code_id INTEGER,source_id INTEGER,table_number INTEGER,record_number INTEGER,origin_mask INTEGER);
- INSERT INTO text_values VALUES(1,'P1234'),(2,'説明'),(3,'ECU.ddb'),(4,'');
+ INSERT INTO text_values VALUES(1,'P1234'),(2,'説明'),(3,'ECU'),(4,'');
  INSERT INTO diagnostic_codes VALUES(1,1,2,NULL,NULL,NULL,1192960,43),(2,1,NULL,4,NULL,9007199254740993,NULL,22),(3,1,NULL,NULL,NULL,NULL,NULL,0);
  INSERT INTO dtc_entries VALUES(1,1,3,65,7,7),(2,2,NULL,NULL,NULL,0),(3,3,NULL,NULL,NULL,7);`)
 	if err != nil {

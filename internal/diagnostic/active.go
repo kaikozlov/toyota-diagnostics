@@ -47,7 +47,7 @@ func PackDirectRawValue(row map[string]any, n int, value uint64) ([]byte, error)
 			return nil, fmt.Errorf("mode 4 requires 1..4 byte span")
 		}
 	default:
-		return nil, fmt.Errorf("unrecovered direct encoding mode %d", mode)
+		return nil, fmt.Errorf("unknown direct encoding mode %d", mode)
 	}
 	out := make([]byte, n)
 	for i := 0; i < width; i++ {
@@ -69,7 +69,7 @@ func DirectControlEnableMasks(row map[string]any, n int) ([]byte, []byte, error)
 	}
 	strategy := diagMap(row["control_enable_mask"])
 	if strategy == nil {
-		return nil, nil, fmt.Errorf("missing recovered control enable strategy")
+		return nil, nil, fmt.Errorf("missing control enable strategy")
 	}
 	expected := map[int]string{0: "type67_rows_for_selected_byte_span", 1: "selected_bit_range_or_alternate", 3: "none", 4: "selected_bit_range", 6: "none"}
 	want, ok := expected[mode]
@@ -78,7 +78,7 @@ func DirectControlEnableMasks(row map[string]any, n int) ([]byte, []byte, error)
 	}
 	legacy := (mode == 1 || mode == 4) && strategy["start"] == "none" && strategy["stop"] == "selected_bit_range"
 	if !legacy && (strategy["start"] != want || strategy["stop"] != want) {
-		return nil, nil, fmt.Errorf("mask strategy disagrees with recovered mode %d", mode)
+		return nil, nil, fmt.Errorf("mask strategy disagrees with mode %d", mode)
 	}
 	mask := []byte{}
 	switch mode {
@@ -157,7 +157,7 @@ func DirectEngineeringToRaw(row map[string]any, value string) (uint64, error) {
 	}
 	r.Mul(r, new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(digits)), nil)))
 	if !r.IsInt() {
-		return 0, fmt.Errorf("engineering value exceeds recovered %d decimal precision", digits)
+		return 0, fmt.Errorf("engineering value exceeds %d decimal precision", digits)
 	}
 	return engineeringIntegerToRaw(row, r.Num())
 }
@@ -189,7 +189,7 @@ func ResolveMultiDirectGroup(group map[string]any, lookup func(int) (map[string]
 	}
 	id, e := diagInt(group["did"])
 	if e != nil || id < 0 || id >= 65535 {
-		p.Refusals = append(p.Refusals, "group has no single recovered DID")
+		p.Refusals = append(p.Refusals, "group has no single known DID")
 	} else {
 		p.Identifier = uint16(id)
 	}
@@ -234,7 +234,7 @@ func ResolveMultiDirectGroup(group map[string]any, lookup func(int) (map[string]
 		p.InputSlots = append(p.InputSlots, slot)
 	}
 	if len(p.Refusals) == 0 {
-		p.Refusals = append(p.Refusals, "runtime payload length not definitively recovered")
+		p.Refusals = append(p.Refusals, "runtime payload length not definitively known")
 	}
 	return p
 }

@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// Only product-domain references belong in a diagnostic database. Vendor
-// records and reverse-engineering traces are not a runtime storage contract.
+// Only diagnostic references belong in the database; anything else is a
+// storage error.
 func storedReference(node map[string]any) (string, any, bool) {
 	for _, kind := range []string{"$support_member_facts", "$support_query_facts", "$freeze_query_facts", "$support_group_facts", "$customize_item", "$customize_group", "$did_membership", "$dtc_membership", "$display_membership", "$signal_definition", "$data_list_row", "$signal_info", "$did_support", "$support_condition", "$vehicle_definition", "$install_set", "$vehicle_route", "$can_topology", "$diagnostic_code", "$dtc_source_definition", "$freeze_physical", "$operation_base_frame", "$operation_frame", "$operation_encoding", "$operation_mask", "$operation_conversion", "$signal_observation", "$ddr_signal", "$ddr_behavior_signal", "$ddr_condition", "$ddr_behavior_condition", "$ddr_data_id", "$ddr_trigger", "$ddr_behavior_code", "$decoded_pattern", "$decoded_physical", "$decoded_unit", "$decoded_pcs_ffd", "$decoded_data_id", "$decoded_monitor", "$decoded_condition", "$decoded_condition_compact", "$decoded_dtc_status", "$decoded_dynamic_did", "$decoded_behavior", "$decoded_rob_signal", "$decoded_rob_special", "$native_recorder_addresses", "$native_recorder_invalid_conditions", "$native_recorder_monitors", "$native_recorder_triggers", "$native_recorder_case_data_ids", "$native_recorder_header_data_ids", "$legacy_rob_signal", "$legacy_freeze_signal", "$legacy_condition", "$legacy_response_definition", "$legacy_dynamic", "$ecu_catalog", "$work_standard", "$work_pattern", "$work_factor_definition", "$legacy_operation", "$legacy_operation_pattern", "$operation_plan", "$behavior_code"} {
 		if id, ok := node[kind]; ok {

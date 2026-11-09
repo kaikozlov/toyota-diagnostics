@@ -101,7 +101,7 @@ func ResolvePlan(row map[string]any) TestPlan {
 		p.RuntimeLength, e = diagInt(row["runtime_length"])
 		if e != nil || p.RuntimeLength <= 0 {
 			p.RuntimeLength = 0
-			p.Refusals = append(p.Refusals, "runtime payload length not definitively recovered")
+			p.Refusals = append(p.Refusals, "runtime payload length not definitively known")
 		}
 	} else {
 		p.Parameterized = row["fixed_request"] != true
@@ -117,7 +117,7 @@ func ResolvePlan(row map[string]any) TestPlan {
 func RuntimeRefusals(s *Session, p TestPlan) []string {
 	r := append([]string(nil), p.Refusals...)
 	if p.SessionRequirement == "extended" && (s == nil || s.Lifecycle == nil) {
-		r = append(r, "registry supplies no recovered session lifecycle")
+		r = append(r, "registry supplies no session lifecycle")
 	}
 	return r
 }
@@ -224,10 +224,10 @@ func MaterializeRoutine(p TestPlan, value, button []byte) (TestPlan, error) {
 		return p, e
 	}
 	if (len(vm) > 0 && len(value) != n) || (len(vm) == 0 && value != nil) {
-		return p, fmt.Errorf("value must match recovered routine mask width %d", n)
+		return p, fmt.Errorf("value must match routine mask width %d", n)
 	}
 	if (len(bm) > 0 && len(button) != n) || (len(bm) == 0 && button != nil) {
-		return p, fmt.Errorf("button must match recovered routine mask width %d", n)
+		return p, fmt.Errorf("button must match routine mask width %d", n)
 	}
 	merged := make([]byte, n)
 	copy(merged, p.Start[4:])

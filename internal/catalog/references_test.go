@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestUnsupportedResearchReferencesFailClosed(t *testing.T) {
+func TestUnsupportedReferencesFailClosed(t *testing.T) {
 	d := emptyDB(t)
 	for _, kind := range []string{"$native_record", "$plugin_query", "$physical", "$dtc_source", "$unknown"} {
 		t.Run(kind, func(t *testing.T) {

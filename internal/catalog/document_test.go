@@ -14,8 +14,8 @@ import (
 	"github.com/kaikozlov/toyota-diagnostics/internal/catalog/catalogtest"
 )
 
-// Optional full-product fixtures contain projected diagnostic documents, not research exports.
-func TestDocumentProductParity(t *testing.T) {
+// Optional full-product fixtures contain expected diagnostic documents.
+func TestDocumentsMatchFixtures(t *testing.T) {
 	path, root := os.Getenv("TOYO_TEST_CATALOG"), os.Getenv("TOYO_TEST_DOCUMENTS")
 	if path == "" || root == "" {
 		t.Skip("product document integration requires explicit fixture paths")

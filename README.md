@@ -45,8 +45,7 @@ vehicle. `toyo dtc clear` clears codes when you run it. Active Tests,
 Customize, and utilities are a dry run unless you pass `--execute`. Mutating
 raw requests need `--force`.
 
-Transport options, recovered GTS+ coverage, and the longer live command set
-are in `toyo help COMMAND` and [`docs/GTS_PARITY.md`](docs/GTS_PARITY.md).
+Transport options and the longer live command set are in `toyo help COMMAND`.
 
 ## Development
 

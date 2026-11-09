@@ -7,7 +7,7 @@ import (
 )
 
 func profileFixture() map[string]any {
-	cat := map[string]any{"category_id": 405, "name": "EMPS", "database": "EMPS_P5.ddb", "generation": 20, "catalog_member": "catalogs/NA/405.json"}
+	cat := map[string]any{"category_id": 405, "name": "EMPS", "database": "EMPS_P5", "generation": 20, "catalog_member": "catalogs/NA/405.json"}
 	row := func(frame int) any {
 		return map[string]any{"category_id": 405, "connection_route_selector": 18, "connection_frame_id": frame, "route_key": "405:18"}
 	}

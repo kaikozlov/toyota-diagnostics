@@ -226,7 +226,7 @@ func supportBitmapHas(bitmap []byte, index int) bool {
 	return index >= 0 && index < 256 && index/8 < len(bitmap) && bitmap[index/8]&(0x80>>uint(index%8)) != 0
 }
 
-// SupportResolver implements the recovered P5/P6 family-specific bitmap protocol.
+// SupportResolver implements the P5/P6 family-specific bitmap protocol.
 // A nil StaticIDs uses wire queries; a nonnil empty slice is an empty static cache.
 type SupportResolver struct {
 	Client                   RequestClient
@@ -244,7 +244,7 @@ type SupportResolver struct {
 
 func NewSupportResolver(client RequestClient, contract map[string]any, mode string, routine bool) (*SupportResolver, error) {
 	if mode != "p5-standard" && mode != "p6-standard" {
-		return nil, fmt.Errorf("Toyota support mode %s: exact support-list executor is not recovered", mode)
+		return nil, fmt.Errorf("Toyota support mode %s: exact support-list executor is not known", mode)
 	}
 	key := "did_root"
 	sid := byte(0x22)

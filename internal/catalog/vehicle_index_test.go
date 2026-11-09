@@ -12,7 +12,7 @@ func vehicleIndexFixture(t *testing.T) *DB {
 	d := emptyDB(t)
 	_, err := d.db.Exec(`
  CREATE TABLE text_values(id INTEGER PRIMARY KEY,value TEXT);
- INSERT INTO text_values VALUES(1,''),(2,'unrecovered'),(3,'unknown');
+ INSERT INTO text_values VALUES(1,''),(2,'opaque'),(3,'unknown');
  CREATE TABLE vehicle_definitions(id INTEGER PRIMARY KEY,vehicle_type INTEGER,name_id INTEGER,install_count INTEGER);
  INSERT INTO vehicle_definitions VALUES(1,7,1,3);
  CREATE TABLE vehicle_install_references(vehicle_id INTEGER,position INTEGER,install_set_id INTEGER);

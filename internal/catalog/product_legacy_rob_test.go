@@ -35,7 +35,7 @@ CREATE TABLE text_values(id INTEGER PRIMARY KEY,value TEXT UNIQUE);
 INSERT INTO "text_values" VALUES(1,'');
 INSERT INTO "text_values" VALUES(2,'legacy-rob-msb0-u32-v1');
 INSERT INTO "text_values" VALUES(3,'excluded');
-INSERT INTO "text_values" VALUES(4,'unit.ddb');
+INSERT INTO "text_values" VALUES(4,'unit');
 INSERT INTO "text_values" VALUES(5,'ready');
 COMMIT;`
 
@@ -60,7 +60,7 @@ func TestLegacyROBSignalRoundtrip(t *testing.T) {
 	}
 	var actual, expected any
 	json.Unmarshal(encoded, &actual)
-	json.Unmarshal([]byte(`{"bdid": 0, "bit_end": 0, "bit_start": 0, "exception_handler_flag": 0, "exception_handler_id": 0, "graph_max": 0, "graph_min": 0, "name_string_index": 0, "pattern_display_key": 0, "physical_data_key": 0, "presentation_mode": 0, "signal_key": 0, "sort_key": 0, "support_mode": 0, "name": null, "short_name": "", "decoder": "legacy-rob-msb0-u32-v1", "support_rule": "excluded", "source": "unit.ddb", "table": 45, "record": 1, "data_min": 0.0, "data_max": 3.0, "physical_variants": [{"decimal_point_count": 0, "div": 1, "mul": 1, "offset": 0, "physical_data_key": 12, "record": 4, "sign_mode": 0, "table": 13, "unit_key": 5, "units": [{"genre_id": 0, "name": null, "name_string_index": 70, "record": 61}]}, {"decimal_point_count": 0, "div": 1, "mul": 1, "offset": 0, "physical_data_key": 12, "record": 4, "sign_mode": 0, "table": 13, "unit_key": 5, "units": [{"genre_id": 0, "name": null, "name_string_index": 70, "record": 61}]}], "pattern_display": [{"name": "ready", "name_string_index": 6, "record": 2, "table": 14, "value": 0}, {"name": "ready", "name_string_index": 6, "record": 2, "table": 14, "value": 0}]}`), &expected)
+	json.Unmarshal([]byte(`{"bdid": 0, "bit_end": 0, "bit_start": 0, "exception_handler_flag": 0, "exception_handler_id": 0, "graph_max": 0, "graph_min": 0, "name_string_index": 0, "pattern_display_key": 0, "physical_data_key": 0, "presentation_mode": 0, "signal_key": 0, "sort_key": 0, "support_mode": 0, "name": null, "short_name": "", "decoder": "legacy-rob-msb0-u32-v1", "support_rule": "excluded", "source": "unit", "table": 45, "record": 1, "data_min": 0.0, "data_max": 3.0, "physical_variants": [{"decimal_point_count": 0, "div": 1, "mul": 1, "offset": 0, "physical_data_key": 12, "record": 4, "sign_mode": 0, "table": 13, "unit_key": 5, "units": [{"genre_id": 0, "name": null, "name_string_index": 70, "record": 61}]}, {"decimal_point_count": 0, "div": 1, "mul": 1, "offset": 0, "physical_data_key": 12, "record": 4, "sign_mode": 0, "table": 13, "unit_key": 5, "units": [{"genre_id": 0, "name": null, "name_string_index": 70, "record": 61}]}], "pattern_display": [{"name": "ready", "name_string_index": 6, "record": 2, "table": 14, "value": 0}, {"name": "ready", "name_string_index": 6, "record": 2, "table": 14, "value": 0}]}`), &expected)
 	runtime, err := d.runtimeValue(context.Background(), map[string]any{"$legacy_rob_signal": json.Number("1")})
 	if err != nil {
 		t.Fatal(err)

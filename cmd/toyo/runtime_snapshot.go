@@ -247,7 +247,7 @@ func (r *runtimeApp) mounted() ([]map[string]any, error) {
 		family, mode := fmt.Sprint(candidate["support_family"]), fmt.Sprint(candidate["support_mode"])
 		if mode != "p5-standard" && mode != "p6-standard" || !route.UDSTransportSupported() {
 			row["live_state"] = "probe_unavailable"
-			row["probe_error"] = fmt.Sprintf("exact support executor for %s/%s over %s is not recovered", family, mode, route.TransportKind)
+			row["probe_error"] = fmt.Sprintf("exact support executor for %s/%s over %s is not known", family, mode, route.TransportKind)
 			rows = append(rows, row)
 			continue
 		}

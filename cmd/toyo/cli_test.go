@@ -42,9 +42,9 @@ func cliCatalog(t *testing.T) *catalogtest.Catalog {
 	t.Helper()
 	c := catalogtest.New(t)
 	for _, e := range []catalogtest.ECU{
-		{Category: 498, Key: "frc", Name: "Front Recognition Camera 2", Database: "FRC_P5.ddb", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/498.json", Counts: "{\"dids\":2,\"signals\":3,\"dtcs\":1,\"active_tests\":1}"},
-		{Category: 405, Key: "eps", Name: "Power Steering", Database: "EMPS_P5.ddb", Generation: 20, SupportMode: "p5-standard", Counts: "{}"},
-		{Category: 317, Key: "eps_317", Name: "EPS", Database: "EPS_P4.ddb", Generation: 4, SupportMode: "p4", Counts: "{}"},
+		{Category: 498, Key: "frc", Name: "Front Recognition Camera 2", Database: "FRC_P5", Generation: 20, SupportMode: "p5-standard", CatalogMember: "catalogs/NA/498.json", Counts: "{\"dids\":2,\"signals\":3,\"dtcs\":1,\"active_tests\":1}"},
+		{Category: 405, Key: "eps", Name: "Power Steering", Database: "EMPS_P5", Generation: 20, SupportMode: "p5-standard", Counts: "{}"},
+		{Category: 317, Key: "eps_317", Name: "EPS", Database: "EPS_P4", Generation: 4, SupportMode: "p4", Counts: "{}"},
 	} {
 		c.ECU(e)
 	}
