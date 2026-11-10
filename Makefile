@@ -4,7 +4,7 @@
 build:
 	go build -o build/toyo ./cmd/toyo
 
-# Cross-compile for comma devices (AGNOS, Linux ARM64).
+# Static linux/arm64 build for the comma device.
 build-comma:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/toyo-linux-arm64 ./cmd/toyo
 
