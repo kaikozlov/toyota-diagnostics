@@ -302,8 +302,11 @@ func (d *DB) Verify(ctx context.Context) error {
 // keeps a 16 KiB cache and leaves the rest to the OS.
 const verifyConns = 3
 
-// pageAccounting checks that every page is used exactly once: by a b-tree,
-// by the freelist, or as the lock-byte page.
+// pageAccounting checks what per-table checks skip: every page is used
+// exactly once (by a b-tree, the freelist, the pointer map, or as the
+// lock-byte page), the freelist matches the header, and in an auto-vacuum
+// file the header's largest root page and each root page's pointer-map entry.
+// Per-table checks verify the pointer-map entries of every other page.
 func pageAccounting(ctx context.Context, db *sql.DB) error {
 	var pages int64
 	var header []byte
@@ -312,6 +315,17 @@ func pageAccounting(ctx context.Context, db *sql.DB) error {
 	}
 	if len(header) < 100 {
 		return fmt.Errorf("SQLite page 1 is %d bytes", len(header))
+	}
+	size := len(header)
+	read := func(page int64) ([]byte, error) {
+		var data []byte
+		if err := db.QueryRowContext(ctx, "SELECT data FROM sqlite_dbpage WHERE pgno=?", page).Scan(&data); err != nil {
+			return nil, err
+		}
+		if len(data) != size {
+			return nil, fmt.Errorf("SQLite page %d is %d bytes", page, len(data))
+		}
+		return data, nil
 	}
 	used := make([]bool, pages+1)
 	use := func(page uint32) error {
@@ -324,8 +338,31 @@ func pageAccounting(ctx context.Context, db *sql.DB) error {
 		used[page] = true
 		return nil
 	}
-	if lock := int64(1<<30)/int64(len(header)) + 1; lock <= pages {
+	lock := int64(1<<30)/int64(size) + 1
+	if lock <= pages {
 		used[lock] = true
+	}
+	// An auto-vacuum file keeps a pointer map: starting at page 2, one page
+	// in every usable/5+1 holds a 5-byte type and parent for each page after
+	// it, skipping the lock-byte page.
+	usable := uint32(size) - uint32(header[20])
+	perMap := int64(usable/5) + 1
+	mapPage := func(page int64) int64 {
+		m := (page-2)/perMap*perMap + 2
+		if m == lock {
+			m++
+		}
+		return m
+	}
+	autoVacuum := binary.BigEndian.Uint32(header[52:]) != 0
+	if autoVacuum {
+		for first := int64(2); first <= pages; first += perMap {
+			if m := mapPage(first); m <= pages {
+				used[m] = true
+			}
+		}
+	} else if binary.BigEndian.Uint32(header[64:]) != 0 {
+		return errors.New("SQLite header: incremental vacuum is set without auto-vacuum")
 	}
 	rows, err := db.QueryContext(ctx, "SELECT pageno FROM dbstat")
 	if err != nil {
@@ -347,14 +384,13 @@ func pageAccounting(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	// The freelist is a chain of trunk pages, each listing leaf pages.
-	usable := uint32(len(header)) - uint32(header[20])
 	free := uint32(0)
 	for trunk := binary.BigEndian.Uint32(header[32:]); trunk != 0; {
 		if err := use(trunk); err != nil {
 			return err
 		}
-		var data []byte
-		if err := db.QueryRowContext(ctx, "SELECT data FROM sqlite_dbpage WHERE pgno=?", trunk).Scan(&data); err != nil {
+		data, err := read(int64(trunk))
+		if err != nil {
 			return err
 		}
 		leaves := binary.BigEndian.Uint32(data[4:])
@@ -376,6 +412,47 @@ func pageAccounting(ctx context.Context, db *sql.DB) error {
 		if !used[page] {
 			return fmt.Errorf("SQLite page accounting: page %d is never used", page)
 		}
+	}
+	if !autoVacuum {
+		return nil
+	}
+	rows, err = db.QueryContext(ctx, "SELECT rootpage FROM sqlite_schema WHERE rootpage>1")
+	if err != nil {
+		return err
+	}
+	var roots []int64
+	for rows.Next() {
+		var root int64
+		if err := rows.Scan(&root); err != nil {
+			rows.Close()
+			return err
+		}
+		roots = append(roots, root)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	largest := int64(1)
+	maps := map[int64][]byte{}
+	for _, root := range roots {
+		m := mapPage(root)
+		if root > pages || root <= m {
+			return fmt.Errorf("SQLite pointer map: root page %d has no entry", root)
+		}
+		if maps[m] == nil {
+			if maps[m], err = read(m); err != nil {
+				return err
+			}
+		}
+		entry := maps[m][5*(root-m-1):]
+		if kind, parent := entry[0], binary.BigEndian.Uint32(entry[1:]); kind != 1 || parent != 0 {
+			return fmt.Errorf("SQLite pointer map: root page %d has type %d and parent %d", root, kind, parent)
+		}
+		largest = max(largest, root)
+	}
+	if want := int64(binary.BigEndian.Uint32(header[52:])); largest != want {
+		return fmt.Errorf("SQLite header: largest root page is %d, header says %d", largest, want)
 	}
 	return nil
 }
