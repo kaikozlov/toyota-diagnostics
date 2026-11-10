@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	_ "modernc.org/sqlite"
@@ -29,6 +30,8 @@ type DB struct {
 	dtcMembership         membershipCache
 	displayMembership     membershipCache
 	db                    *sql.DB
+	scopes                sync.Map
+	statements            sync.Map
 	Path                  string
 	signalRecords         cachedMetadata
 	vehicleIndexRecords   cachedMetadata
@@ -361,80 +364,6 @@ func (d *DB) SearchECU(ctx context.Context, e ECU, query string, limit int) ([]I
 // (category 0 means every ECU).
 func (d *DB) SearchKind(ctx context.Context, region string, category int, kind, query string, limit int) ([]Item, error) {
 	return d.search(ctx, region, category, kind, query, limit)
-}
-
-// search runs the ranked full-text query; category 0 means every ECU and an
-// empty kind means every kind.
-func (d *DB) search(ctx context.Context, region string, category int, kind, query string, limit int) ([]Item, error) {
-	if limit <= 0 {
-		return nil, fmt.Errorf("limit must be positive")
-	}
-	if limit > 5000 {
-		limit = 5000
-	}
-	region, err := Region(region)
-	if err != nil {
-		return nil, err
-	}
-	match := ftsQuery(query)
-	if match == "" {
-		return []Item{}, nil
-	}
-	bare, explicit := queryIdentForm(query)
-	hexExact, hexPrefix, decExact := "", "", ""
-	if bare != "" {
-		hexExact = "0x" + bare
-		hexPrefix = hexExact + "%"
-		if !explicit {
-			decExact = bare
-		}
-	}
-	// Ranking is a single policy, not stacked special cases:
-	//  0 navigational ECU (kind=ecu and key, category id, or full ECU name)
-	//  1 exact identifier in the query's number domain (explicit 0x stays
-	//    hex-only; a bare token may match either 0x160 or decimal 160)
-	//  2 prefix of a hex (0x…) identifier
-	//  3 exact item name
-	//  4 other records belonging to an ECU whose key equals the query
-	//  5 BM25 over name (10), detail (1), identifier (3)
-	// Ties stay stable.
-	rows, err := d.db.QueryContext(ctx, `
-SELECT i.id, i.kind, i.region, i.category_id, coalesce(e.key,''), coalesce(e.name,''),
-       i.identifier, i.name, i.detail
-FROM items_fts
-JOIN items i ON i.id=items_fts.rowid
-LEFT JOIN ecus e ON e.region=i.region AND e.category_id=i.category_id
-WHERE items_fts MATCH ? AND i.region=? AND (?=0 OR i.category_id=?) AND (?='' OR i.kind=?)
-ORDER BY CASE WHEN i.kind='ecu' AND (lower(e.key)=lower(?) OR cast(e.category_id as text)=? OR lower(e.name)=lower(?)) THEN 0
-              WHEN ? != '' AND lower(i.identifier)=? THEN 1
-              WHEN ? != '' AND lower(i.identifier)=? THEN 1
-              WHEN lower(i.identifier)=lower(?) THEN 1
-              WHEN ? != '' AND lower(i.identifier) LIKE ? THEN 2
-              WHEN lower(i.name)=lower(?) THEN 3
-              WHEN lower(e.key)=lower(?) THEN 4
-              ELSE 5 END,
-         bm25(items_fts, 10.0, 1.0, 3.0),
-         i.kind, i.category_id, i.identifier, i.id
-LIMIT ?`, match, region, category, category, kind, kind,
-		query, query, query,
-		hexExact, hexExact,
-		decExact, decExact,
-		query,
-		hexPrefix, hexPrefix,
-		query, query, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]Item, 0)
-	for rows.Next() {
-		var r Item
-		if err := rows.Scan(&r.ID, &r.Kind, &r.Region, &r.CategoryID, &r.ECU, &r.ECUName, &r.Identifier, &r.Name, &r.Detail); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
 }
 
 func scanECU(rows *sql.Rows) (ECU, error) {
