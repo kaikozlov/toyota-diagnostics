@@ -46,8 +46,8 @@ func (d *DB) search(ctx context.Context, region string, category int, kind, quer
 	if match == "" {
 		return []Item{}, nil
 	}
-	scope, ok, err := d.scope(ctx, region, category)
-	if err != nil || !ok {
+	scope, err := d.scope(ctx, region, category)
+	if err != nil || scope.empty {
 		return []Item{}, err
 	}
 	first, last := scope.first, scope.last
@@ -164,36 +164,38 @@ ORDER BY tier, score LIMIT ?13`
 	return out, nil
 }
 
-// span is a run of occurrence IDs.
-type span struct{ first, last int64 }
+// span is a run of occurrence IDs; empty holds none.
+type span struct {
+	first, last int64
+	empty       bool
+}
 
 // scope returns the IDs a region or one of its ECUs can hold. Every
 // occurrence lies inside an owner range of its own region and ECU (ECU
 // listings rely on the same fact), so the full-text index can skip IDs
 // outside them; IDs inside are still checked per row. The catalog is
 // immutable, so each scope is read once.
-func (d *DB) scope(ctx context.Context, region string, category int) (span, bool, error) {
+func (d *DB) scope(ctx context.Context, region string, category int) (span, error) {
 	type key struct {
 		region   string
 		category int
 	}
 	if s, ok := d.scopes.Load(key{region, category}); ok {
-		return s.(span), s.(span).last != 0, nil
+		return s.(span), nil
 	}
 	lo, hi := category, category
 	if category == 0 {
 		lo, hi = math.MinInt64, math.MaxInt64
 	}
-	var s span
 	var first, last sql.NullInt64
 	err := d.db.QueryRowContext(ctx, `SELECT min(first_id), max(last_id) FROM owner_ranges
 WHERE region_id=(SELECT id FROM search_regions WHERE name=?) AND category_id BETWEEN ? AND ?`, region, lo, hi).Scan(&first, &last)
 	if err != nil {
-		return s, false, err
+		return span{}, err
 	}
-	s = span{first.Int64, last.Int64}
+	s := span{first.Int64, last.Int64, !last.Valid}
 	d.scopes.Store(key{region, category}, s)
-	return s, last.Valid, nil
+	return s, nil
 }
 
 // exactForms describes tiers 1–3. They compare a record's own identifier or

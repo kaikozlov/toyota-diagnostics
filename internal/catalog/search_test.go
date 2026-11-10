@@ -1,6 +1,11 @@
 package catalog
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/kaikozlov/toyota-diagnostics/internal/catalog/catalogtest"
+)
 
 // Search relies on two facts about the catalog: every occurrence lies inside
 // an owner range of its own region and ECU, and an ECU's own record carries
@@ -22,5 +27,19 @@ WHERE e.name IS NULL OR lower(e.name)!=lower(n.value)`).Scan(&misnamed); err != 
 	}
 	if outside != 0 || misnamed != 0 {
 		t.Fatalf("%d occurrences outside their owner ranges, %d ECU records not named after their ECU", outside, misnamed)
+	}
+}
+
+func TestSearchScopeEndingAtZeroStaysFound(t *testing.T) {
+	c := catalogtest.New(t)
+	c.ECU(catalogtest.ECU{Category: 7, Key: "abs", Name: "Brakes", Database: "ABS"})
+	c.Item(catalogtest.Item{ID: -1, Category: 7, Kind: "did", Identifier: "0x01", Name: "Wheel speed"},
+		catalogtest.Item{ID: 0, Category: 7, Kind: "did", Identifier: "0x02", Name: "Wheel slip"})
+	d := openFixture(t, c)
+	for range 2 {
+		rows, err := d.SearchKind(context.Background(), "NA", 7, "", "wheel", 10)
+		if err != nil || len(rows) != 2 {
+			t.Fatalf("%v %v", identifiers(rows), err)
+		}
 	}
 }
