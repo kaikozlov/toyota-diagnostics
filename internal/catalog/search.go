@@ -95,11 +95,15 @@ ORDER BY tier, score LIMIT ?13`
 	}
 	same := func(a, b hit) bool { return a.tier == b.tier && a.score == b.score }
 	var hits []hit
+	stmt, err := d.prepared(ctx, rank)
+	if err != nil {
+		return nil, err
+	}
 	// SQLite cuts a run of equal scores arbitrarily, so fetch past the limit
 	// and widen until the limit-th row's tie is complete.
 	for n := 4*limit + 256; ; n *= 4 {
 		hits = hits[:0]
-		rows, err := d.query(ctx, rank, append(args, n)...)
+		rows, err := stmt.QueryContext(ctx, append(args, n)...)
 		if err != nil {
 			return nil, err
 		}
@@ -212,29 +216,18 @@ func exactForms(query string) (candidates, hexExact, decExact, hexPrefix string)
 	return "{identifier} : (" + identifiers + ") OR {name} : " + phrase, hexExact, decExact, hexPrefix
 }
 
-// query runs a statement prepared once per DB; search reuses a few shapes.
-func (d *DB) query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	stmt, ok := d.statements.Load(query)
-	if !ok {
-		prepared, err := d.db.PrepareContext(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		if stmt, ok = d.statements.LoadOrStore(query, prepared); ok {
-			prepared.Close()
-		}
-	}
-	return stmt.(*sql.Stmt).QueryContext(ctx, args...)
-}
-
 // itemsByID reads the region's items by occurrence ID.
 func (d *DB) itemsByID(ctx context.Context, region string, ids []int64) (map[int64]Item, error) {
 	list, _ := json.Marshal(ids)
-	rows, err := d.query(ctx, `SELECT o.id, k.name, o.category_id, coalesce(e.key,''), coalesce(e.name,''), x.value, n.value, t.value
+	stmt, err := d.prepared(ctx, `SELECT o.id, k.name, o.category_id, coalesce(e.key,''), coalesce(e.name,''), x.value, n.value, t.value
 FROM json_each(?2) j JOIN item_occurrences o ON o.id=j.value JOIN search_records r ON r.id=o.record_id
 JOIN search_kinds k ON k.id=r.kind_id JOIN search_text x ON x.id=r.identifier_id
 JOIN search_text n ON n.id=r.name_id JOIN search_text t ON t.id=r.detail_id
-LEFT JOIN ecus e ON e.region=?1 AND e.category_id=o.category_id`, region, string(list))
+LEFT JOIN ecus e ON e.region=?1 AND e.category_id=o.category_id`)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := stmt.QueryContext(ctx, region, string(list))
 	if err != nil {
 		return nil, err
 	}

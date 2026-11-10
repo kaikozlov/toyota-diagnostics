@@ -31,7 +31,6 @@ type DB struct {
 	displayMembership     membershipCache
 	db                    *sql.DB
 	scopes                sync.Map
-	statements            sync.Map
 	Path                  string
 	signalRecords         cachedMetadata
 	vehicleIndexRecords   cachedMetadata
@@ -55,6 +54,7 @@ type DB struct {
 	workFactors           cachedMetadata
 	decodedStatements     workStatementCache
 	workStatements        workStatementCache
+	statements            sync.Map
 }
 
 type Item struct {
@@ -185,6 +185,23 @@ func requireTables(db *sql.DB) error {
 		rows.Close()
 	}
 	return nil
+}
+
+// prepared returns a statement prepared once per DB, for queries that run
+// repeatedly.
+func (d *DB) prepared(ctx context.Context, query string) (*sql.Stmt, error) {
+	if stmt, ok := d.statements.Load(query); ok {
+		return stmt.(*sql.Stmt), nil
+	}
+	stmt, err := d.db.PrepareContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if prior, loaded := d.statements.LoadOrStore(query, stmt); loaded {
+		stmt.Close()
+		return prior.(*sql.Stmt), nil
+	}
+	return stmt, nil
 }
 
 func (d *DB) Close() error {
