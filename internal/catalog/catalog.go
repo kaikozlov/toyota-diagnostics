@@ -186,8 +186,8 @@ func requireTables(db *sql.DB) error {
 	return nil
 }
 
-// prepared returns a statement prepared once per DB, for lookups that run
-// once per stored reference.
+// prepared returns a statement prepared once per DB, for queries that run
+// repeatedly.
 func (d *DB) prepared(ctx context.Context, query string) (*sql.Stmt, error) {
 	if stmt, ok := d.statements.Load(query); ok {
 		return stmt.(*sql.Stmt), nil
