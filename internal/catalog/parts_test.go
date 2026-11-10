@@ -134,7 +134,7 @@ func TestDecodeStoredJSONMatchesEncodingJSON(t *testing.T) {
 		"[\"\xff\xfe bad utf-8\"]",
 		"{\"\xc3\":1}",
 		`[18446744073709551615, 1.0000000000000001]`,
-		`{"a":`, `[1,]`, `{"a" 1}`, `[01]`, `[-]`, `[1.]`, `[1e]`, `[tru]`, `["a\x"]`, `["\u12"]`, "[\"a\x01\"]", `[1 2]`, `{,}`, `]`, ``,
+		`{"a":`, `[1,]`, `{"a" 1}`, `[01]`, `[-]`, `[1.]`, `[1e]`, `[tru]`, `["a\x"]`, `["\u12"]`, "[\"a\x01\"]", `[1 2]`, `{,}`, `]`, ``, `t`, `tru`, `fals`, `nul`, `trUe`,
 	} {
 		var want any
 		decoder := json.NewDecoder(strings.NewReader(raw))

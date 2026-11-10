@@ -88,11 +88,11 @@ func (p *jsonParser) value(build bool) (any, error) {
 	case c == '-' || c >= '0' && c <= '9':
 		return p.number(build)
 	case c == 't':
-		return true, p.literal("true")
+		return p.literal("true", true)
 	case c == 'f':
-		return false, p.literal("false")
+		return p.literal("false", false)
 	case c == 'n':
-		return nil, p.literal("null")
+		return p.literal("null", nil)
 	}
 	return nil, p.fail()
 }
@@ -281,10 +281,10 @@ func (p *jsonParser) number(build bool) (any, error) {
 	return json.Number(p.data[start:p.pos]), nil
 }
 
-func (p *jsonParser) literal(word string) error {
+func (p *jsonParser) literal(word string, value any) (any, error) {
 	if len(p.data)-p.pos < len(word) || string(p.data[p.pos:p.pos+len(word)]) != word {
-		return p.fail()
+		return nil, p.fail()
 	}
 	p.pos += len(word)
-	return nil
+	return value, nil
 }
