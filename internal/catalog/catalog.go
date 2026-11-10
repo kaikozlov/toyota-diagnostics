@@ -271,6 +271,9 @@ func (d *DB) rowCount(ctx context.Context, table string) (int, error) {
 }
 
 func (d *DB) Verify(ctx context.Context) error {
+	if err := verifyOwnerRanges(ctx, d.db); err != nil {
+		return err
+	}
 	var result string
 	if err := d.db.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&result); err != nil {
 		return err

@@ -29,7 +29,7 @@ import (
 //
 // BM25 has to score every match in scope, so the statement that does it reads
 // as little else as it can: the full-text index skips IDs outside the scope's
-// owner ranges, only the few records that can reach tiers 0–3 have their text
+// owner ranges, only the few records that can reach tiers 1–3 have their text
 // compared, and SQLite keeps only the best rows. Text is read for those.
 func (d *DB) search(ctx context.Context, region string, category int, kind, query string, limit int) ([]Item, error) {
 	if limit <= 0 {
@@ -61,19 +61,14 @@ func (d *DB) search(ctx context.Context, region string, category int, kind, quer
 	// ?5–?7 the identifier forms, ?8 match, ?9–?10 the scope's bounds,
 	// ?11 category, ?12 the query as a category ID, ?13 limit. lower(),
 	// LIKE and NOCASE all fold ASCII only, as in every tier.
-	//
-	// An ECU's own record carries the ECU's name, so a record the query
-	// names as an ECU by full name is a tier 3 candidate too, and that part
-	// of tier 0 is checked among the candidates rather than over every ECU.
 	keyECU := `CASE WHEN o.category_id IN (SELECT category_id FROM ecus WHERE region=?1 AND key=?2 COLLATE NOCASE) THEN 4 ELSE 5 END`
 	rank := `SELECT f.rowid, CASE
   WHEN o.category_id IN (
     SELECT category_id FROM ecus WHERE region=?1 AND key=?2 COLLATE NOCASE UNION ALL
+    SELECT category_id FROM ecus WHERE region=?1 AND name=?2 COLLATE NOCASE UNION ALL
     SELECT category_id FROM ecus WHERE region=?1 AND category_id=?12)
    AND (SELECT kind_id FROM search_records WHERE id=o.record_id)=(SELECT id FROM search_kinds WHERE name='ecu') THEN 0
   WHEN f.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?4 AND rowid BETWEEN ?9 AND ?10) THEN coalesce((SELECT CASE
-    WHEN r.kind_id=(SELECT id FROM search_kinds WHERE name='ecu')
-     AND EXISTS (SELECT 1 FROM ecus WHERE region=?1 AND category_id=o.category_id AND name=?2 COLLATE NOCASE) THEN 0
     WHEN ?5!='' AND lower(x.value)=?5 THEN 1
     WHEN ?6!='' AND lower(x.value)=?6 THEN 1
     WHEN lower(x.value)=lower(?2) THEN 1
@@ -170,9 +165,9 @@ type span struct {
 	empty       bool
 }
 
-// scope returns the IDs a region or one of its ECUs can hold. Every
-// occurrence lies inside an owner range of its own region and ECU (ECU
-// listings rely on the same fact), so the full-text index can skip IDs
+// scope returns the IDs a region or one of its ECUs can hold. Verify checks
+// that every occurrence lies inside an owner range of its own region and ECU
+// (ECU listings rely on the same fact), so the full-text index can skip IDs
 // outside them; IDs inside are still checked per row. The catalog is
 // immutable, so each scope is read once.
 func (d *DB) scope(ctx context.Context, region string, category int) (span, error) {
@@ -196,6 +191,27 @@ WHERE region_id=(SELECT id FROM search_regions WHERE name=?) AND category_id BET
 	s := span{first.Int64, last.Int64, !last.Valid}
 	d.scopes.Store(key{region, category}, s)
 	return s, nil
+}
+
+// verifyOwnerRanges checks that every occurrence lies inside an owner range
+// of its own region and ECU. Once no two ranges of an ECU overlap, the
+// occurrences counted inside each range are each counted once.
+func verifyOwnerRanges(ctx context.Context, db *sql.DB) error {
+	var overlaps, outside int64
+	if err := db.QueryRowContext(ctx, `SELECT
+ (SELECT count(*) FROM (SELECT first_id, max(last_id) OVER (PARTITION BY region_id, category_id ORDER BY first_id
+   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS before FROM owner_ranges) WHERE before>=first_id),
+ (SELECT count(*) FROM item_occurrences) - coalesce((SELECT sum((SELECT count(*) FROM item_occurrences o
+   WHERE o.id BETWEEN w.first_id AND w.last_id AND o.region_id=w.region_id AND o.category_id=w.category_id)) FROM owner_ranges w), 0)`).Scan(&overlaps, &outside); err != nil {
+		return err
+	}
+	if overlaps != 0 {
+		return fmt.Errorf("catalog: %d owner ranges overlap another range of their ECU", overlaps)
+	}
+	if outside != 0 {
+		return fmt.Errorf("catalog: %d occurrences lie outside their ECU's owner ranges", outside)
+	}
+	return nil
 }
 
 // exactForms describes tiers 1–3. They compare a record's own identifier or
