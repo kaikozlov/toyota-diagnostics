@@ -77,6 +77,19 @@ func (r *runtimeApp) readVIN() (map[string]any, error) {
 	return nil, fmt.Errorf("could not obtain a valid 17-character VIN on buses %v; select --vehicle TYPE explicitly", buses)
 }
 
+// vinSections reads the regional index sections resolveVINRows uses.
+func (r *runtimeApp) vinSections() (map[string]any, error) {
+	regional := map[string]any{}
+	for _, name := range []string{"vin_decision", "routes", "selected_categories", "vehicle_resolver_dispatch", "vehicles"} {
+		value, err := r.profile.Section(r.ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		regional[name] = value
+	}
+	return regional, nil
+}
+
 func resolveVINRows(regional map[string]any, vin string, rx uint32) ([]map[string]any, error) {
 	if !diagnostic.ValidVIN(vin) {
 		return nil, fmt.Errorf("invalid VIN %q", vin)
@@ -197,7 +210,11 @@ func (r *runtimeApp) ensureVehicle() error {
 	if err != nil {
 		return err
 	}
-	rows, err := resolveVINRows(r.profile.Regional, fmt.Sprint(info["vin"]), uint32(runtimeNumber(info["rx_address"])))
+	regional, err := r.vinSections()
+	if err != nil {
+		return err
+	}
+	rows, err := resolveVINRows(regional, fmt.Sprint(info["vin"]), uint32(runtimeNumber(info["rx_address"])))
 	if err != nil {
 		return err
 	}
@@ -335,7 +352,11 @@ func (r *runtimeApp) snapshotCommands(args []string) error {
 					return e
 				}
 			}
-			rows, e := resolveVINRows(r.profile.Regional, fmt.Sprint(info["vin"]), uint32(runtimeNumber(info["rx_address"])))
+			regional, e := r.vinSections()
+			if e != nil {
+				return e
+			}
+			rows, e := resolveVINRows(regional, fmt.Sprint(info["vin"]), uint32(runtimeNumber(info["rx_address"])))
 			if e != nil {
 				return e
 			}
