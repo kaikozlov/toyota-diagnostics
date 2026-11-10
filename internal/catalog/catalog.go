@@ -4,6 +4,7 @@ package catalog
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"unicode"
 
+	"golang.org/x/sync/errgroup"
 	_ "modernc.org/sqlite"
 
 	"github.com/kaikozlov/toyota-diagnostics/internal/suggest"
@@ -250,13 +252,130 @@ func (d *DB) rowCount(ctx context.Context, table string) (int, error) {
 	return n, nil
 }
 
+// Verify runs SQLite's quick_check split across a few connections: the schema
+// and every table with its indexes (the full-text index included), alongside
+// the whole-file page and freelist accounting that per-table checks skip.
 func (d *DB) Verify(ctx context.Context) error {
-	var result string
-	if err := d.db.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&result); err != nil {
+	dsn := (&url.URL{Scheme: "file", Path: d.Path, RawQuery: "mode=ro&immutable=1&_pragma=cache_size(-16)"}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
 		return err
 	}
-	if result != "ok" {
-		return fmt.Errorf("SQLite quick_check: %s", result)
+	defer db.Close()
+	// The full-text check is the longest, so virtual tables start first.
+	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY sql LIKE 'CREATE VIRTUAL TABLE%' DESC")
+	if err != nil {
+		return err
+	}
+	tables := []string{"sqlite_schema"}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		tables = append(tables, name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(verifyConns)
+	g.Go(func() error { return pageAccounting(ctx, db) })
+	for _, table := range tables {
+		g.Go(func() error {
+			var result string
+			if err := db.QueryRowContext(ctx, `PRAGMA quick_check("`+strings.ReplaceAll(table, `"`, `""`)+`")`).Scan(&result); err != nil {
+				return err
+			}
+			if result != "ok" {
+				return fmt.Errorf("SQLite quick_check(%s): %s", table, result)
+			}
+			return nil
+		})
+	}
+	return g.Wait()
+}
+
+// verifyConns bounds Verify's connections. Each reads its pages once, so it
+// keeps a 16 KiB cache and leaves the rest to the OS.
+const verifyConns = 3
+
+// pageAccounting checks that every page is used exactly once: by a b-tree,
+// by the freelist, or as the lock-byte page.
+func pageAccounting(ctx context.Context, db *sql.DB) error {
+	var pages int64
+	var header []byte
+	if err := db.QueryRowContext(ctx, "SELECT (SELECT page_count FROM pragma_page_count), data FROM sqlite_dbpage WHERE pgno=1").Scan(&pages, &header); err != nil {
+		return err
+	}
+	if len(header) < 100 {
+		return fmt.Errorf("SQLite page 1 is %d bytes", len(header))
+	}
+	used := make([]bool, pages+1)
+	use := func(page uint32) error {
+		if page < 1 || int64(page) > pages {
+			return fmt.Errorf("SQLite page accounting: page %d is out of range", page)
+		}
+		if used[page] {
+			return fmt.Errorf("SQLite page accounting: page %d is used twice", page)
+		}
+		used[page] = true
+		return nil
+	}
+	if lock := int64(1<<30)/int64(len(header)) + 1; lock <= pages {
+		used[lock] = true
+	}
+	rows, err := db.QueryContext(ctx, "SELECT pageno FROM dbstat")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var page uint32
+		if err := rows.Scan(&page); err != nil {
+			rows.Close()
+			return err
+		}
+		if err := use(page); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	// The freelist is a chain of trunk pages, each listing leaf pages.
+	usable := uint32(len(header)) - uint32(header[20])
+	free := uint32(0)
+	for trunk := binary.BigEndian.Uint32(header[32:]); trunk != 0; {
+		if err := use(trunk); err != nil {
+			return err
+		}
+		var data []byte
+		if err := db.QueryRowContext(ctx, "SELECT data FROM sqlite_dbpage WHERE pgno=?", trunk).Scan(&data); err != nil {
+			return err
+		}
+		leaves := binary.BigEndian.Uint32(data[4:])
+		if leaves > usable/4-2 {
+			return fmt.Errorf("SQLite freelist: trunk page %d lists %d leaves", trunk, leaves)
+		}
+		for i := range leaves {
+			if err := use(binary.BigEndian.Uint32(data[8+4*i:])); err != nil {
+				return err
+			}
+		}
+		free += 1 + leaves
+		trunk = binary.BigEndian.Uint32(data)
+	}
+	if want := binary.BigEndian.Uint32(header[36:]); free != want {
+		return fmt.Errorf("SQLite freelist: %d pages, header says %d", free, want)
+	}
+	for page := int64(1); page <= pages; page++ {
+		if !used[page] {
+			return fmt.Errorf("SQLite page accounting: page %d is never used", page)
+		}
 	}
 	return nil
 }
