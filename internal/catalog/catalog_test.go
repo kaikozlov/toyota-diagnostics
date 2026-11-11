@@ -582,3 +582,18 @@ func TestListItemsBrowsesWithoutQuery(t *testing.T) {
 		t.Fatal("expected FRC DIDs")
 	}
 }
+
+func TestSearchBreaksScoreTiesAtTheLimitByKindThenIdentifier(t *testing.T) {
+	c := fixtureCatalog(t)
+	for i, r := range [][2]string{{"did", "0xD4"}, {"did", "0xD3"}, {"adu-signal", "0xD2"}, {"adu-signal", "0xD1"}} {
+		c.Item(catalogtest.Item{ID: int64(101 + i), Kind: r[0], Identifier: r[1], Name: "Tie probe"})
+	}
+	d := openFixture(t, c)
+	rows, err := d.Search(context.Background(), "NA", "probe", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := identifiers(rows); len(ids) != 2 || ids[0] != "0xD1" || ids[1] != "0xD2" {
+		t.Fatalf("tied scores should keep the first kind and identifiers: %v", ids)
+	}
+}

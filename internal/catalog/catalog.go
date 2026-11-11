@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"golang.org/x/sync/errgroup"
@@ -31,6 +32,7 @@ type DB struct {
 	dtcMembership         membershipCache
 	displayMembership     membershipCache
 	db                    *sql.DB
+	scopes                sync.Map
 	Path                  string
 	signalRecords         cachedMetadata
 	vehicleIndexRecords   cachedMetadata
@@ -54,6 +56,7 @@ type DB struct {
 	workFactors           cachedMetadata
 	decodedStatements     workStatementCache
 	workStatements        workStatementCache
+	statements            sync.Map
 }
 
 type Item struct {
@@ -186,6 +189,23 @@ func requireTables(db *sql.DB) error {
 	return nil
 }
 
+// prepared returns a statement prepared once per DB, for queries that run
+// repeatedly.
+func (d *DB) prepared(ctx context.Context, query string) (*sql.Stmt, error) {
+	if stmt, ok := d.statements.Load(query); ok {
+		return stmt.(*sql.Stmt), nil
+	}
+	stmt, err := d.db.PrepareContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if prior, loaded := d.statements.LoadOrStore(query, stmt); loaded {
+		stmt.Close()
+		return prior.(*sql.Stmt), nil
+	}
+	return stmt, nil
+}
+
 func (d *DB) Close() error {
 	if d.db != nil {
 		return d.db.Close()
@@ -283,6 +303,7 @@ func (d *DB) Verify(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(verifyConns)
 	g.Go(func() error { return pageAccounting(ctx, db) })
+	g.Go(func() error { return verifyOwnerRanges(ctx, db) })
 	for _, table := range tables {
 		g.Go(func() error {
 			var result string
@@ -559,80 +580,6 @@ func (d *DB) SearchKind(ctx context.Context, region string, category int, kind, 
 	return d.search(ctx, region, category, kind, query, limit)
 }
 
-// search runs the ranked full-text query; category 0 means every ECU and an
-// empty kind means every kind.
-func (d *DB) search(ctx context.Context, region string, category int, kind, query string, limit int) ([]Item, error) {
-	if limit <= 0 {
-		return nil, fmt.Errorf("limit must be positive")
-	}
-	if limit > 5000 {
-		limit = 5000
-	}
-	region, err := Region(region)
-	if err != nil {
-		return nil, err
-	}
-	match := ftsQuery(query)
-	if match == "" {
-		return []Item{}, nil
-	}
-	bare, explicit := queryIdentForm(query)
-	hexExact, hexPrefix, decExact := "", "", ""
-	if bare != "" {
-		hexExact = "0x" + bare
-		hexPrefix = hexExact + "%"
-		if !explicit {
-			decExact = bare
-		}
-	}
-	// Ranking is a single policy, not stacked special cases:
-	//  0 navigational ECU (kind=ecu and key, category id, or full ECU name)
-	//  1 exact identifier in the query's number domain (explicit 0x stays
-	//    hex-only; a bare token may match either 0x160 or decimal 160)
-	//  2 prefix of a hex (0x…) identifier
-	//  3 exact item name
-	//  4 other records belonging to an ECU whose key equals the query
-	//  5 BM25 over name (10), detail (1), identifier (3)
-	// Ties stay stable.
-	rows, err := d.db.QueryContext(ctx, `
-SELECT i.id, i.kind, i.region, i.category_id, coalesce(e.key,''), coalesce(e.name,''),
-       i.identifier, i.name, i.detail
-FROM items_fts
-JOIN items i ON i.id=items_fts.rowid
-LEFT JOIN ecus e ON e.region=i.region AND e.category_id=i.category_id
-WHERE items_fts MATCH ? AND i.region=? AND (?=0 OR i.category_id=?) AND (?='' OR i.kind=?)
-ORDER BY CASE WHEN i.kind='ecu' AND (lower(e.key)=lower(?) OR cast(e.category_id as text)=? OR lower(e.name)=lower(?)) THEN 0
-              WHEN ? != '' AND lower(i.identifier)=? THEN 1
-              WHEN ? != '' AND lower(i.identifier)=? THEN 1
-              WHEN lower(i.identifier)=lower(?) THEN 1
-              WHEN ? != '' AND lower(i.identifier) LIKE ? THEN 2
-              WHEN lower(i.name)=lower(?) THEN 3
-              WHEN lower(e.key)=lower(?) THEN 4
-              ELSE 5 END,
-         bm25(items_fts, 10.0, 1.0, 3.0),
-         i.kind, i.category_id, i.identifier, i.id
-LIMIT ?`, match, region, category, category, kind, kind,
-		query, query, query,
-		hexExact, hexExact,
-		decExact, decExact,
-		query,
-		hexPrefix, hexPrefix,
-		query, query, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]Item, 0)
-	for rows.Next() {
-		var r Item
-		if err := rows.Scan(&r.ID, &r.Kind, &r.Region, &r.CategoryID, &r.ECU, &r.ECUName, &r.Identifier, &r.Name, &r.Detail); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 func scanECU(rows *sql.Rows) (ECU, error) {
 	var e ECU
 	var generation sql.NullInt64
@@ -671,6 +618,36 @@ func scanECU(rows *sql.Rows) (ECU, error) {
 }
 
 const selectECUs = `SELECT region,category_id,key,name,database_name,generation,support_mode,catalog_member,counts FROM ecus`
+
+// ECUKeys maps the region's given ECU categories to their canonical keys.
+func (d *DB) ECUKeys(ctx context.Context, region string, categories []int) (map[int]string, error) {
+	region, err := Region(region)
+	if err != nil {
+		return nil, err
+	}
+	keys := map[int]string{}
+	if len(categories) == 0 {
+		return keys, nil
+	}
+	args := []any{region}
+	for _, id := range categories {
+		args = append(args, id)
+	}
+	rows, err := d.db.QueryContext(ctx, "SELECT category_id,key FROM ecus WHERE region=? AND category_id IN ("+strings.Repeat(",?", len(categories))[1:]+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		var key string
+		if err := rows.Scan(&id, &key); err != nil {
+			return nil, err
+		}
+		keys[id] = key
+	}
+	return keys, rows.Err()
+}
 
 func (d *DB) ECUs(ctx context.Context, region, query string, limit int) ([]ECU, error) {
 	return d.ListECUs(ctx, region, query, false, limit)

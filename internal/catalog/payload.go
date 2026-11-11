@@ -1,7 +1,6 @@
 package catalog
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -36,10 +35,8 @@ func (d *DB) fullDocument(ctx context.Context, member string) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", member, err)
 	}
-	var value any
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err = decoder.Decode(&value); err != nil {
+	value, err := decodeStoredJSON(raw)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", member, err)
 	}
 	if _, ok := value.(map[string]any); !ok {
@@ -58,51 +55,61 @@ func (d *DB) documentPointerValue(ctx context.Context, document any, pointer str
 	}
 	value := document
 	for _, part := range parts {
-		// Resolve only the entity at this path step. Expanding every sibling's
-		// audit evidence before selecting a field would turn a narrow pointer
-		// lookup into a whole-document materialization.
-		active := make(referenceStack)
-		for {
-			node, ok := value.(map[string]any)
-			if !ok {
-				break
-			}
-			kind, ref, ok := storedReference(node)
-			if !ok {
-				break
-			}
-			id, err := referenceID(ref, kind)
-			if err != nil {
-				return nil, err
-			}
-			key := referenceKey{kind, id}
-			if active[key] {
-				return nil, fmt.Errorf("cyclic source reference at %q", pointer)
-			}
-			active[key] = true
-			value, err = d.restoreReference(ctx, kind, id)
-			if err != nil {
-				return nil, err
-			}
+		if value, err = d.resolveReferences(ctx, value, pointer); err != nil {
+			return nil, err
 		}
-		switch node := value.(type) {
-		case map[string]any:
-			var ok bool
-			value, ok = node[part]
-			if !ok {
-				return nil, fmt.Errorf("source pointer %q is missing", pointer)
-			}
-		case []any:
-			index, ok := pointerIndex(part)
-			if !ok || index >= len(node) {
-				return nil, fmt.Errorf("invalid source pointer %q", pointer)
-			}
-			value = node[index]
-		default:
-			return nil, fmt.Errorf("invalid source pointer %q", pointer)
+		if value, err = pointerChild(value, part, pointer); err != nil {
+			return nil, err
 		}
 	}
 	return value, nil
+}
+
+// resolveReferences restores the entity at one path step. Expanding every
+// sibling's audit evidence before selecting a field would turn a narrow
+// pointer lookup into a whole-document materialization.
+func (d *DB) resolveReferences(ctx context.Context, value any, pointer string) (any, error) {
+	active := make(referenceStack)
+	for {
+		node, ok := value.(map[string]any)
+		if !ok {
+			return value, nil
+		}
+		kind, ref, ok := storedReference(node)
+		if !ok {
+			return value, nil
+		}
+		id, err := referenceID(ref, kind)
+		if err != nil {
+			return nil, err
+		}
+		key := referenceKey{kind, id}
+		if active[key] {
+			return nil, fmt.Errorf("cyclic source reference at %q", pointer)
+		}
+		active[key] = true
+		if value, err = d.restoreReference(ctx, kind, id); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func pointerChild(value any, part, pointer string) (any, error) {
+	switch node := value.(type) {
+	case map[string]any:
+		child, ok := node[part]
+		if !ok {
+			return nil, fmt.Errorf("source pointer %q is missing", pointer)
+		}
+		return child, nil
+	case []any:
+		index, ok := pointerIndex(part)
+		if !ok || index >= len(node) {
+			return nil, fmt.Errorf("invalid source pointer %q", pointer)
+		}
+		return node[index], nil
+	}
+	return nil, fmt.Errorf("invalid source pointer %q", pointer)
 }
 
 // Every item refers to one authoritative source-document location.

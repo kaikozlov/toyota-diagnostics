@@ -56,7 +56,7 @@ func pythonCommand(explicit string) (string, error) {
 			return p, nil
 		}
 	}
-	// Reuse the project's existing environment, never create an AGNOS venv.
+	// Reuse the project's existing environment, never create another venv.
 	if exe, e := os.Executable(); e == nil {
 		for _, dir := range []string{filepath.Dir(exe), filepath.Dir(filepath.Dir(exe))} {
 			p := filepath.Join(dir, ".venv", "bin", "python")

@@ -37,6 +37,9 @@ func (d *DB) expandMetadata(ctx context.Context, value any, active referenceStac
 			delete(active, key)
 			return result, err
 		}
+		if decoded, handled, err := d.vehicleDefinitionMap(ctx, node, active); handled || err != nil {
+			return decoded, err
+		}
 		out := make(map[string]any, len(node))
 		for key, child := range node {
 			decoded, err := d.expandMetadata(ctx, child, active)

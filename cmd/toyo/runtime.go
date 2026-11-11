@@ -381,11 +381,15 @@ func (r *runtimeApp) session(e diagnostic.EcuSpec, operation ...map[string]any) 
 	if len(operation) > 0 {
 		row = operation[0]
 	}
-	timeout, pending, err := diagnostic.CommsetTimeouts(runtimeMap(r.profile.Regional["session_control"]), row)
+	control, err := r.profile.SessionControl(r.ctx)
 	if err != nil {
 		return nil, err
 	}
-	life, err := diagnostic.ParseLifecycle(runtimeMap(r.profile.Regional["session_control"]), e.CategoryID)
+	timeout, pending, err := diagnostic.CommsetTimeouts(control, row)
+	if err != nil {
+		return nil, err
+	}
+	life, err := diagnostic.ParseLifecycle(control, e.CategoryID)
 	if err != nil {
 		return nil, err
 	}
