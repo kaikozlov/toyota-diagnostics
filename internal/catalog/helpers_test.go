@@ -47,9 +47,14 @@ func packedPart(t *testing.T, value any) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return zlibPacked(t, string(raw))
+}
+
+func zlibPacked(t *testing.T, raw string) []byte {
+	t.Helper()
 	var out bytes.Buffer
 	w := zlib.NewWriter(&out)
-	if _, err := w.Write(raw); err != nil {
+	if _, err := w.Write([]byte(raw)); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {

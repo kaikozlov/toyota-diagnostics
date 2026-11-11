@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	_ "modernc.org/sqlite"
@@ -52,6 +53,7 @@ type DB struct {
 	workFactors           cachedMetadata
 	decodedStatements     workStatementCache
 	workStatements        workStatementCache
+	statements            sync.Map
 }
 
 type Item struct {
@@ -182,6 +184,23 @@ func requireTables(db *sql.DB) error {
 		rows.Close()
 	}
 	return nil
+}
+
+// prepared returns a statement prepared once per DB, for queries that run
+// repeatedly.
+func (d *DB) prepared(ctx context.Context, query string) (*sql.Stmt, error) {
+	if stmt, ok := d.statements.Load(query); ok {
+		return stmt.(*sql.Stmt), nil
+	}
+	stmt, err := d.db.PrepareContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if prior, loaded := d.statements.LoadOrStore(query, stmt); loaded {
+		stmt.Close()
+		return prior.(*sql.Stmt), nil
+	}
+	return stmt, nil
 }
 
 func (d *DB) Close() error {
@@ -475,6 +494,36 @@ func scanECU(rows *sql.Rows) (ECU, error) {
 }
 
 const selectECUs = `SELECT region,category_id,key,name,database_name,generation,support_mode,catalog_member,counts FROM ecus`
+
+// ECUKeys maps the region's given ECU categories to their canonical keys.
+func (d *DB) ECUKeys(ctx context.Context, region string, categories []int) (map[int]string, error) {
+	region, err := Region(region)
+	if err != nil {
+		return nil, err
+	}
+	keys := map[int]string{}
+	if len(categories) == 0 {
+		return keys, nil
+	}
+	args := []any{region}
+	for _, id := range categories {
+		args = append(args, id)
+	}
+	rows, err := d.db.QueryContext(ctx, "SELECT category_id,key FROM ecus WHERE region=? AND category_id IN ("+strings.Repeat(",?", len(categories))[1:]+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		var key string
+		if err := rows.Scan(&id, &key); err != nil {
+			return nil, err
+		}
+		keys[id] = key
+	}
+	return keys, rows.Err()
+}
 
 func (d *DB) ECUs(ctx context.Context, region, query string, limit int) ([]ECU, error) {
 	return d.ListECUs(ctx, region, query, false, limit)

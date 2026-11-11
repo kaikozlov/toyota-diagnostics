@@ -234,7 +234,10 @@ func (r *runtimeApp) didCommand(a []string) error {
 	return nil
 }
 func (r *runtimeApp) support(ecu diagnostic.EcuSpec, c diagnostic.RequestClient, routine bool) (*diagnostic.SupportResolver, error) {
-	category := runtimeMap(runtimeMap(r.profile.Regional["selected_categories"])[fmt.Sprint(ecu.CategoryID)])
+	category, err := r.profile.SelectedCategory(r.ctx, ecu.CategoryID)
+	if err != nil {
+		return nil, err
+	}
 	family, _ := category["support_family"].(string)
 	mode, _ := category["support_mode"].(string)
 	contract := runtimeMap(runtimeMap(r.profile.Index["support_contracts"])[strings.ToLower(family)])

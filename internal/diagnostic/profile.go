@@ -25,14 +25,19 @@ type EcuSpec struct {
 	Route         map[string]any `json:"route,omitempty"`
 }
 type Profile struct {
-	DB                       *catalog.DB
-	Region                   string
-	Index, Regional, Vehicle map[string]any
-	Bus                      int
-	ECUs                     []EcuSpec
-	Candidates               []map[string]any
-	mu                       sync.Mutex
-	categories               map[int]map[string]any
+	DB             *catalog.DB
+	Region         string
+	Index, Vehicle map[string]any
+	// Regional holds the regional index sections read so far. Section reads
+	// the others on first use.
+	Regional   map[string]any
+	Bus        int
+	ECUs       []EcuSpec
+	Candidates []map[string]any
+	source     regionalIndex
+	mu         sync.Mutex
+	sectionMu  sync.Mutex
+	categories map[int]map[string]any
 }
 
 func profileMap(v any) map[string]any { m, _ := v.(map[string]any); return m }
@@ -69,23 +74,26 @@ func NewProfile(ctx context.Context, db *catalog.DB, region, vehicle string, bus
 	if bus < 0 || bus > 3 {
 		return nil, fmt.Errorf("Panda diagnostic bus must be 0..3, got %d", bus)
 	}
-	index, e := db.Index(ctx, region)
+	index, e := db.Index(ctx)
 	if e != nil {
 		return nil, e
 	}
-	p, e := profileFromIndex(index, region, vehicle, bus)
+	if region == "" {
+		region = profileText(index["default_region"])
+	}
+	p, e := buildProfile(ctx, index, region, vehicle, bus, catalogRegion{db})
 	if e != nil {
 		return nil, e
 	}
 	p.DB = db
 	// Reuse the public catalog's canonical ECU keys; do not maintain a second alias table.
-	ecus, e := db.ECUs(ctx, p.Region, "", 0)
+	ids := make([]int, len(p.ECUs))
+	for i, ecu := range p.ECUs {
+		ids[i] = ecu.CategoryID
+	}
+	keys, e := db.ECUKeys(ctx, p.Region, ids)
 	if e != nil {
 		return nil, e
-	}
-	keys := map[int]string{}
-	for _, row := range ecus {
-		keys[row.CategoryID] = row.Key
 	}
 	used := map[string]bool{}
 	for i := range p.ECUs {
@@ -102,28 +110,91 @@ func NewProfile(ctx context.Context, db *catalog.DB, region, vehicle string, bus
 	}
 	return p, nil
 }
-func profileFromIndex(index map[string]any, region, vehicle string, bus int) (*Profile, error) {
-	if region == "" {
-		region = profileText(index["default_region"])
+
+// regionalIndex reads one region's index a section or a few entries at a
+// time, so a profile decodes only what it uses.
+type regionalIndex interface {
+	// section is nil when the region has no such section.
+	section(ctx context.Context, region, name string) (any, error)
+	// entries is nil when the region has no such section.
+	entries(ctx context.Context, region, section string, keys []string) (map[string]any, error)
+	// vehicles holds each vehicle's vehicle_type and name. Given types, it
+	// may leave out vehicles of other types.
+	vehicles(ctx context.Context, region string, types ...int64) (map[string]any, error)
+}
+
+type catalogRegion struct{ db *catalog.DB }
+
+func (c catalogRegion) section(ctx context.Context, region, name string) (any, error) {
+	return c.db.RegionalSection(ctx, region, name)
+}
+func (c catalogRegion) entries(ctx context.Context, region, section string, keys []string) (map[string]any, error) {
+	return c.db.RegionalEntries(ctx, region, section, keys)
+}
+func (c catalogRegion) vehicles(ctx context.Context, region string, types ...int64) (map[string]any, error) {
+	return c.db.RegionalVehicles(ctx, region, types...)
+}
+
+// Section returns one regional index section, read on first use.
+func (p *Profile) Section(ctx context.Context, name string) (any, error) {
+	p.sectionMu.Lock()
+	defer p.sectionMu.Unlock()
+	if value, ok := p.Regional[name]; ok || p.source == nil {
+		return value, nil
 	}
+	value, e := p.source.section(ctx, p.Region, name)
+	if e != nil {
+		return nil, e
+	}
+	if p.Regional == nil {
+		p.Regional = map[string]any{}
+	}
+	p.Regional[name] = value
+	return value, nil
+}
+
+// SelectedCategory returns one category's entry in the regional index
+// without reading the others.
+func (p *Profile) SelectedCategory(ctx context.Context, id int) (map[string]any, error) {
+	key := strconv.Itoa(id)
+	p.sectionMu.Lock()
+	all, ok := p.Regional["selected_categories"]
+	p.sectionMu.Unlock()
+	if ok || p.source == nil {
+		return profileMap(profileMap(all)[key]), nil
+	}
+	rows, e := p.source.entries(ctx, p.Region, "selected_categories", []string{key})
+	if e != nil {
+		return nil, e
+	}
+	return profileMap(rows[key]), nil
+}
+
+func buildProfile(ctx context.Context, index map[string]any, region, vehicle string, bus int, source regionalIndex) (*Profile, error) {
 	if region == "" {
 		region = "NA"
 	}
 	region = strings.ToUpper(region)
-	regional := profileMap(profileMap(index["regions"])[region])
-	if regional == nil {
-		return nil, fmt.Errorf("unknown region %q", region)
+	present, e := source.entries(ctx, region, "selected_categories", nil)
+	if e != nil {
+		return nil, e
 	}
-	categories := profileMap(regional["selected_categories"])
-	if categories == nil {
+	if present == nil {
 		return nil, fmt.Errorf("Toyota %s index has no selected category catalog index", region)
 	}
-	p := &Profile{Region: region, Index: index, Regional: regional, Bus: bus, categories: map[int]map[string]any{}}
+	p := &Profile{Region: region, Index: index, Regional: map[string]any{}, Bus: bus, source: source, categories: map[int]map[string]any{}}
 	if vehicle != "" {
-		vehicles := profileMap(regional["vehicles"])
-		exact, fuzzy := []map[string]any{}, []map[string]any{}
 		n, nerr := strconv.ParseInt(vehicle, 0, 64)
-		for _, v := range vehicles {
+		types := []int64{}
+		if nerr == nil {
+			types = append(types, n)
+		}
+		vehicles, e := source.vehicles(ctx, region, types...)
+		if e != nil {
+			return nil, e
+		}
+		exact, fuzzy := []string{}, []string{}
+		for key, v := range vehicles {
 			row := profileMap(v)
 			if row == nil {
 				continue
@@ -131,12 +202,12 @@ func profileFromIndex(index map[string]any, region, vehicle string, bus int) (*P
 			name := profileText(row["name"])
 			if nerr == nil {
 				if profileInt(row["vehicle_type"]) == int(n) {
-					exact = append(exact, row)
+					exact = append(exact, key)
 				}
 			} else if strings.EqualFold(name, vehicle) {
-				exact = append(exact, row)
+				exact = append(exact, key)
 			} else if strings.Contains(strings.ToLower(name), strings.ToLower(vehicle)) {
-				fuzzy = append(fuzzy, row)
+				fuzzy = append(fuzzy, key)
 			}
 		}
 		matches := exact
@@ -149,11 +220,22 @@ func profileFromIndex(index map[string]any, region, vehicle string, bus int) (*P
 			}
 			return nil, fmt.Errorf("ambiguous Toyota vehicle %q: %d matches; use vehicle type", vehicle, len(matches))
 		}
-		p.Vehicle = matches[0]
-		sets := profileMap(regional["install_sets"])
-		routes := profileMap(regional["routes"])
-		seen := map[string]bool{}
+		chosen, e := source.entries(ctx, region, "vehicles", matches)
+		if e != nil {
+			return nil, e
+		}
+		p.Vehicle = profileMap(chosen[matches[0]])
 		ids, _ := p.Vehicle["install_set_ids"].([]any)
+		setKeys := make([]string, len(ids))
+		for i, id := range ids {
+			setKeys[i] = strconv.Itoa(profileInt(id))
+		}
+		sets, e := source.entries(ctx, region, "install_sets", setKeys)
+		if e != nil {
+			return nil, e
+		}
+		seen := map[string]bool{}
+		categoryKeys, routeKeys := []string{}, []string{}
 		for _, id := range ids {
 			for _, raw := range profileRows(sets[strconv.Itoa(profileInt(id))]) {
 				cid := profileInt(raw["category_id"])
@@ -167,16 +249,28 @@ func profileFromIndex(index map[string]any, region, vehicle string, bus int) (*P
 				seen[identity] = true
 				row := profileClone(raw)
 				row["install_set_id"] = profileInt(id)
-				cat := profileMap(categories[strconv.Itoa(cid)])
-				for _, k := range []string{"generation", "database", "short_name", "name", "support_family", "support_mode", "support_plugin_single", "support_plugin_multi", "catalog_available"} {
-					if v, ok := cat[k]; ok {
-						row[k] = v
-					}
-				}
-				if route := profileMap(routes[routeKey]); route != nil {
-					row["transport_route"] = route
-				}
 				p.Candidates = append(p.Candidates, row)
+				categoryKeys = append(categoryKeys, strconv.Itoa(cid))
+				routeKeys = append(routeKeys, routeKey)
+			}
+		}
+		categories, e := source.entries(ctx, region, "selected_categories", categoryKeys)
+		if e != nil {
+			return nil, e
+		}
+		routes, e := source.entries(ctx, region, "routes", routeKeys)
+		if e != nil {
+			return nil, e
+		}
+		for i, row := range p.Candidates {
+			cat := profileMap(categories[categoryKeys[i]])
+			for _, k := range []string{"generation", "database", "short_name", "name", "support_family", "support_mode", "support_plugin_single", "support_plugin_multi", "catalog_available"} {
+				if v, ok := cat[k]; ok {
+					row[k] = v
+				}
+			}
+			if route := profileMap(routes[routeKeys[i]]); route != nil {
+				row["transport_route"] = route
 			}
 		}
 		sort.SliceStable(p.Candidates, func(i, j int) bool {
@@ -221,6 +315,12 @@ func profileFromIndex(index map[string]any, region, vehicle string, bus int) (*P
 			p.ECUs = append(p.ECUs, spec)
 		}
 	} else {
+		section, e := source.section(ctx, region, "selected_categories")
+		if e != nil {
+			return nil, e
+		}
+		p.Regional["selected_categories"] = section
+		categories := profileMap(section)
 		ids := []int{}
 		for key, value := range categories {
 			row := profileMap(value)
@@ -270,7 +370,10 @@ func (p *Profile) Category(ctx context.Context, ecu EcuSpec) (map[string]any, er
 	if row, ok := p.categories[ecu.CategoryID]; ok {
 		return row, nil
 	}
-	meta := profileMap(profileMap(p.Regional["selected_categories"])[strconv.Itoa(ecu.CategoryID)])
+	meta, e := p.SelectedCategory(ctx, ecu.CategoryID)
+	if e != nil {
+		return nil, e
+	}
 	member := profileText(meta["catalog_member"])
 	if member == "" {
 		return nil, fmt.Errorf("category %d has no catalog document", ecu.CategoryID)
@@ -400,12 +503,24 @@ func (p *Profile) ResolveDID(ctx context.Context, ecu EcuSpec, query string) (in
 	sort.Ints(ids)
 	return 0, nil, fmt.Errorf("DID name %q maps to multiple DIDs: %X", query, ids)
 }
-func (p *Profile) Commset(id int) map[string]any {
-	return profileMap(profileMap(p.Regional["commsets"])[strconv.Itoa(id)])
+
+// Commset reads one CommSet from the regional index.
+func (p *Profile) Commset(ctx context.Context, id int) (map[string]any, error) {
+	commsets, e := p.Section(ctx, "commsets")
+	return profileMap(profileMap(commsets)[strconv.Itoa(id)]), e
 }
-func (p *Profile) SessionControl() map[string]any { return profileMap(p.Regional["session_control"]) }
-func (p *Profile) SessionCommset(ecu EcuSpec) (int, map[string]any, error) {
-	row := profileMap(profileMap(p.SessionControl()["per_category"])[strconv.Itoa(ecu.CategoryID)])
+
+// SessionControl reads the regional session lifecycle table.
+func (p *Profile) SessionControl(ctx context.Context) (map[string]any, error) {
+	value, e := p.Section(ctx, "session_control")
+	return profileMap(value), e
+}
+func (p *Profile) SessionCommset(ctx context.Context, ecu EcuSpec) (int, map[string]any, error) {
+	control, e := p.SessionControl(ctx)
+	if e != nil {
+		return 0, nil, e
+	}
+	row := profileMap(profileMap(control["per_category"])[strconv.Itoa(ecu.CategoryID)])
 	ids := map[int]bool{}
 	for _, key := range []string{"default_session", "extended_session", "keepalive"} {
 		frame := profileMap(row[key])
@@ -420,7 +535,10 @@ func (p *Profile) SessionCommset(ecu EcuSpec) (int, map[string]any, error) {
 		return 0, nil, fmt.Errorf("session_control category %d: expected one shared CommSet", ecu.CategoryID)
 	}
 	for id := range ids {
-		row := p.Commset(id)
+		row, e := p.Commset(ctx, id)
+		if e != nil {
+			return 0, nil, e
+		}
 		if row == nil {
 			return 0, nil, fmt.Errorf("session_control category %d: CommSet %d is not present", ecu.CategoryID, id)
 		}

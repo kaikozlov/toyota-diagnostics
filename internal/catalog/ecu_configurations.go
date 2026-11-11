@@ -1,9 +1,7 @@
 package catalog
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 )
@@ -47,12 +45,10 @@ func (d *DB) ecuCatalog(ctx context.Context, id int64) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		var decoded any
 		// storedJSON preserves integer spelling; retaining normalized refs avoids
 		// executing queries for unrelated catalog domains during item inspection.
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
-		if err = decoder.Decode(&decoded); err != nil {
+		decoded, err := decodeStoredJSON(raw)
+		if err != nil {
 			return nil, err
 		}
 		body, ok = decoded.(map[string]any)

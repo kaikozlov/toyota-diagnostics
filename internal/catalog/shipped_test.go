@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -26,11 +27,17 @@ func openShipped(t *testing.T) *DB {
 
 func TestShippedCatalogRuntimeContracts(t *testing.T) {
 	d := openShipped(t)
-	index, err := d.Index(context.Background(), "NA")
+	ctx := context.Background()
+	index, err := d.Index(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	regional, _ := index["regions"].(map[string]any)["NA"].(map[string]any)
+	regional := map[string]any{}
+	for _, name := range []string{"routes", "session_control"} {
+		if regional[name], err = d.RegionalSection(ctx, "NA", name); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if table, _ := regional["session_control"].(map[string]any); len(table) == 0 {
 		t.Error("NA index has no session_control")
 	}
@@ -68,5 +75,55 @@ func TestFixtureSchemaMatchesShippedCatalog(t *testing.T) {
 	want := strings.TrimSpace(catalogtest.Schema[strings.Index(catalogtest.Schema, "\n")+1:])
 	if got != want {
 		t.Fatal("internal/catalog/catalogtest/schema.sql differs from catalog/catalog.sqlite; regenerate it from sqlite_master")
+	}
+}
+
+// Entry and vehicle reads must agree with whole sections in every region.
+func TestShippedRegionalEntriesMatchSections(t *testing.T) {
+	d := openShipped(t)
+	ctx := context.Background()
+	for _, region := range []string{"NA", "EU", "JP"} {
+		for _, name := range []string{"selected_categories", "routes", "install_sets", "vehicles"} {
+			whole, err := d.RegionalSection(ctx, region, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			section := whole.(map[string]any)
+			keys := make([]string, 0, len(section))
+			for key := range section {
+				keys = append(keys, key)
+			}
+			entries, err := d.RegionalEntries(ctx, region, name, append(keys, "absent"))
+			if err != nil || !reflect.DeepEqual(entries, section) {
+				t.Fatalf("%s %s entries differ from section: %v", region, name, err)
+			}
+			if name != "vehicles" {
+				continue
+			}
+			vehicles, err := d.RegionalVehicles(ctx, region)
+			if err != nil || len(vehicles) != len(section) {
+				t.Fatalf("%s vehicles: %d of %d, %v", region, len(vehicles), len(section), err)
+			}
+			for key, row := range section {
+				full := row.(map[string]any)
+				want := map[string]any{"vehicle_type": full["vehicle_type"], "name": full["name"]}
+				if !reflect.DeepEqual(vehicles[key], want) {
+					t.Fatalf("%s vehicle %s = %v, want %v", region, key, vehicles[key], want)
+				}
+			}
+			for key, row := range vehicles {
+				vehicleType := int64(row.(map[string]any)["vehicle_type"].(float64))
+				typed, err := d.RegionalVehicles(ctx, region, vehicleType)
+				if err != nil || !reflect.DeepEqual(typed[key], row) {
+					t.Fatalf("%s vehicles of type %d: %v %v", region, vehicleType, typed, err)
+				}
+				for _, other := range typed {
+					if other.(map[string]any)["vehicle_type"] != float64(vehicleType) {
+						t.Fatalf("%s vehicles of type %d include %v", region, vehicleType, other)
+					}
+				}
+				break
+			}
+		}
 	}
 }

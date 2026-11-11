@@ -61,7 +61,10 @@ func opLookup(rows []map[string]any, query, key string) (map[string]any, error) 
 	return nil, fmt.Errorf("%q resolves %d matches; use an exact item ID", query, len(m))
 }
 func (r *runtimeApp) opSupport(ecu diagnostic.EcuSpec, s *diagnostic.Session, routine bool) (*diagnostic.SupportResolver, string, error) {
-	meta := opMap(opMap(r.profile.Regional["selected_categories"])[strconv.Itoa(ecu.CategoryID)])
+	meta, e := r.profile.SelectedCategory(r.ctx, ecu.CategoryID)
+	if e != nil {
+		return nil, "", e
+	}
 	mode := opText(meta["support_mode"])
 	resolver, e := r.support(ecu, s.Client, routine)
 	if e != nil {
@@ -85,7 +88,11 @@ func (r *runtimeApp) operations(args []string) error {
 	utility := args[0] == "utility"
 	groups := action == "groups" || strings.HasPrefix(action, "group-")
 	if utility && ((action == "list" && len(args) == 2) || (action == "plan" && len(args) == 3)) {
-		rows := opRows(opMap(r.profile.Regional["utilities"])["bindings"])
+		utilities, e := r.profile.Section(r.ctx, "utilities")
+		if e != nil {
+			return e
+		}
+		rows := opRows(opMap(utilities)["bindings"])
 		if action == "plan" {
 			var matches []map[string]any
 			for _, row := range rows {
@@ -481,7 +488,11 @@ func (r *runtimeApp) operations(args []string) error {
 	return r.operationResult(result)
 }
 func (r *runtimeApp) customizeOperations(args []string) error {
-	member := opText(r.profile.Regional["customize_member"])
+	customize, e := r.profile.Section(r.ctx, "customize_member")
+	if e != nil {
+		return e
+	}
+	member := opText(customize)
 	if member == "" {
 		return fmt.Errorf("region has no Customize catalog")
 	}

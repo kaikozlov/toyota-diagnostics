@@ -9,12 +9,12 @@ import (
 )
 
 func TestCANTopologyMaterializesSelectedVehicleAfterNewProfile(t *testing.T) {
-	// An unrelated invalid marker proves the command does not decode every
-	// vehicle's topology as a side effect of opening a profile.
+	// Unrelated invalid markers prove opening a profile does not decode every
+	// vehicle's topology or install sets.
 	index := map[string]any{"default_region": "NA", "regions": map[string]any{"NA": map[string]any{
 		"selected_categories": map[string]any{},
 		"vehicles":            map[string]any{"7": map[string]any{"vehicle_type": 7, "name": "Toyota", "install_set_ids": []any{}}},
-		"install_sets":        map[string]any{}, "routes": map[string]any{},
+		"install_sets":        map[string]any{"8": map[string]any{"$install_set": 999999}}, "routes": map[string]any{},
 		"can_topology": map[string]any{
 			"7": []any{map[string]any{"vehicle_type": 7, "vehicle_name": "Toyota", "variants": []any{map[string]any{"components": []any{map[string]any{"domain_name": "Radar"}}}}}},
 			"8": []any{map[string]any{"$can_topology": 999999}},
