@@ -49,5 +49,7 @@ Transport options and the longer live command set are in `toyo help COMMAND`.
 
 ## Development
 
+`make build-comma` builds `build/toyo-linux-arm64` for a comma device.
+
 See [`AGENTS.md`](AGENTS.md) for repository layout and how to run
 `go test ./...`.
